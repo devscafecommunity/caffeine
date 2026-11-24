@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 
 namespace Caffeine::Terrain {
 namespace {
@@ -363,6 +365,17 @@ void TerrainCache::syncEntity(ECS::World& world, ECS::Entity entity) {
         resolutionChanged = true;
     }
 
+    if (terrain->useLayers) {
+        // The layer map follows the splat resolution: a resized terrain keeps its painting (nearest texel).
+        if (entry.layers.empty() || entry.layers.resolutionX() != targetSplatX || entry.layers.resolutionZ() != targetSplatZ) {
+            const bool keep = !entry.layers.empty();
+            if (!keep) entry.layers = TerrainLayerMap::fromSplatmap(entry.splatmap);
+            else entry.layers.resize(targetSplatX, targetSplatZ, true);
+            terrain->layerRevision++;
+        }
+        if (entry.palette.empty()) entry.palette = TerrainPalette::fromLegacyLayers(*terrain);
+    }
+
     if (resolutionChanged || terrain->meshRevision != terrain->dataRevision ||
         (!entry.mesh && entry.chunks.empty())) {
         rebuildMesh(entity, entry, *terrain);
@@ -404,6 +417,164 @@ TerrainHeightmap* TerrainCache::heightmapFor(ECS::Entity entity) {
 const TerrainHeightmap* TerrainCache::heightmapFor(ECS::Entity entity) const {
     auto it = m_entries.find(entity.id());
     return it != m_entries.end() ? &it->second.heightmap : nullptr;
+}
+
+TerrainPalette* TerrainCache::paletteFor(ECS::Entity entity) {
+    auto it = m_entries.find(entity.id());
+    return it != m_entries.end() ? &it->second.palette : nullptr;
+}
+
+const TerrainPalette* TerrainCache::paletteFor(ECS::Entity entity) const {
+    auto it = m_entries.find(entity.id());
+    return it != m_entries.end() ? &it->second.palette : nullptr;
+}
+
+TerrainLayerMap* TerrainCache::layerMapFor(ECS::Entity entity) {
+    auto it = m_entries.find(entity.id());
+    return it != m_entries.end() ? &it->second.layers : nullptr;
+}
+
+const TerrainLayerMap* TerrainCache::layerMapFor(ECS::Entity entity) const {
+    auto it = m_entries.find(entity.id());
+    return it != m_entries.end() ? &it->second.layers : nullptr;
+}
+
+bool TerrainCache::enableLayers(ECS::Entity entity, ECS::TerrainComponent& terrain) {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end()) return false;
+    TerrainEntry& entry = it->second;
+    if (!terrain.useLayers) {
+        // Turning layers on starts from what the terrain shows now (its four layers and splat map): never from layers an
+        // earlier terrain with the same id left in the cache.
+        entry.palette = TerrainPalette::fromLegacyLayers(terrain);
+        entry.layers = TerrainLayerMap::fromSplatmap(entry.splatmap);
+        entry.layerDirty = {};
+        entry.layerDirtyAll = true;
+    } else {
+        if (entry.palette.empty()) entry.palette = TerrainPalette::fromLegacyLayers(terrain);
+        if (entry.layers.empty()) entry.layers = TerrainLayerMap::fromSplatmap(entry.splatmap);
+    }
+    terrain.useLayers = true;
+    terrain.layerRevision++;
+    return true;
+}
+
+void TerrainCache::disableLayers(ECS::Entity entity, ECS::TerrainComponent& terrain) {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end()) return;
+    TerrainEntry& entry = it->second;
+    if (!entry.layers.empty()) {
+        entry.splatmap = entry.layers.toSplatmap();
+        terrain.splatRevision++;
+    }
+    // The palette and the map stay in the cache: an undo that turns the layers on again finds them (a scene restore sets
+    // them aside and hands them back). Turning layers on by hand starts over from the four-layer view (`enableLayers`).
+    terrain.useLayers = false;
+    terrain.layerRevision++;
+}
+
+TerrainCache::LayerState TerrainCache::takeLayers(ECS::Entity entity) {
+    LayerState state;
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end()) return state;
+    state.palette = std::move(it->second.palette);
+    state.layers = std::move(it->second.layers);
+    it->second.palette = TerrainPalette();
+    it->second.layers = TerrainLayerMap();
+    return state;
+}
+
+void TerrainCache::adoptLayers(ECS::Entity entity, LayerState&& state) {
+    TerrainEntry& entry = ensureEntry(entity);
+    entry.palette = std::move(state.palette);
+    entry.layers = std::move(state.layers);
+    entry.layerDirtyAll = true;
+}
+
+void TerrainCache::commitLayerEdit(ECS::Entity entity, ECS::TerrainComponent& terrain, const LayerBounds& region) {
+    terrain.layerRevision++;
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end()) return;
+    TerrainEntry& entry = it->second;
+    if (!region.valid) {
+        entry.layerDirtyAll = true;
+    } else if (!entry.layerDirty.valid) {
+        entry.layerDirty = region;
+    } else {
+        entry.layerDirty.minX = std::min(entry.layerDirty.minX, region.minX);
+        entry.layerDirty.minZ = std::min(entry.layerDirty.minZ, region.minZ);
+        entry.layerDirty.maxX = std::max(entry.layerDirty.maxX, region.maxX);
+        entry.layerDirty.maxZ = std::max(entry.layerDirty.maxZ, region.maxZ);
+    }
+}
+
+namespace {
+
+void copyRelative(char* destination, usize capacity, const std::string& text) {
+    std::memset(destination, 0, capacity);
+    std::memcpy(destination, text.c_str(), std::min(text.size(), capacity - 1));
+}
+
+}  // namespace
+
+bool TerrainCache::saveLayers(ECS::Entity entity, ECS::TerrainComponent& terrain, const std::filesystem::path& projectRoot,
+                              std::string* error) {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end() || it->second.layers.empty()) {
+        if (error) *error = "the terrain has no layers to save";
+        return false;
+    }
+    std::filesystem::path base = terrain.terrainDataPath[0] != '\0' ? std::filesystem::path(terrain.terrainDataPath)
+                                                                    : std::filesystem::path("terrain/Terrain_" + std::to_string(entity.id()));
+    base.replace_extension();
+    if (terrain.palettePath[0] == '\0') copyRelative(terrain.palettePath, sizeof(terrain.palettePath), (base.string() + ".terrainpalette"));
+    if (terrain.layerMapPath[0] == '\0') copyRelative(terrain.layerMapPath, sizeof(terrain.layerMapPath), (base.string() + ".terrainlayers"));
+    const std::filesystem::path paletteFile = projectRoot / terrain.palettePath;
+    const std::filesystem::path mapFile = projectRoot / terrain.layerMapPath;
+    std::error_code ec;
+    std::filesystem::create_directories(paletteFile.parent_path(), ec);
+    std::filesystem::create_directories(mapFile.parent_path(), ec);
+    {
+        std::ofstream out(paletteFile, std::ios::binary | std::ios::trunc);
+        out << it->second.palette.toText();
+        if (!out) {
+            if (error) *error = "could not write " + paletteFile.string();
+            return false;
+        }
+    }
+    return it->second.layers.save(mapFile.string(), error);
+}
+
+bool TerrainCache::loadLayers(ECS::Entity entity, ECS::TerrainComponent& terrain, const std::filesystem::path& projectRoot,
+                              std::string* error) {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end()) return false;
+    TerrainEntry& entry = it->second;
+    if (terrain.palettePath[0] != '\0') {
+        std::ifstream in(projectRoot / terrain.palettePath, std::ios::binary);
+        if (in) {
+            std::stringstream text;
+            text << in.rdbuf();
+            TerrainPalette palette;
+            if (!TerrainPalette::fromText(text.str(), palette, error)) return false;
+            entry.palette = std::move(palette);
+        }
+    }
+    if (entry.palette.empty()) entry.palette = TerrainPalette::fromLegacyLayers(terrain);
+    bool haveMap = false;
+    if (terrain.layerMapPath[0] != '\0') {
+        const std::filesystem::path mapFile = projectRoot / terrain.layerMapPath;
+        std::error_code ec;
+        if (std::filesystem::exists(mapFile, ec)) {
+            TerrainLayerMap map;
+            if (!TerrainLayerMap::load(mapFile.string(), map, error)) return false;
+            entry.layers = std::move(map);
+            haveMap = true;
+        }
+    }
+    if (!haveMap) entry.layers = TerrainLayerMap::fromSplatmap(entry.splatmap);
+    terrain.layerRevision++;
+    return true;
 }
 
 TerrainSplatmap* TerrainCache::splatmapFor(ECS::Entity entity) {
@@ -632,7 +803,19 @@ void TerrainCache::syncGpuTextures(RHI::RenderDevice* device, ECS::Entity entity
     }
     auto it = m_entries.find(entity.id());
     const TerrainSplatmap* splatmap = (it != m_entries.end()) ? &it->second.splatmap : nullptr;
-    TerrainGpuTextureCache::instance().sync(device, entity, terrain, splatmap, projectRoot);
+    const TerrainLayerMap* layers = (it != m_entries.end() && terrain.useLayers && !it->second.layers.empty()) ? &it->second.layers : nullptr;
+    const TerrainPalette* palette = (it != m_entries.end() && terrain.useLayers) ? &it->second.palette : nullptr;
+    LayerBounds dirty;
+    bool dirtyAll = false;
+    if (it != m_entries.end()) {
+        dirty = it->second.layerDirty;
+        dirtyAll = it->second.layerDirtyAll;
+    }
+    const bool uploaded = TerrainGpuTextureCache::instance().sync(device, entity, terrain, splatmap, layers, palette, dirtyAll ? nullptr : &dirty, projectRoot);
+    if (it != m_entries.end() && uploaded) {
+        it->second.layerDirty = {};
+        it->second.layerDirtyAll = false;
+    }
 }
 
 const TerrainGpuTextures* TerrainCache::gpuTexturesFor(ECS::Entity entity) const {

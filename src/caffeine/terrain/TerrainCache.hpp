@@ -11,6 +11,9 @@
 #include "terrain/TerrainSplatPainter.hpp"
 #include "terrain/edit/TerrainTiles.hpp"
 #include "terrain/TerrainSplatmap.hpp"
+#include "terrain/paint/TerrainLayerMap.hpp"
+#include "terrain/paint/TerrainPalette.hpp"
+#include "terrain/paint/TerrainPaintStroke.hpp"
 
 #ifdef CF_HAS_SDL3
 #include "rhi/RenderDevice.hpp"
@@ -46,6 +49,35 @@ public:
 
     TerrainHeightmap* heightmapFor(ECS::Entity entity);
     const TerrainHeightmap* heightmapFor(ECS::Entity entity) const;
+    // --- layered painting (phase 2)
+    TerrainPalette* paletteFor(ECS::Entity entity);
+    const TerrainPalette* paletteFor(ECS::Entity entity) const;
+    TerrainLayerMap* layerMapFor(ECS::Entity entity);
+    const TerrainLayerMap* layerMapFor(ECS::Entity entity) const;
+    /// Turns layered painting on: the palette is the four layers of the terrain, the layer map is its splat map (kept
+    /// if one is already there). Returns false for an unknown terrain.
+    bool enableLayers(ECS::Entity entity, ECS::TerrainComponent& terrain);
+    /// Back to the four-layer splat map, rebuilt from layers 0 to 3 of the layer map (what it can show).
+    void disableLayers(ECS::Entity entity, ECS::TerrainComponent& terrain);
+    /// A painted region reaches the GPU: moves the layer revision.
+    /// `region` is the texels that changed (invalid: the whole map); only those are uploaded.
+    /// The palette and layer map of a terrain, as a unit that can be moved between cache entries.
+    struct LayerState {
+        TerrainPalette palette;
+        TerrainLayerMap layers;
+    };
+    /// Moves the layers out of an entry (it keeps none). Used by scene restores, which rebuild every entry.
+    LayerState takeLayers(ECS::Entity entity);
+    void adoptLayers(ECS::Entity entity, LayerState&& state);
+    void commitLayerEdit(ECS::Entity entity, ECS::TerrainComponent& terrain, const LayerBounds& region = {});
+    /// Writes the palette and the layer map next to the terrain data (default names from `terrainDataPath` when the
+    /// component has none) and records the paths. False if there are no layers or a file cannot be written.
+    bool saveLayers(ECS::Entity entity, ECS::TerrainComponent& terrain, const std::filesystem::path& projectRoot,
+                    std::string* error = nullptr);
+    /// Reads them (a missing palette file is the legacy four layers, a missing map is the splat map). False on a damaged file.
+    bool loadLayers(ECS::Entity entity, ECS::TerrainComponent& terrain, const std::filesystem::path& projectRoot,
+                    std::string* error = nullptr);
+
     TerrainSplatmap* splatmapFor(ECS::Entity entity);
     const TerrainSplatmap* splatmapFor(ECS::Entity entity) const;
     /// The terrain's stored masks (the built-ins need no storage). Null for an entity without a terrain.
@@ -122,6 +154,10 @@ private:
     struct TerrainEntry {
         TerrainHeightmap heightmap;
         TerrainSplatmap splatmap;
+        TerrainPalette palette;
+        TerrainLayerMap layers;
+        LayerBounds layerDirty;   // texels the GPU has not seen yet
+        bool layerDirtyAll = true;
         TerrainMasks masks;
         std::unique_ptr<Assets::Mesh3D> mesh;
         std::unique_ptr<Assets::Mesh3D> collisionMesh;

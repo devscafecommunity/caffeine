@@ -390,6 +390,12 @@ public:
     /// Texture3D. Data is laid out slice-major, rows top-to-bottom.
     bool uploadTexture3D(Texture* texture, const void* pixels, u32 width, u32 height,
                          u32 depth, u32 bytesPerPixel = 4, u32 mipLevel = 0);
+    /// Uploads one slice (`layer`) of a Texture2DArray at a mip level.
+    bool uploadTextureLayer(Texture* texture, const void* pixels, u32 width, u32 height, u32 layer,
+                            u32 bytesPerPixel = 4, u32 mipLevel = 0);
+    /// Uploads a `width` x `height` rectangle whose top-left corner is (`x`, `y`) into a 2D texture (mip 0 by default).
+    bool uploadTextureRect(Texture* texture, const void* pixels, u32 x, u32 y, u32 width, u32 height,
+                           u32 bytesPerPixel = 4, u32 mipLevel = 0);
 
     void destroyTexture(Texture* tex);
     void destroyShader(Shader* shader);
@@ -426,7 +432,7 @@ private:
     void retireGpuTexture(SDL_GPUTexture* handle);
     void releaseRetiredTextures(u32 slot);
     bool uploadTextureVolume(Texture* texture, const void* pixels, u32 width, u32 height,
-                             u32 depth, u32 bytesPerPixel, u32 mipLevel);
+                             u32 depth, u32 bytesPerPixel, u32 mipLevel, u32 layer = 0, u32 x = 0, u32 y = 0);
 
     std::vector<SDL_GPUTexture*> m_retiredTextures[MAX_FRAMES_IN_FLIGHT];
 };

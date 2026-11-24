@@ -39,6 +39,20 @@ public:
 
     RHI::Texture* whiteTexture(RHI::RenderDevice* device);
 
+    /// One slice of a texture array: a picture (project path) multiplied by `tint`, or the flat colour `tint` when the
+    /// path is empty or cannot be read.
+    struct ArraySlice {
+        std::string path;
+        f32 tint[3] = {1.0f, 1.0f, 1.0f};
+    };
+    /// A 2D array texture with one slice per entry, every picture resampled to `size` x `size` (bilinear) with a full
+    /// box-filtered mip chain, so a layer of any resolution fits one array. The caller owns the texture
+    /// (`device->destroyTexture`). Null when the device refuses it.
+    RHI::Texture* buildTextureArray(RHI::RenderDevice* device, const std::vector<ArraySlice>& slices, u32 size,
+                                    const std::string& projectRoot, bool srgb);
+    /// A 1 x 1 x 1 white array: what a shader that samples an array reads when it has none.
+    RHI::Texture* whiteTextureArray(RHI::RenderDevice* device);
+
     /// The mean colour of a picture (linear, from its sRGB texels), cached per file and reloaded when the
     /// file changes. Photon's voxels stand in a textured surface with it. False when the file is missing.
     bool averageColor(const std::string& path, const std::string& projectRoot, Vec3& out);
@@ -90,6 +104,8 @@ private:
     std::vector<std::pair<RHI::RenderDevice*, RHI::Texture*>> m_retired;
     RHI::Texture* m_white = nullptr;
     RHI::RenderDevice* m_whiteDevice = nullptr;
+    RHI::Texture* m_whiteArray = nullptr;
+    RHI::RenderDevice* m_whiteArrayDevice = nullptr;
 };
 
 }  // namespace Caffeine::Render

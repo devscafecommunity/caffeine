@@ -159,6 +159,110 @@ RHI::Texture* GpuTextureCache::loadTexture(RHI::RenderDevice* device, const std:
     return createMippedTexture(device, std::move(rgba), uploadW, uploadH, srgb);
 }
 
+namespace {
+
+// Bilinear resample of an RGBA picture to a square, multiplied by a tint (rgb only).
+std::vector<u8> resampleSquare(const u8* src, u32 srcW, u32 srcH, u32 size, const f32* tint) {
+    std::vector<u8> out(static_cast<size_t>(size) * size * 4);
+    for (u32 y = 0; y < size; ++y) {
+        const f32 fy = (static_cast<f32>(y) + 0.5f) * static_cast<f32>(srcH) / static_cast<f32>(size) - 0.5f;
+        const i32 y0 = std::clamp<i32>(static_cast<i32>(std::floor(fy)), 0, static_cast<i32>(srcH) - 1);
+        const i32 y1 = std::min<i32>(y0 + 1, static_cast<i32>(srcH) - 1);
+        const f32 ty = std::clamp(fy - static_cast<f32>(y0), 0.0f, 1.0f);
+        for (u32 x = 0; x < size; ++x) {
+            const f32 fx = (static_cast<f32>(x) + 0.5f) * static_cast<f32>(srcW) / static_cast<f32>(size) - 0.5f;
+            const i32 x0 = std::clamp<i32>(static_cast<i32>(std::floor(fx)), 0, static_cast<i32>(srcW) - 1);
+            const i32 x1 = std::min<i32>(x0 + 1, static_cast<i32>(srcW) - 1);
+            const f32 tx = std::clamp(fx - static_cast<f32>(x0), 0.0f, 1.0f);
+            for (u32 c = 0; c < 4; ++c) {
+                auto texel = [&](i32 px, i32 py) { return static_cast<f32>(src[(static_cast<size_t>(py) * srcW + px) * 4 + c]); };
+                const f32 top = texel(x0, y0) + (texel(x1, y0) - texel(x0, y0)) * tx;
+                const f32 bottom = texel(x0, y1) + (texel(x1, y1) - texel(x0, y1)) * tx;
+                f32 value = top + (bottom - top) * ty;
+                if (c < 3) value *= tint[c];
+                out[(static_cast<size_t>(y) * size + x) * 4 + c] = static_cast<u8>(std::clamp(value, 0.0f, 255.0f) + 0.5f);
+            }
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+RHI::Texture* GpuTextureCache::buildTextureArray(RHI::RenderDevice* device, const std::vector<ArraySlice>& slices, u32 size,
+                                                 const std::string& projectRoot, bool srgb) {
+    if (!device || slices.empty() || size < 4) return nullptr;
+    u32 mipLevels = 1;
+    for (u32 s = size; s > 1; s >>= 1) ++mipLevels;
+
+    RHI::TextureDesc desc;
+    desc.width = size;
+    desc.height = size;
+    desc.depth = static_cast<u32>(slices.size());
+    desc.type = RHI::TextureType::Texture2DArray;
+    desc.format = srgb ? RHI::TextureFormat::R8G8B8A8_UNORM_SRGB : RHI::TextureFormat::R8G8B8A8_UNORM;
+    desc.usage = RHI::TextureUsage::Sampler;
+    desc.mipLevels = mipLevels;
+    RHI::Texture* texture = device->createTexture(desc);
+    if (!texture) return nullptr;
+
+    for (u32 layer = 0; layer < slices.size(); ++layer) {
+        const ArraySlice& slice = slices[layer];
+        std::vector<u8> rgba;
+        const std::string resolved = slice.path.empty() ? std::string() : resolvePath(slice.path, projectRoot);
+        int width = 0, height = 0, channels = 0;
+        u8* pixels = resolved.empty() ? nullptr : stbi_load(resolved.c_str(), &width, &height, &channels, 4);
+        if (pixels && width > 0 && height > 0) {
+            rgba = resampleSquare(pixels, static_cast<u32>(width), static_cast<u32>(height), size, slice.tint);
+        } else {
+            // No picture: a flat colour from the tint (grey when the layer has none), so the layer is still visible.
+            rgba.resize(static_cast<size_t>(size) * size * 4);
+            for (size_t i = 0; i < rgba.size(); i += 4) {
+                for (u32 c = 0; c < 3; ++c) rgba[i + c] = static_cast<u8>(std::clamp(slice.tint[c] * 128.0f, 0.0f, 255.0f));
+                rgba[i + 3] = 255;
+            }
+        }
+        if (pixels) stbi_image_free(pixels);
+
+        u32 levelW = size, levelH = size;
+        for (u32 level = 0; level < mipLevels; ++level) {
+            if (!device->uploadTextureLayer(texture, rgba.data(), levelW, levelH, layer, 4, level)) {
+                device->destroyTexture(texture);
+                return nullptr;
+            }
+            if (level + 1 == mipLevels) break;
+            std::vector<u8> next;
+            u32 nextW = 0, nextH = 0;
+            halveRgbaImage(rgba.data(), levelW, levelH, next, nextW, nextH);
+            rgba = std::move(next);
+            levelW = nextW;
+            levelH = nextH;
+        }
+    }
+    return texture;
+}
+
+RHI::Texture* GpuTextureCache::whiteTextureArray(RHI::RenderDevice* device) {
+    if (!device) return nullptr;
+    if (m_whiteArray && m_whiteArrayDevice == device) return m_whiteArray;
+    RHI::TextureDesc desc;
+    desc.width = 1;
+    desc.height = 1;
+    desc.depth = 1;
+    desc.type = RHI::TextureType::Texture2DArray;
+    desc.usage = RHI::TextureUsage::Sampler;
+    RHI::Texture* texture = device->createTexture(desc);
+    if (!texture) return nullptr;
+    const u8 white[4] = {255, 255, 255, 255};
+    if (!device->uploadTextureLayer(texture, white, 1, 1, 0, 4, 0)) {
+        device->destroyTexture(texture);
+        return nullptr;
+    }
+    m_whiteArray = texture;
+    m_whiteArrayDevice = device;
+    return m_whiteArray;
+}
+
 bool GpuTextureCache::averageColor(const std::string& path, const std::string& projectRoot, Vec3& out) {
     if (path.empty()) return false;
     const std::string resolved = resolvePath(path, projectRoot);
@@ -428,6 +532,11 @@ void GpuTextureCache::releaseAll(RHI::RenderDevice* device) {
         if (device) device->destroyTexture(m_white);
         m_white = nullptr;
         m_whiteDevice = nullptr;
+    }
+    if (m_whiteArray && (!device || m_whiteArrayDevice == device)) {
+        if (device) device->destroyTexture(m_whiteArray);
+        m_whiteArray = nullptr;
+        m_whiteArrayDevice = nullptr;
     }
 }
 

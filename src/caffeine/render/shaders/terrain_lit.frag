@@ -75,6 +75,8 @@ layout(set = 3, binding = 2) uniform TerrainMaterialUBO {
     vec4 uWorldSize;
     vec4 uFlags;
     mat4 uModelInv;
+    vec4 uLayerTile[16];  // metres per repeat of each array slice, four to a vec4
+    vec4 uLayerRot[16];   // radians
 } terrainMat;
 
 layout(set = 2, binding = 0) uniform sampler2D uSplatMap;
@@ -89,6 +91,10 @@ layout(set = 2, binding = 8) uniform samplerCube uPointShadow0;
 layout(set = 2, binding = 9) uniform samplerCube uPointShadow1;
 layout(set = 2, binding = 10) uniform sampler2D uSpotShadow0;
 layout(set = 2, binding = 11) uniform sampler2D uSpotShadow1;
+// Layered painting: four layers a texel (indices and weights, read without filtering) over one array slice per layer.
+layout(set = 2, binding = 12) uniform sampler2D uLayerIndex;
+layout(set = 2, binding = 13) uniform sampler2D uLayerWeight;
+layout(set = 2, binding = 14) uniform sampler2DArray uLayerArray;
 
 layout(location = 0) out vec4 outColor;
 // Photon G-buffer (see GpuSceneRenderer.hpp for the fixed attachment order).
@@ -194,6 +200,55 @@ vec3 triplanarSample(sampler2D tex, vec3 localPos, vec3 blend, float tileScale) 
     return xProj * blend.x + yProj * blend.y + zProj * blend.z;
 }
 
+vec3 layerSliceSample(int slice, vec2 uv) {
+    float a = terrainMat.uLayerRot[slice >> 2][slice & 3];
+    float c = cos(a);
+    float s = sin(a);
+    return texture(uLayerArray, vec3(vec2(c * uv.x - s * uv.y, s * uv.x + c * uv.y), float(slice))).rgb;
+}
+
+vec3 triplanarLayer(int slice, vec3 localPos, vec3 blend) {
+    vec3 scaled = localPos / max(terrainMat.uLayerTile[slice >> 2][slice & 3], 0.1);
+    return layerSliceSample(slice, scaled.yz) * blend.x + layerSliceSample(slice, scaled.xz) * blend.y +
+           layerSliceSample(slice, scaled.xy) * blend.z;
+}
+
+// The albedo of the painted layers at a point of the terrain. The four layers of the nearest texel are blended by their
+// weights, smoothed over the four texels around the point so a painted edge is not a staircase of squares.
+vec3 sampleLayeredAlbedo(vec3 local, vec3 blend) {
+    float halfX = terrainMat.uWorldSize.x * 0.5;
+    float halfZ = terrainMat.uWorldSize.y * 0.5;
+    vec2 uv = vec2(clamp((local.x + halfX) / max(terrainMat.uWorldSize.x, 0.0001), 0.0, 1.0),
+                   clamp((local.z + halfZ) / max(terrainMat.uWorldSize.y, 0.0001), 0.0, 1.0));
+    vec2 size = vec2(textureSize(uLayerIndex, 0));
+    vec2 texel = 1.0 / size;
+    vec2 p = uv * size - 0.5;
+    vec2 f = fract(p);
+    vec2 base = (floor(p) + 0.5) * texel;
+    vec4 own = floor(texture(uLayerIndex, uv) * 255.0 + 0.5);
+
+    vec4 acc = vec4(0.0);
+    for (int corner = 0; corner < 4; ++corner) {
+        vec2 off = vec2(float(corner & 1), float(corner >> 1));
+        vec2 pos = base + off * texel;
+        float bw = (off.x > 0.5 ? f.x : 1.0 - f.x) * (off.y > 0.5 ? f.y : 1.0 - f.y);
+        vec4 ci = floor(texture(uLayerIndex, pos) * 255.0 + 0.5);
+        vec4 cw = texture(uLayerWeight, pos);
+        for (int k = 0; k < 4; ++k) {
+            vec4 same = vec4(equal(ci, vec4(own[k])));
+            acc[k] += bw * dot(same, cw);
+        }
+    }
+    float total = acc.x + acc.y + acc.z + acc.w;
+    if (total < 1e-4) return triplanarLayer(int(own.x), local, blend);
+    acc /= total;
+    vec3 albedo = vec3(0.0);
+    for (int k = 0; k < 4; ++k) {
+        if (acc[k] > 0.0) albedo += triplanarLayer(int(own[k]), local, blend) * acc[k];
+    }
+    return albedo;
+}
+
 vec3 applyDetailVariation(vec3 albedo, vec3 localPos) {
     float macro = sin(localPos.x * 0.08) * sin(localPos.z * 0.06) * 0.015;
     return clamp(albedo * (1.0 + macro), 0.0, 1.0);
@@ -206,6 +261,9 @@ vec3 sampleTerrainAlbedo(vec3 n) {
     blend /= (blend.x + blend.y + blend.z);
     vec3 local = (terrainMat.uModelInv * vec4(v_worldPos, 1.0)).xyz;
 
+    if (terrainMat.uFlags.z > 0.5) {
+        return applyDetailVariation(sampleLayeredAlbedo(local, blend), local);
+    }
     if (terrainMat.uFlags.x > 0.5) {
         float halfX = terrainMat.uWorldSize.x * 0.5;
         float halfZ = terrainMat.uWorldSize.y * 0.5;

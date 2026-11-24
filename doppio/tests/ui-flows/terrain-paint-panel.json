@@ -1,0 +1,42 @@
+{
+  "name": "Terrain Paint: the tab is one menu away and, with no terrain in the scene, offers nothing to paint",
+  "fixture": "scene3d",
+  "size": [
+    1440,
+    800
+  ],
+  "steps": [
+    {
+      "action": "click",
+      "target": "id:editor.menu.view",
+      "label": "open the View menu"
+    },
+    {
+      "action": "click",
+      "target": "id:editor.menu.view.terrain_paint",
+      "label": "open the Terrain Paint tab"
+    },
+    {
+      "action": "expect",
+      "exists": [
+        "id:editor.pane.terrain_paint",
+        "id:editor.pane.tab.terrain_paint"
+      ],
+      "label": "the tab is there"
+    },
+    {
+      "action": "expect",
+      "missing": [
+        "id:terrain_paint.tool.active",
+        "id:terrain_paint.layers.enable",
+        "id:terrain_paint.palette.add"
+      ],
+      "label": "without a terrain there is no switch, no palette and nothing to turn on"
+    },
+    {
+      "action": "screenshot",
+      "name": "terrain-paint",
+      "target": "id:editor.pane.terrain_paint"
+    }
+  ]
+}

@@ -20,6 +20,7 @@ pub mod list_row;
 pub mod material_preview;
 pub mod menu;
 pub mod node_canvas;
+pub mod palette_row;
 pub mod panel;
 pub mod prefab_palette;
 pub mod progress;

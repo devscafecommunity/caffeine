@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define CAFFEINE_CAPI_VERSION 28
+#define CAFFEINE_CAPI_VERSION 29
 #define CAFFEINE_ENTITY_NONE UINT32_MAX
 
 typedef struct CaffeineSession CaffeineSession;
@@ -1173,6 +1173,98 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_stroke_revert(Caffeine
                                                         uint32_t record);
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_stroke_reapply(CaffeineSession* session,
                                                          uint32_t record);
+/**
+ * Terrain layers (v29): a material palette of up to 64 layers (CAFFEINE_PALETTE_MAX) a terrain is painted with, and a
+ * layer map naming up to four of them, with weights, at every splat texel. A terrain with layers off is painted with its
+ * four splat layers as before. Painting is a stroke like sculpting (`..._stroke_point`, `_stroke_end`, `_revert`,
+ * `_reapply` work for it unchanged); a record id may belong to a height stroke, a layer stroke or a palette edit, and
+ * revert and reapply know which.
+ */
+#define CAFFEINE_PALETTE_MAX 64
+
+typedef struct CaffeinePaletteLayer {
+    char name[64];
+    char albedo[256];           /* project path of the picture; empty draws the tint as a flat colour */
+    char normal[256];           /* reserved: kept in the file, not drawn yet */
+    float tile_size_m;          /* metres one repeat covers */
+    float rotation_degrees;     /* turns the picture on the ground */
+    float tint[3];
+    uint32_t resolution;        /* 256..4096, a power of two (rounded to the nearest) */
+    int32_t locked;             /* painting never changes the weight of a locked layer */
+    uint32_t texels;            /* out only: how many texels use the layer */
+} CaffeinePaletteLayer;
+
+typedef enum CaffeinePaintMode {
+    CAFFEINE_PAINT_PAINT = 0,    /* moves weight toward `layer` */
+    CAFFEINE_PAINT_ERASE = 1,    /* takes `layer` away, the others fill in */
+    CAFFEINE_PAINT_REPLACE = 2,  /* moves the weight of `from_layer` to `layer` */
+    CAFFEINE_PAINT_SMOOTH = 3    /* blends each texel toward its neighbours */
+} CaffeinePaintMode;
+
+typedef struct CaffeinePaintBrush {
+    CaffeineBrushPreset shape;   /* radius, strength (share per stamp), spacing, falloff, stamp, jitter, symmetry, protection */
+    int32_t mode;                /* CaffeinePaintMode */
+    uint32_t layer;
+    uint32_t from_layer;
+} CaffeinePaintBrush;
+
+typedef struct CaffeineTerrainLayers {
+    int32_t enabled;
+    uint32_t palette_count;
+    uint32_t map_x, map_z;       /* texels of the layer map */
+    uint32_t gpu_slices;         /* array slices on the GPU (the layers in use) */
+    uint32_t gpu_array_size;     /* pixels a side of every slice (lowered to fit the budget) */
+    uint64_t gpu_array_bytes;    /* VRAM the array takes */
+} CaffeineTerrainLayers;
+
+typedef struct CaffeineLayerSample {
+    uint32_t layer[4];
+    float weight[4];             /* add up to 1 */
+} CaffeineLayerSample;
+
+/** Layered painting on or off for a terrain. On: the palette is the terrain's four layers and the map its splat map, unless it has them already. Off: the splat map is rebuilt from layers 0 to 3. Marks the scene changed. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_layers_enable(CaffeineSession* session, CaffeineEntity entity,
+                                                                        int enabled);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_layers(const CaffeineSession* session, CaffeineEntity entity,
+                                                                 CaffeineTerrainLayers* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_palette_layer(const CaffeineSession* session, CaffeineEntity entity,
+                                                                        uint32_t index, CaffeinePaletteLayer* out);
+/** The palette as `.terrainpalette` text (`out` may be null to ask for `*needed`, which counts the terminating zero). */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_palette_text(const CaffeineSession* session, CaffeineEntity entity,
+                                                                       char* out, size_t capacity, size_t* needed);
+/**
+ * Replaces the palette by the layers of `.terrainpalette` text, as one undoable edit (`out_record`, 0 if nothing changed).
+ * The text must hold at least as many layers as the palette has (a layer is removed with `_palette_remove`, which
+ * renumbers the map); extra layers are appended. `error` (optional) receives the reason with its line number.
+ * `merge_into` (0 for none) is the record of an earlier palette edit to fold this one into instead of making a new
+ * record, so dragging a slider is one undo step: it works only when that record is a palette edit of this terrain; the
+ * caller says when it is still the latest step.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_palette_apply(CaffeineSession* session, CaffeineEntity entity,
+                                                                        const char* text, uint32_t merge_into,
+                                                                        uint32_t* out_record, char* error, size_t error_size);
+/** Removes a layer: its weight goes to the other layers of each texel (layer 0 when it stood alone) and the layers after it move down. Undoable. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_palette_remove(CaffeineSession* session, CaffeineEntity entity,
+                                                                         uint32_t index, uint32_t* out_record);
+/** Moves a layer to another position; the map is renumbered with it. Undoable. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_palette_move(CaffeineSession* session, CaffeineEntity entity,
+                                                                       uint32_t from, uint32_t to, uint32_t* out_record);
+/** Starts a paint stroke (an open stroke is ended first). Points go through `caffeine_session_terrain_stroke_point` (world space, metres) and it ends with `_stroke_end`. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_paint_begin(CaffeineSession* session, CaffeineEntity entity,
+                                                                      const CaffeinePaintBrush* brush);
+/**
+ * Fills the layers from rules on slope, height and masks: `rules` is the biome-table text (`class 2 base 0.9` and indented
+ * `slope 0 0.1 0.3 0.4` terms) where the class number is the palette layer. A texel no rule claims takes `fallback`.
+ * `region` (optional, four texel coordinates min_x, min_z, max_x, max_z) limits it. One undoable edit.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_autolayer(CaffeineSession* session, CaffeineEntity entity,
+                                                                    const char* rules, uint32_t fallback,
+                                                                    const uint32_t* region, uint32_t* out_record,
+                                                                    char* error, size_t error_size);
+/** The layers under a world-space point (metres): what an eyedropper reads. CAFFEINE_NOT_FOUND off the terrain or with layers off. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_layer_at(const CaffeineSession* session, CaffeineEntity entity,
+                                                                   double x, double y, double z, CaffeineLayerSample* out);
+
 /** Terrain height in metres at (x, z) metres from the terrain's corner. The mesh is centred on its entity, so the corner is at the entity position minus half the size. */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_height(const CaffeineSession* session,
                                                                  CaffeineEntity entity, float x,

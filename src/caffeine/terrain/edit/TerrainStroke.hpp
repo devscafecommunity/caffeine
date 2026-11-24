@@ -117,6 +117,29 @@ struct StrokeRecord {
     TerrainVertexBounds applyAfter(TerrainHeightmap& heightmap) const;
 };
 
+/// One stamp laid on the ground: where, how big, turned how, and how strong (after jitter and symmetry).
+struct StampParams {
+    f64 x = 0.0, z = 0.0;
+    f64 radius = 1.0;
+    f32 rotation = 0.0f;  // radians
+    f32 flipU = 1.0f, flipV = 1.0f;
+    f32 strength = 0.0f;
+    f32 dirX = 0.0f, dirZ = 0.0f;  // the stroke's direction (unit), for Smudge
+    f32 offsetX = 0.0f, offsetZ = 0.0f;
+};
+
+/// The stamps one logical stamp of a stroke lays: itself, varied by the brush's jitter (deterministic for the seed and
+/// the stamp's `index`) and then copied by its symmetry. `dirX`, `dirZ` are the stroke's direction. Shared by the height
+/// strokes and the layer painting.
+std::vector<StampParams> placeStamp(const StrokeBrush& brush, u32 index, f64 x, f64 z, f32 pressure, f32 dirX, f32 dirZ);
+
+/// The weight of a stamp at `dx`, `dz` (metres from its centre, `dist` away): the falloff times the stamp's picture.
+/// Zero outside the radius.
+f32 shapeWeight(const StrokeBrush& brush, const StampParams& params, f64 dx, f64 dz, f64 dist);
+
+/// The product of a brush's protection terms at a point of the terrain (1 with none): see `StrokeBrush::protect`.
+f32 protectionWeight(const StrokeBrush& brush, const TerrainMasks* masks, const TerrainFrame& frame, f32 x, f32 z);
+
 class TerrainStroke {
 public:
     TerrainStroke(TerrainHeightmap& heightmap, const ECS::TerrainComponent& settings, StrokeBrush brush);
@@ -135,15 +158,6 @@ public:
     StrokeRecord finish();
 
 private:
-    struct StampParams {
-        f64 x = 0.0, z = 0.0;
-        f64 radius = 1.0;
-        f32 rotation = 0.0f;  // radians
-        f32 flipU = 1.0f, flipV = 1.0f;
-        f32 strength = 0.0f;
-        f32 dirX = 0.0f, dirZ = 0.0f;  // the stroke's direction (unit), for Smudge
-        f32 offsetX = 0.0f, offsetZ = 0.0f;
-    };
     void stamp(f64 x, f64 z, f32 pressure);
     void applyStamp(const StampParams& params);
     void erode(const StampParams& params, bool thermal, i64 minX, i64 maxX, i64 minZ, i64 maxZ, f64 gridX, f64 gridZ);

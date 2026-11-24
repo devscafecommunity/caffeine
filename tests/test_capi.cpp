@@ -2008,3 +2008,218 @@ TEST_CASE("C API brushes: the built-in library, .brush text, stamp previews and 
     CHECK(caffeine_session_terrain_stroke_begin_preset(session, entity, nullptr) == CAFFEINE_INVALID_ARGUMENT);
     caffeine_session_destroy(session);
 }
+
+TEST_CASE("C API terrain layers: a palette, painting, auto-layering, removal and undo, and a scene round trip", "[capi][terrain][paint]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Ground");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 129;
+    terrain.resolution_z = 129;
+    terrain.size_x = 256.0f;
+    terrain.size_z = 256.0f;
+    terrain.max_height = 80.0f;
+    std::vector<float> heights(129 * 129, 0.3f);
+    // A ramp on the right half: steep ground for the auto-layering.
+    for (int z = 0; z < 129; ++z) {
+        for (int x = 64; x < 129; ++x) heights[z * 129 + x] = 0.3f + static_cast<float>(x - 64) * 2.0f / 80.0f;
+    }
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+
+    // Layers are off until asked for; painting says so.
+    CaffeineTerrainLayers info{};
+    REQUIRE(caffeine_session_terrain_layers(session, entity, &info) == CAFFEINE_OK);
+    CHECK(info.enabled == 0);
+    CaffeinePaintBrush brush{};
+    CHECK(caffeine_session_terrain_paint_begin(session, entity, &brush) == CAFFEINE_ERROR);
+    CHECK(caffeine_session_terrain_layers_enable(session, 9999u, 1) == CAFFEINE_NOT_FOUND);
+
+    REQUIRE(caffeine_session_terrain_layers_enable(session, entity, 1) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_layers(session, entity, &info) == CAFFEINE_OK);
+    CHECK(info.enabled == 1);
+    CHECK(info.palette_count == 4);  // the terrain's four layers
+    CHECK(info.map_x >= 129);
+
+    CaffeinePaletteLayer layer{};
+    REQUIRE(caffeine_session_terrain_palette_layer(session, entity, 0, &layer) == CAFFEINE_OK);
+    CHECK(std::string(layer.name) == "Grass");
+    CHECK(layer.texels == info.map_x * info.map_z);  // everything is layer 0 to start with
+    CHECK(caffeine_session_terrain_palette_layer(session, entity, 99, &layer) == CAFFEINE_NOT_FOUND);
+
+    // Add a fifth layer by text; fewer layers than the palette has is refused.
+    size_t needed = 0;
+    REQUIRE(caffeine_session_terrain_palette_text(session, entity, nullptr, 0, &needed) == CAFFEINE_OK);
+    std::string text(needed, '\0');
+    REQUIRE(caffeine_session_terrain_palette_text(session, entity, text.data(), text.size(), nullptr) == CAFFEINE_OK);
+    text.resize(std::strlen(text.c_str()));
+    char error[200] = {};
+    uint32_t record = 0;
+    CHECK(caffeine_session_terrain_palette_apply(session, entity, "layer Only one\n", 0, &record, error, sizeof(error)) == CAFFEINE_ERROR);
+    CHECK(std::string(error).find("fewer layers") != std::string::npos);
+    CHECK(caffeine_session_terrain_palette_apply(session, entity, "layer A\n  tile many\n", 0, &record, error, sizeof(error)) == CAFFEINE_ERROR);
+    CHECK(std::string(error).find("line 2") != std::string::npos);
+    REQUIRE(caffeine_session_terrain_palette_apply(session, entity, (text + "layer Snow\n  tile 3\n  tint 0.9 0.9 1\n").c_str(), 0, &record, error, sizeof(error)) == CAFFEINE_OK);
+    CHECK(record != 0);
+    REQUIRE(caffeine_session_terrain_layers(session, entity, &info) == CAFFEINE_OK);
+    CHECK(info.palette_count == 5);
+    const uint32_t addRecord = record;
+
+    // An edit that continues folds into its record: one undo step for a whole slider drag.
+    {
+        std::string edited = text + "layer Snow\n  tile 3.5\n  tint 0.9 0.9 1\n";
+        uint32_t merged = 0;
+        REQUIRE(caffeine_session_terrain_palette_apply(session, entity, edited.c_str(), addRecord, &merged, error, sizeof(error)) == CAFFEINE_OK);
+        CHECK(merged == addRecord);
+        CaffeinePaletteLayer snow{};
+        REQUIRE(caffeine_session_terrain_palette_layer(session, entity, 4, &snow) == CAFFEINE_OK);
+        CHECK(snow.tile_size_m == Approx(3.5f));
+        // Without a record to fold into, a new one is made.
+        edited = text + "layer Snow\n  tile 4\n  tint 0.9 0.9 1\n";
+        REQUIRE(caffeine_session_terrain_palette_apply(session, entity, edited.c_str(), 0, &merged, error, sizeof(error)) == CAFFEINE_OK);
+        CHECK(merged != addRecord);
+        // A record that is not a palette edit of this terrain is not folded into.
+        edited = text + "layer Snow\n  tile 5\n  tint 0.9 0.9 1\n";
+        uint32_t again = 0;
+        REQUIRE(caffeine_session_terrain_palette_apply(session, entity, edited.c_str(), 987654u, &again, error, sizeof(error)) == CAFFEINE_OK);
+        CHECK(again != 987654u);
+        // Undoing the folded record puts back the palette as it was before the first edit of the drag.
+        REQUIRE(caffeine_session_terrain_stroke_revert(session, again) == CAFFEINE_OK);
+        REQUIRE(caffeine_session_terrain_stroke_revert(session, merged) == CAFFEINE_OK);
+        REQUIRE(caffeine_session_terrain_palette_layer(session, entity, 4, &snow) == CAFFEINE_OK);
+        CHECK(snow.tile_size_m == Approx(3.5f));
+        REQUIRE(caffeine_session_terrain_stroke_reapply(session, merged) == CAFFEINE_OK);
+        REQUIRE(caffeine_session_terrain_stroke_reapply(session, again) == CAFFEINE_OK);
+        // Settle on the 3 m tile the rest of this case expects.
+        edited = text + "layer Snow\n  tile 3\n  tint 0.9 0.9 1\n";
+        REQUIRE(caffeine_session_terrain_palette_apply(session, entity, edited.c_str(), 0, &merged, error, sizeof(error)) == CAFFEINE_OK);
+    }
+
+    // Paint layer 4 with a round brush.
+    CaffeineBrushPreset round{};
+    for (uint32_t i = 0; i < caffeine_terrain_brush_count(); ++i) {
+        REQUIRE(caffeine_terrain_brush_at(i, &round) == CAFFEINE_OK);
+        if (std::string(round.name) == "Round hard") break;
+    }
+    brush.shape = round;
+    brush.shape.radius_m = 12.0f;
+    brush.shape.strength = 1.0f;
+    brush.mode = CAFFEINE_PAINT_PAINT;
+    brush.layer = 4;
+    CHECK(caffeine_session_terrain_paint_begin(session, entity, &brush) == CAFFEINE_OK);
+    CaffeineBrushPreset keep = round;
+    (void)keep;
+    REQUIRE(caffeine_session_terrain_stroke_point(session, -40.0, 0.0, 0.0, 1.0f, nullptr) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_stroke_point(session, -30.0, 0.0, 0.0, 1.0f, nullptr) == CAFFEINE_OK);
+    CaffeineTerrainStrokeResult result{};
+    REQUIRE(caffeine_session_terrain_stroke_end(session, &result) == CAFFEINE_OK);
+    CHECK(result.record != 0);
+    CHECK(result.stamps >= 2);
+    CaffeineLayerSample sample{};
+    REQUIRE(caffeine_session_terrain_layer_at(session, entity, -35.0, 0.0, 0.0, &sample) == CAFFEINE_OK);
+    CHECK(sample.layer[0] == 4);
+    CHECK(sample.weight[0] == Approx(1.0f));
+    REQUIRE(caffeine_session_terrain_layer_at(session, entity, 40.0, 0.0, 0.0, &sample) == CAFFEINE_OK);
+    CHECK(sample.layer[0] == 0);
+    CHECK(caffeine_session_terrain_layer_at(session, entity, 5000.0, 0.0, 0.0, &sample) == CAFFEINE_NOT_FOUND);
+
+    // Undo and redo a paint stroke by its record, the same calls as for a height stroke.
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, result.record) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_layer_at(session, entity, -35.0, 0.0, 0.0, &sample) == CAFFEINE_OK);
+    CHECK(sample.layer[0] == 0);
+    REQUIRE(caffeine_session_terrain_stroke_reapply(session, result.record) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_layer_at(session, entity, -35.0, 0.0, 0.0, &sample) == CAFFEINE_OK);
+    CHECK(sample.layer[0] == 4);
+
+    // Bad paint requests.
+    CaffeinePaintBrush wrong = brush;
+    wrong.layer = 77;
+    CHECK(caffeine_session_terrain_paint_begin(session, entity, &wrong) == CAFFEINE_INVALID_ARGUMENT);
+    wrong = brush;
+    wrong.mode = 9;
+    CHECK(caffeine_session_terrain_paint_begin(session, entity, &wrong) == CAFFEINE_INVALID_ARGUMENT);
+
+    // Auto-layering: layer 1 (rock) on steep ground, layer 0 elsewhere. One undoable edit.
+    uint32_t autoRecord = 0;
+    CHECK(caffeine_session_terrain_autolayer(session, entity, "class 1 base 1\n  slope 0.3 0.4 1 1\n", 0, nullptr, &autoRecord, error, sizeof(error)) == CAFFEINE_OK);
+    CHECK(autoRecord != 0);
+    REQUIRE(caffeine_session_terrain_layer_at(session, entity, 40.0, 0.0, 0.0, &sample) == CAFFEINE_OK);
+    CHECK(sample.layer[0] == 1);
+    REQUIRE(caffeine_session_terrain_layer_at(session, entity, -35.0, 0.0, 0.0, &sample) == CAFFEINE_OK);
+    CHECK(sample.layer[0] == 0);  // the rules repaint everything they cover, even the stroke
+    CHECK(caffeine_session_terrain_autolayer(session, entity, "class 9 base 1\n", 0, nullptr, &autoRecord, error, sizeof(error)) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(std::string(error).find("class 9") != std::string::npos);
+    CHECK(caffeine_session_terrain_autolayer(session, entity, "slope 1 2 3 4\n", 0, nullptr, &autoRecord, error, sizeof(error)) == CAFFEINE_ERROR);
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, autoRecord == 0 ? 0u : autoRecord) != CAFFEINE_OK);  // a failed call left no record
+    // (The earlier auto-layering's record is the one before the failed calls.)
+
+    // Removing a layer renumbers the painting; undo puts both back.
+    uint32_t removeRecord = 0;
+    REQUIRE(caffeine_session_terrain_stroke_reapply(session, result.record) == CAFFEINE_OK);  // layer 4 painted again at the old spot
+    REQUIRE(caffeine_session_terrain_palette_remove(session, entity, 2, &removeRecord) == CAFFEINE_OK);
+    CHECK(removeRecord != 0);
+    REQUIRE(caffeine_session_terrain_layers(session, entity, &info) == CAFFEINE_OK);
+    CHECK(info.palette_count == 4);
+    uint32_t unused = 0;
+    CHECK(caffeine_session_terrain_palette_remove(session, 9999u, 0, &unused) == CAFFEINE_NOT_FOUND);
+    REQUIRE(caffeine_session_terrain_layer_at(session, entity, -35.0, 0.0, 0.0, &sample) == CAFFEINE_OK);
+    CHECK(sample.layer[0] == 3);  // layer 4 is layer 3 now
+    uint32_t afterRemove = 0;
+    REQUIRE(caffeine_session_terrain_palette_remove(session, entity, 3, &afterRemove) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, afterRemove) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, removeRecord) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_layers(session, entity, &info) == CAFFEINE_OK);
+    CHECK(info.palette_count == 5);
+    REQUIRE(caffeine_session_terrain_layer_at(session, entity, -35.0, 0.0, 0.0, &sample) == CAFFEINE_OK);
+    CHECK(sample.layer[0] == 4);
+    // The last layer cannot be removed.
+    (void)addRecord;
+
+    // A layer move renumbers too.
+    uint32_t moveRecord = 0;
+    REQUIRE(caffeine_session_terrain_palette_move(session, entity, 4, 0, &moveRecord) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_palette_layer(session, entity, 0, &layer) == CAFFEINE_OK);
+    CHECK(std::string(layer.name) == "Snow");
+    REQUIRE(caffeine_session_terrain_layer_at(session, entity, -35.0, 0.0, 0.0, &sample) == CAFFEINE_OK);
+    CHECK(sample.layer[0] == 0);
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, moveRecord) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_palette_layer(session, entity, 0, &layer) == CAFFEINE_OK);
+    CHECK(std::string(layer.name) == "Grass");
+
+    // The scene saves the palette and the layer map with the terrain, and a new session reads them back.
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "caffeine_layers_project";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "Scenes");
+    const std::string scene = (root / "Scenes" / "main.caf").string();
+    REQUIRE(caffeine_session_save_scene(session, scene.c_str()) == CAFFEINE_OK);
+    CHECK(std::filesystem::exists(root / "terrain"));
+    bool foundPalette = false, foundMap = false;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+        foundPalette |= entry.path().extension() == ".terrainpalette";
+        foundMap |= entry.path().extension() == ".terrainlayers";
+    }
+    CHECK(foundPalette);
+    CHECK(foundMap);
+    caffeine_session_destroy(session);
+
+    CaffeineSession* second = caffeine_session_create();
+    REQUIRE(caffeine_session_load_scene(second, scene.c_str()) == CAFFEINE_OK);
+    CaffeineEntity loaded = 0;
+    bool haveGround = false;
+    for (uint32_t i = 0; i < caffeine_session_entity_count(second); ++i) {
+        CaffeineEntityInfo entityInfo{};
+        if (caffeine_session_entity_at(second, i, &entityInfo) == CAFFEINE_OK && std::string(entityInfo.name) == "Ground") {
+            loaded = entityInfo.id;
+            haveGround = true;
+        }
+    }
+    REQUIRE(haveGround);
+    CaffeineTerrainLayers back{};
+    REQUIRE(caffeine_session_terrain_layers(second, loaded, &back) == CAFFEINE_OK);
+    CHECK(back.enabled == 1);
+    CHECK(back.palette_count == 5);
+    CaffeineLayerSample again{};
+    REQUIRE(caffeine_session_terrain_layer_at(second, loaded, -35.0, 0.0, 0.0, &again) == CAFFEINE_OK);
+    CHECK(again.layer[0] == 4);
+    caffeine_session_destroy(second);
+    std::filesystem::remove_all(root);
+}

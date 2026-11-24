@@ -51,6 +51,17 @@ struct TerrainComponent {
     bool buildCollisionMesh = true;
 
     char terrainDataPath[256] = {};
+
+    // --- layered painting (terrain editing roadmap, phase 2)
+    /// On: the terrain is painted from a palette of up to 64 layers through a layer map (four blended per texel), and
+    /// `splatLayerPaths` is ignored. Off: the four layers above and the splat map, as before.
+    bool useLayers = false;
+    u32 layerRevision = 1;
+    /// Project-relative files of the palette (`.terrainpalette`) and the layer map (`.terrainlayers`); empty until saved.
+    char palettePath[256] = {};
+    char layerMapPath[256] = {};
+    /// The layer array on the GPU may take this many megabytes; the sharpness of the layers falls by classes until it fits.
+    u32 layerVramBudgetMb = 256;
 };
 
 }  // namespace Caffeine::ECS

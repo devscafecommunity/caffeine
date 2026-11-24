@@ -207,73 +207,80 @@ Snapshot takeSnapshot(const TerrainHeightmap& map, i64 minX, i64 minZ, i64 maxX,
 
 }  // namespace
 
-f32 TerrainStroke::weightAt(const StampParams& params, f64 dx, f64 dz, f64 dist, i64 vx, i64 vz) const {
-    f32 weight = falloffWeight(m_brush.falloff, static_cast<f32>(1.0 - dist / params.radius));
-    if (!m_brush.stamp.empty()) {
+f32 shapeWeight(const StrokeBrush& brush, const StampParams& params, f64 dx, f64 dz, f64 dist) {
+    f32 weight = falloffWeight(brush.falloff, static_cast<f32>(1.0 - dist / params.radius));
+    if (!brush.stamp.empty()) {
         const f32 u = static_cast<f32>(dx / params.radius) * params.flipU;
         const f32 v = static_cast<f32>(dz / params.radius) * params.flipV;
         const f32 cosR = std::cos(params.rotation), sinR = std::sin(params.rotation);
-        f32 shape = m_brush.stamp.sample(u * cosR + v * sinR, -u * sinR + v * cosR);
-        if (m_brush.signedStamp) shape = shape * 2.0f - 1.0f;
+        f32 shape = brush.stamp.sample(u * cosR + v * sinR, -u * sinR + v * cosR);
+        if (brush.signedStamp) shape = shape * 2.0f - 1.0f;
         weight *= shape;
-    }
-    if (!m_brush.protect.empty() && weight != 0.0f) {
-        const TerrainFrame frame{&m_map, static_cast<f32>(m_sizeX), static_cast<f32>(m_sizeZ), m_maxHeight};
-        const f32 x = static_cast<f32>(static_cast<f64>(vx) * m_grid.cellSizeX());
-        const f32 z = static_cast<f32>(static_cast<f64>(vz) * m_grid.cellSizeZ());
-        for (const BiomeTerm& term : m_brush.protect) {
-            f32 value = 0.0f;
-            // An unknown mask protects everything (the same rule as the biome table: nothing is placed on a name that
-            // does not exist).
-            if (!m_masks) {
-                const TerrainMasks builtin;
-                if (!builtin.sample(frame, term.mask, x, z, value)) return 0.0f;
-            } else if (!m_masks->sample(frame, term.mask, x, z, value)) {
-                return 0.0f;
-            }
-            weight *= term.weight(value);
-            if (weight == 0.0f) return 0.0f;
-        }
     }
     return weight;
 }
 
-void TerrainStroke::stamp(f64 x, f64 z, f32 pressure) {
-    const u32 index = m_logical++;
-    const f32 pressureFactor = 1.0f + (std::clamp(pressure, 0.0f, 1.0f) - 1.0f) * std::clamp(m_brush.pressureToStrength, 0.0f, 1.0f);
+f32 protectionWeight(const StrokeBrush& brush, const TerrainMasks* masks, const TerrainFrame& frame, f32 x, f32 z) {
+    f32 weight = 1.0f;
+    for (const BiomeTerm& term : brush.protect) {
+        f32 value = 0.0f;
+        // An unknown mask protects everything (the same rule as the biome table: nothing is placed on a name that
+        // does not exist).
+        if (!masks) {
+            const TerrainMasks builtin;
+            if (!builtin.sample(frame, term.mask, x, z, value)) return 0.0f;
+        } else if (!masks->sample(frame, term.mask, x, z, value)) {
+            return 0.0f;
+        }
+        weight *= term.weight(value);
+        if (weight == 0.0f) return 0.0f;
+    }
+    return weight;
+}
+
+f32 TerrainStroke::weightAt(const StampParams& params, f64 dx, f64 dz, f64 dist, i64 vx, i64 vz) const {
+    f32 weight = shapeWeight(m_brush, params, dx, dz, dist);
+    if (!m_brush.protect.empty() && weight != 0.0f) {
+        const TerrainFrame frame{&m_map, static_cast<f32>(m_sizeX), static_cast<f32>(m_sizeZ), m_maxHeight};
+        const f32 x = static_cast<f32>(static_cast<f64>(vx) * m_grid.cellSizeX());
+        const f32 z = static_cast<f32>(static_cast<f64>(vz) * m_grid.cellSizeZ());
+        weight *= protectionWeight(m_brush, m_masks, frame, x, z);
+    }
+    return weight;
+}
+
+std::vector<StampParams> placeStamp(const StrokeBrush& brush, u32 index, f64 x, f64 z, f32 pressure, f32 dirX, f32 dirZ) {
+    const f32 pressureFactor = 1.0f + (std::clamp(pressure, 0.0f, 1.0f) - 1.0f) * std::clamp(brush.pressureToStrength, 0.0f, 1.0f);
 
     StampParams base;
     base.x = x;
     base.z = z;
-    base.radius = static_cast<f64>(m_brush.radiusM);
-    base.rotation = m_brush.rotationDegrees * 3.14159265f / 180.0f;
-    base.strength = m_brush.strength * pressureFactor;
-    base.dirX = m_dirX;
-    base.dirZ = m_dirZ;
-    base.offsetX = m_brush.offsetX;
-    base.offsetZ = m_brush.offsetZ;
+    base.radius = static_cast<f64>(brush.radiusM);
+    base.rotation = brush.rotationDegrees * 3.14159265f / 180.0f;
+    base.strength = brush.strength * pressureFactor;
+    base.dirX = dirX;
+    base.dirZ = dirZ;
+    base.offsetX = brush.offsetX;
+    base.offsetZ = brush.offsetZ;
 
     // Variation: the same stroke and seed always vary the same way.
-    if (m_brush.positionJitter > 0.0f) {
-        base.x += (unitHash(m_brush.seed, index, 11) * 2.0f - 1.0f) * m_brush.positionJitter * base.radius * 0.5;
-        base.z += (unitHash(m_brush.seed, index, 12) * 2.0f - 1.0f) * m_brush.positionJitter * base.radius * 0.5;
+    if (brush.positionJitter > 0.0f) {
+        base.x += (unitHash(brush.seed, index, 11) * 2.0f - 1.0f) * brush.positionJitter * base.radius * 0.5;
+        base.z += (unitHash(brush.seed, index, 12) * 2.0f - 1.0f) * brush.positionJitter * base.radius * 0.5;
     }
-    if (m_brush.rotationJitterDegrees > 0.0f) {
-        base.rotation += (unitHash(m_brush.seed, index, 13) * 2.0f - 1.0f) * m_brush.rotationJitterDegrees * 3.14159265f / 180.0f;
+    if (brush.rotationJitterDegrees > 0.0f) {
+        base.rotation += (unitHash(brush.seed, index, 13) * 2.0f - 1.0f) * brush.rotationJitterDegrees * 3.14159265f / 180.0f;
     }
-    if (m_brush.sizeJitter > 0.0f) {
-        base.radius *= 1.0 + (unitHash(m_brush.seed, index, 14) * 2.0f - 1.0f) * m_brush.sizeJitter * 0.5;
+    if (brush.sizeJitter > 0.0f) {
+        base.radius *= 1.0 + (unitHash(brush.seed, index, 14) * 2.0f - 1.0f) * brush.sizeJitter * 0.5;
         base.radius = std::max(base.radius, 0.01);
     }
-    if (m_brush.opacityJitter > 0.0f) {
-        base.strength *= 1.0f - unitHash(m_brush.seed, index, 15) * std::clamp(m_brush.opacityJitter, 0.0f, 1.0f);
+    if (brush.opacityJitter > 0.0f) {
+        base.strength *= 1.0f - unitHash(brush.seed, index, 15) * std::clamp(brush.opacityJitter, 0.0f, 1.0f);
     }
 
-    if (m_brush.symmetry == Symmetry::None) {
-        applyStamp(base);
-        return;
-    }
-    const f64 cx = m_brush.symmetryCenterX, cz = m_brush.symmetryCenterZ;
+    if (brush.symmetry == Symmetry::None) return {base};
+    const f64 cx = brush.symmetryCenterX, cz = brush.symmetryCenterZ;
     std::vector<StampParams> copies;
     copies.push_back(base);
     auto mirrored = [&](bool flipX, bool flipZ) {
@@ -294,7 +301,7 @@ void TerrainStroke::stamp(f64 x, f64 z, f32 pressure) {
         if (flipX != flipZ) copy.rotation = -copy.rotation;
         copies.push_back(copy);
     };
-    switch (m_brush.symmetry) {
+    switch (brush.symmetry) {
         case Symmetry::MirrorX: mirrored(true, false); break;
         case Symmetry::MirrorZ: mirrored(false, true); break;
         case Symmetry::MirrorBoth:
@@ -303,7 +310,7 @@ void TerrainStroke::stamp(f64 x, f64 z, f32 pressure) {
             mirrored(true, true);
             break;
         case Symmetry::Radial: {
-            const u32 count = std::clamp(m_brush.radialCount, 2u, 16u);
+            const u32 count = std::clamp(brush.radialCount, 2u, 16u);
             for (u32 k = 1; k < count; ++k) {
                 const f32 angle = 6.28318531f * static_cast<f32>(k) / static_cast<f32>(count);
                 const f32 c = std::cos(angle), s = std::sin(angle);
@@ -323,15 +330,21 @@ void TerrainStroke::stamp(f64 x, f64 z, f32 pressure) {
         case Symmetry::None: break;
     }
     // Copies that land on the same spot (a stamp on the axis) are laid once.
+    std::vector<StampParams> out;
     for (usize i = 0; i < copies.size(); ++i) {
         bool duplicate = false;
         for (usize j = 0; j < i && !duplicate; ++j) {
             // Without an image a mirrored stamp is the same stamp; with one, the mirror image is a different shape.
             duplicate = std::fabs(copies[i].x - copies[j].x) < 1e-6 && std::fabs(copies[i].z - copies[j].z) < 1e-6 &&
-                        (m_brush.stamp.empty() || (copies[i].flipU == copies[j].flipU && copies[i].flipV == copies[j].flipV));
+                        (brush.stamp.empty() || (copies[i].flipU == copies[j].flipU && copies[i].flipV == copies[j].flipV));
         }
-        if (!duplicate) applyStamp(copies[i]);
+        if (!duplicate) out.push_back(copies[i]);
     }
+    return out;
+}
+
+void TerrainStroke::stamp(f64 x, f64 z, f32 pressure) {
+    for (const StampParams& params : placeStamp(m_brush, m_logical++, x, z, pressure, m_dirX, m_dirZ)) applyStamp(params);
 }
 
 void TerrainStroke::applyStamp(const StampParams& params) {

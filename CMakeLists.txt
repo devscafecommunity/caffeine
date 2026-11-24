@@ -113,6 +113,10 @@ add_library(caffeine-core
     src/caffeine/terrain/edit/TerrainStroke.cpp
     src/caffeine/terrain/edit/BrushStamps.cpp
     src/caffeine/terrain/edit/BrushPreset.cpp
+    src/caffeine/terrain/paint/TerrainPalette.cpp
+    src/caffeine/terrain/paint/TerrainLayerMap.cpp
+    src/caffeine/terrain/paint/TerrainPaintStroke.cpp
+    src/caffeine/terrain/paint/TerrainAutoLayer.cpp
     src/caffeine/terrain/TerrainContainer.cpp
     src/caffeine/terrain/TerrainLodSystem.cpp
     src/caffeine/terrain/TerrainSplatmap.cpp

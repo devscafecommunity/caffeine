@@ -457,6 +457,7 @@ enum PaneKind {
     Audio,
     Performance,
     TerrainBrush,
+    TerrainPaint,
     PhaseShift,
     Rig2d,
     Profiler,
@@ -676,6 +677,23 @@ enum Message {
     /// An edit of the Terrain Brush panel (library, brush settings, the tool's switch).
     TerrainBrush(crate::uikit::panels::terrain_brush::Edit),
     ShowTerrainBrush,
+    /// An edit of the Terrain Paint panel (palette, paint brush, auto-layering, the tool's switch).
+    TerrainPaint(crate::uikit::panels::terrain_paint::Edit),
+    ShowTerrainPaint,
+    /// Removes every auto-layering rule (the `terrain_paint_rule` agent action with `clear`).
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    TerrainPaintClearRules,
+    /// Applies the rules, with a fallback layer when given (the `terrain_paint_autolayer` agent action).
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    TerrainPaintApplyRules {
+        fallback: Option<usize>,
+    },
+    /// One whole paint stroke along world-space points, metres (the `terrain_paint_stroke` agent action).
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    TerrainPaintStroke {
+        terrain: Option<u32>,
+        points: Vec<[f64; 3]>,
+    },
     /// One whole sculpting stroke along world-space points, metres (the `terrain_brush_stroke` agent action).
     #[cfg_attr(not(feature = "agent"), allow(dead_code))]
     TerrainBrushStroke {
@@ -853,6 +871,7 @@ struct App {
     viewport_hovered: bool,
     terrain_cursor: terraincursor::State,
     terrain_editor: terraineditor::State,
+    terrain_paint: terrainpaint::State,
     /// The scene holds a water surface, so the editor keeps stepping the engine for it.
     has_water: bool,
     water_scan: u32,
@@ -1018,6 +1037,7 @@ impl PaneKind {
             PaneKind::Audio => "Audio",
             PaneKind::Performance => "Performance",
             PaneKind::TerrainBrush => "Terrain Brush",
+            PaneKind::TerrainPaint => "Terrain Paint",
             PaneKind::PhaseShift => "PhaseShift",
             PaneKind::Rig2d => "Rig 2D",
             PaneKind::Profiler => "Profiler",
@@ -1047,6 +1067,7 @@ impl PaneKind {
             PaneKind::Audio => id::PANE_TAB_AUDIO,
             PaneKind::Performance => id::PANE_TAB_PERFORMANCE,
             PaneKind::TerrainBrush => id::PANE_TAB_TERRAIN_BRUSH,
+            PaneKind::TerrainPaint => id::PANE_TAB_TERRAIN_PAINT,
             PaneKind::PhaseShift => id::PANE_TAB_PHASESHIFT,
             PaneKind::Rig2d => id::PANE_TAB_RIG2D,
             PaneKind::Profiler => id::PANE_TAB_PROFILER,
@@ -1102,6 +1123,7 @@ impl App {
                         PaneKind::Profiler,
                         PaneKind::Performance,
                         PaneKind::TerrainBrush,
+                        PaneKind::TerrainPaint,
                         PaneKind::Photon,
                         PaneKind::Environment,
                         PaneKind::Audio,
@@ -1257,6 +1279,7 @@ impl App {
             viewport_hovered: false,
             terrain_cursor: terraincursor::State::default(),
             terrain_editor: terraineditor::State::default(),
+            terrain_paint: terrainpaint::State::default(),
             has_water: false,
             water_scan: 0,
             viewport_last_tick: None,
@@ -1918,6 +1941,8 @@ impl App {
             Some(stroke) => self.move_terrain_stroke(stroke),
             None => self.apply_history_state(moved.state.clone()),
         }
+        // The palette and the layer map are edited by records and by scene restores: read them again.
+        self.refresh_paint_state();
     }
 
     fn undo(&mut self) {
@@ -7722,6 +7747,23 @@ impl App {
             Message::ShowPerformance => self.show_performance_pane(),
             Message::TerrainBrush(edit) => self.edit_terrain_brush(edit),
             Message::ShowTerrainBrush => self.show_terrain_brush_pane(),
+            Message::TerrainPaint(edit) => self.edit_terrain_paint(edit),
+            Message::ShowTerrainPaint => self.show_terrain_paint_pane(),
+            Message::TerrainPaintClearRules => self.terrain_paint.rules.clear(),
+            Message::TerrainPaintApplyRules { fallback } => {
+                if let Some(fallback) = fallback {
+                    self.edit_terrain_paint(crate::uikit::panels::terrain_paint::Edit::Fallback(
+                        fallback,
+                    ));
+                }
+                self.edit_terrain_paint(crate::uikit::panels::terrain_paint::Edit::ApplyRules);
+            }
+            Message::TerrainPaintStroke { terrain, points } => {
+                if let Err(error) = self.paint_stroke_along(terrain, &points) {
+                    self.log(LogLevel::Error, format!("Terrain paint: {error}"));
+                    self.terrain_paint.status = Some(format!("Could not paint: {error}"));
+                }
+            }
             Message::TerrainBrushStroke { terrain, points } => {
                 if let Err(error) = self.terrain_stroke_along(terrain, &points) {
                     self.log(LogLevel::Error, format!("Terrain brush: {error}"));
@@ -7734,7 +7776,9 @@ impl App {
                 }
             }
             Message::TerrainBrushRadius(factor) => {
-                if self.terrain_editor.active {
+                if self.terrain_paint.active {
+                    self.scale_paint_brush(factor);
+                } else if self.terrain_editor.active {
                     self.scale_terrain_brush(factor);
                 }
             }
@@ -8367,6 +8411,12 @@ impl App {
                         label: "Terrain Brush (Sculpt)",
                         shortcut: None,
                         message: Message::ShowTerrainBrush,
+                    },
+                    menu::Item {
+                        id: id::SHOW_TERRAIN_PAINT,
+                        label: "Terrain Paint (Materials)",
+                        shortcut: None,
+                        message: Message::ShowTerrainPaint,
                     },
                     menu::Item {
                         id: id::SHOW_PERFORMANCE,
@@ -9724,6 +9774,34 @@ impl App {
                 None,
                 self.camera_preview_view(),
             ),
+            PaneKind::TerrainPaint => (
+                id::PANE_TERRAIN_PAINT,
+                "Terrain Paint",
+                Some(panels::terrain_paint::summary(
+                    self.terrain_paint.active,
+                    self.terrain_paint.layers,
+                )),
+                panels::terrain_paint::view(
+                    panels::terrain_paint::View {
+                        active: self.terrain_paint.active,
+                        terrain: self.terrain_paint.terrain_name.as_deref(),
+                        layers: self.terrain_paint.layers,
+                        palette: &self.terrain_paint.palette,
+                        selected: self.terrain_paint.selected,
+                        mode: self.terrain_paint.mode,
+                        from_layer: self.terrain_paint.from_layer,
+                        radius: self.terrain_paint.radius,
+                        strength: self.terrain_paint.strength,
+                        spacing: self.terrain_paint.spacing,
+                        falloff: self.terrain_paint.falloff,
+                        shared_shape: self.terrain_paint.shared_shape,
+                        rules: &self.terrain_paint.rules,
+                        fallback: self.terrain_paint.fallback,
+                        status: self.terrain_paint.status.as_deref(),
+                    },
+                    Message::TerrainPaint,
+                ),
+            ),
             PaneKind::TerrainBrush => (
                 id::PANE_TERRAIN_BRUSH,
                 "Terrain Brush",
@@ -10604,6 +10682,7 @@ mod terraincursor;
 mod terraineditor;
 mod terrainformat;
 mod terraingen;
+mod terrainpaint;
 mod texturegen;
 mod watergen;
 mod workspace;

@@ -1189,6 +1189,124 @@ impl RawBrushPreset {
     }
 }
 
+/// What a paint stroke does with its brush's shape (C ABI 29).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaintMode {
+    /// Moves weight toward the layer.
+    Paint = 0,
+    /// Takes the layer away; the others fill in.
+    Erase = 1,
+    /// Moves the weight of `from_layer` to the layer.
+    Replace = 2,
+    /// Blends each texel toward its neighbours.
+    Smooth = 3,
+}
+
+impl PaintMode {
+    pub const ALL: [PaintMode; 4] = [
+        PaintMode::Paint,
+        PaintMode::Erase,
+        PaintMode::Replace,
+        PaintMode::Smooth,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PaintMode::Paint => "Paint",
+            PaintMode::Erase => "Erase",
+            PaintMode::Replace => "Replace",
+            PaintMode::Smooth => "Smooth",
+        }
+    }
+}
+
+/// The most layers a palette holds.
+pub const PALETTE_MAX: usize = 64;
+
+/// One layer of a terrain's material palette (C ABI 29).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PaletteLayer {
+    pub name: String,
+    pub albedo: String,
+    pub normal: String,
+    pub tile_size_m: f32,
+    pub rotation_degrees: f32,
+    pub tint: [f32; 3],
+    pub resolution: u32,
+    pub locked: bool,
+    /// Texels of the layer map that use the layer (read only).
+    pub texels: u32,
+}
+
+/// The state of a terrain's layered painting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TerrainLayers {
+    pub enabled: bool,
+    pub palette_count: u32,
+    pub map: [u32; 2],
+    pub gpu_slices: u32,
+    pub gpu_array_size: u32,
+    pub gpu_array_bytes: u64,
+}
+
+/// The layers under a point: up to four, their weights add up to 1.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct LayerSample {
+    pub layer: [u32; 4],
+    pub weight: [f32; 4],
+}
+
+/// A brush for painting layers: the shape of a sculpting brush plus what a stamp does.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PaintBrush {
+    pub shape: BrushPreset,
+    pub mode: PaintMode,
+    pub layer: u32,
+    pub from_layer: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawPaletteLayer {
+    name: [c_char; 64],
+    albedo: [c_char; 256],
+    normal: [c_char; 256],
+    tile_size_m: f32,
+    rotation_degrees: f32,
+    tint: [f32; 3],
+    resolution: u32,
+    locked: i32,
+    texels: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct RawTerrainLayers {
+    enabled: i32,
+    palette_count: u32,
+    map_x: u32,
+    map_z: u32,
+    gpu_slices: u32,
+    gpu_array_size: u32,
+    gpu_array_bytes: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct RawLayerSample {
+    layer: [u32; 4],
+    weight: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawPaintBrush {
+    shape: RawBrushPreset,
+    mode: i32,
+    layer: u32,
+    from_layer: u32,
+}
+
 /// A terrain brush in real units (metres), see `caffeine_session_terrain_stroke_begin`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TerrainBrush {
@@ -1422,6 +1540,28 @@ type StrokeBeginFn =
 type StrokePointFn = unsafe extern "C" fn(*mut c_void, f64, f64, f64, f32, *mut u32) -> i32;
 type StrokeEndFn = unsafe extern "C" fn(*mut c_void, *mut RawStrokeResult) -> i32;
 type StrokeRecordFn = unsafe extern "C" fn(*mut c_void, u32) -> i32;
+type LayersEnableFn = unsafe extern "C" fn(*mut c_void, u32, i32) -> i32;
+type LayersInfoFn = unsafe extern "C" fn(*const c_void, u32, *mut RawTerrainLayers) -> i32;
+type PaletteLayerFn = unsafe extern "C" fn(*const c_void, u32, u32, *mut RawPaletteLayer) -> i32;
+type PaletteTextFn =
+    unsafe extern "C" fn(*const c_void, u32, *mut c_char, usize, *mut usize) -> i32;
+type PaletteApplyFn =
+    unsafe extern "C" fn(*mut c_void, u32, *const c_char, u32, *mut u32, *mut c_char, usize) -> i32;
+type PaletteRemoveFn = unsafe extern "C" fn(*mut c_void, u32, u32, *mut u32) -> i32;
+type PaletteMoveFn = unsafe extern "C" fn(*mut c_void, u32, u32, u32, *mut u32) -> i32;
+type PaintBeginFn = unsafe extern "C" fn(*mut c_void, u32, *const RawPaintBrush) -> i32;
+type AutolayerFn = unsafe extern "C" fn(
+    *mut c_void,
+    u32,
+    *const c_char,
+    u32,
+    *const u32,
+    *mut u32,
+    *mut c_char,
+    usize,
+) -> i32;
+type LayerAtFn =
+    unsafe extern "C" fn(*const c_void, u32, f64, f64, f64, *mut RawLayerSample) -> i32;
 type BrushCountFn = unsafe extern "C" fn() -> u32;
 type BrushAtFn = unsafe extern "C" fn(u32, *mut RawBrushPreset) -> i32;
 type BrushStampFn = unsafe extern "C" fn(*const c_char, u32, u64, *mut f32) -> i32;
@@ -1681,6 +1821,16 @@ struct Functions {
     simulating: Option<SimulatingFn>,
     set_water: Option<SetWaterFn>,
     set_terrain: Option<SetTerrainFn>,
+    layers_enable: Option<LayersEnableFn>,
+    layers_info: Option<LayersInfoFn>,
+    palette_layer: Option<PaletteLayerFn>,
+    palette_text: Option<PaletteTextFn>,
+    palette_apply: Option<PaletteApplyFn>,
+    palette_remove: Option<PaletteRemoveFn>,
+    palette_move: Option<PaletteMoveFn>,
+    paint_begin: Option<PaintBeginFn>,
+    autolayer: Option<AutolayerFn>,
+    layer_at: Option<LayerAtFn>,
     brush_count: Option<BrushCountFn>,
     brush_at: Option<BrushAtFn>,
     brush_stamp: Option<BrushStampFn>,
@@ -1930,6 +2080,28 @@ impl Engine {
                 load_symbol(library, b"caffeine_session_set_material_preview_light\0")
             },
             set_terrain: unsafe { load_symbol(library, b"caffeine_session_set_terrain\0") },
+            layers_enable: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_layers_enable\0")
+            },
+            layers_info: unsafe { load_symbol(library, b"caffeine_session_terrain_layers\0") },
+            palette_layer: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_palette_layer\0")
+            },
+            palette_text: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_palette_text\0")
+            },
+            palette_apply: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_palette_apply\0")
+            },
+            palette_remove: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_palette_remove\0")
+            },
+            palette_move: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_palette_move\0")
+            },
+            paint_begin: unsafe { load_symbol(library, b"caffeine_session_terrain_paint_begin\0") },
+            autolayer: unsafe { load_symbol(library, b"caffeine_session_terrain_autolayer\0") },
+            layer_at: unsafe { load_symbol(library, b"caffeine_session_terrain_layer_at\0") },
             brush_count: unsafe { load_symbol(library, b"caffeine_terrain_brush_count\0") },
             brush_at: unsafe { load_symbol(library, b"caffeine_terrain_brush_at\0") },
             brush_stamp: unsafe { load_symbol(library, b"caffeine_terrain_brush_stamp\0") },
@@ -2815,6 +2987,203 @@ impl Engine {
         read_string(256, |buffer, size| unsafe {
             convert(self.session, entity, buffer, size)
         })
+    }
+
+    /// Whether the engine library has layered terrain painting (C ABI 29).
+    pub fn has_terrain_layers(&self) -> bool {
+        self.functions.layers_enable.is_some()
+            && self.functions.paint_begin.is_some()
+            && self.functions.palette_layer.is_some()
+    }
+
+    /// Layered painting on or off for a terrain. On: the palette is its four layers and the map its splat map.
+    pub fn terrain_layers_enable(&mut self, entity: u32, enabled: bool) -> EngineResult<()> {
+        let enable = self.functions.layers_enable.ok_or(EngineError::Error)?;
+        result(unsafe { enable(self.session, entity, i32::from(enabled)) })
+    }
+
+    pub fn terrain_layers(&self, entity: u32) -> Option<TerrainLayers> {
+        let info = self.functions.layers_info?;
+        let mut raw = RawTerrainLayers::default();
+        (unsafe { info(self.session, entity, &mut raw) } == 0).then_some(TerrainLayers {
+            enabled: raw.enabled != 0,
+            palette_count: raw.palette_count,
+            map: [raw.map_x, raw.map_z],
+            gpu_slices: raw.gpu_slices,
+            gpu_array_size: raw.gpu_array_size,
+            gpu_array_bytes: raw.gpu_array_bytes,
+        })
+    }
+
+    /// The layers of a terrain's palette, in order, with how many texels use each.
+    pub fn palette_layers(&self, entity: u32) -> Vec<PaletteLayer> {
+        let Some(layer) = self.functions.palette_layer else {
+            return Vec::new();
+        };
+        (0..PALETTE_MAX as u32)
+            .map_while(|index| {
+                // SAFETY: plain data, every field a number or a byte array.
+                let mut raw: RawPaletteLayer = unsafe { std::mem::zeroed() };
+                (unsafe { layer(self.session, entity, index, &mut raw) } == 0).then(|| {
+                    PaletteLayer {
+                        name: c_char_array(&raw.name),
+                        albedo: c_char_array(&raw.albedo),
+                        normal: c_char_array(&raw.normal),
+                        tile_size_m: raw.tile_size_m,
+                        rotation_degrees: raw.rotation_degrees,
+                        tint: raw.tint,
+                        resolution: raw.resolution,
+                        locked: raw.locked != 0,
+                        texels: raw.texels,
+                    }
+                })
+            })
+            .collect()
+    }
+
+    /// The palette as `.terrainpalette` text.
+    pub fn palette_text(&self, entity: u32) -> Option<String> {
+        let text = self.functions.palette_text?;
+        let mut needed = 0usize;
+        (unsafe { text(self.session, entity, std::ptr::null_mut(), 0, &mut needed) } == 0)
+            .then_some(())?;
+        let mut buffer = vec![0 as c_char; needed.max(1)];
+        (unsafe {
+            text(
+                self.session,
+                entity,
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                std::ptr::null_mut(),
+            )
+        } == 0)
+            .then(|| {
+                let bytes: Vec<u8> = buffer
+                    .iter()
+                    .take_while(|c| **c != 0)
+                    .map(|c| *c as u8)
+                    .collect();
+                String::from_utf8_lossy(&bytes).into_owned()
+            })
+    }
+
+    /// Replaces the palette by the layers of `.terrainpalette` text (at least as many as it has). Returns the undo
+    /// record (0 when nothing changed); the error names the bad line. `merge_into` (0 for none) is an earlier palette
+    /// edit to fold this one into, so a slider drag is one undo step.
+    pub fn palette_apply(
+        &mut self,
+        entity: u32,
+        text: &str,
+        merge_into: u32,
+    ) -> Result<u32, String> {
+        let apply = self
+            .functions
+            .palette_apply
+            .ok_or("this engine library has no terrain layers (C ABI 29)")?;
+        let text = CString::new(text).map_err(|_| "the text holds a zero byte".to_owned())?;
+        let mut record = 0u32;
+        let mut error = [0 as c_char; 200];
+        let status = unsafe {
+            apply(
+                self.session,
+                entity,
+                text.as_ptr(),
+                merge_into,
+                &mut record,
+                error.as_mut_ptr(),
+                error.len(),
+            )
+        };
+        match status {
+            0 => Ok(record),
+            3 => Err("the terrain has no layers: turn them on first".to_owned()),
+            _ => {
+                let reason = c_char_array(&error);
+                Err(if reason.is_empty() {
+                    "the palette could not be changed".to_owned()
+                } else {
+                    reason
+                })
+            }
+        }
+    }
+
+    /// Removes a layer (its weight goes to the others; the layers after it move down). Returns the undo record.
+    pub fn palette_remove(&mut self, entity: u32, index: u32) -> EngineResult<u32> {
+        let remove = self.functions.palette_remove.ok_or(EngineError::Error)?;
+        let mut record = 0u32;
+        result(unsafe { remove(self.session, entity, index, &mut record) })?;
+        Ok(record)
+    }
+
+    /// Moves a layer to another position; the map is renumbered with it. Returns the undo record.
+    pub fn palette_move(&mut self, entity: u32, from: u32, to: u32) -> EngineResult<u32> {
+        let mv = self.functions.palette_move.ok_or(EngineError::Error)?;
+        let mut record = 0u32;
+        result(unsafe { mv(self.session, entity, from, to, &mut record) })?;
+        Ok(record)
+    }
+
+    /// Starts a paint stroke (points go through `terrain_stroke_point`, it ends with `terrain_stroke_end`).
+    pub fn terrain_paint_begin(&mut self, entity: u32, brush: &PaintBrush) -> EngineResult<()> {
+        let begin = self.functions.paint_begin.ok_or(EngineError::Error)?;
+        let raw = RawPaintBrush {
+            shape: RawBrushPreset::from_preset(&brush.shape),
+            mode: brush.mode as i32,
+            layer: brush.layer,
+            from_layer: brush.from_layer,
+        };
+        result(unsafe { begin(self.session, entity, &raw) })
+    }
+
+    /// Fills the layers from biome-table rules (the class number is the layer); `region` is texels `[min_x, min_z,
+    /// max_x, max_z]`. Returns the undo record (0 when nothing changed).
+    pub fn terrain_autolayer(
+        &mut self,
+        entity: u32,
+        rules: &str,
+        fallback: u32,
+        region: Option<[u32; 4]>,
+    ) -> Result<u32, String> {
+        let autolayer = self
+            .functions
+            .autolayer
+            .ok_or("this engine library has no terrain layers (C ABI 29)")?;
+        let rules = CString::new(rules).map_err(|_| "the rules hold a zero byte".to_owned())?;
+        let mut record = 0u32;
+        let mut error = [0 as c_char; 200];
+        let status = unsafe {
+            autolayer(
+                self.session,
+                entity,
+                rules.as_ptr(),
+                fallback,
+                region.as_ref().map_or(std::ptr::null(), |r| r.as_ptr()),
+                &mut record,
+                error.as_mut_ptr(),
+                error.len(),
+            )
+        };
+        if status == 0 {
+            return Ok(record);
+        }
+        let reason = c_char_array(&error);
+        Err(if reason.is_empty() {
+            "the layers could not be filled".to_owned()
+        } else {
+            reason
+        })
+    }
+
+    /// The layers under a world-space point (metres): what an eyedropper reads.
+    pub fn terrain_layer_at(&self, entity: u32, world: [f64; 3]) -> Option<LayerSample> {
+        let at = self.functions.layer_at?;
+        let mut raw = RawLayerSample::default();
+        (unsafe { at(self.session, entity, world[0], world[1], world[2], &mut raw) } == 0)
+            .then_some(LayerSample {
+                layer: raw.layer,
+                weight: raw.weight,
+            })
     }
 
     /// Whether the engine library has the brush library and brushes as documents (C ABI 28).
@@ -4411,5 +4780,150 @@ mod tests {
             EngineError::NotFound
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn painted_layers_are_drawn_with_their_own_colours_and_undo_exactly() {
+        let _guard = test_lock();
+        let Some(mut engine) = Engine::load_default() else {
+            return;
+        };
+        if !engine.has_terrain_layers() || !engine.has_brush_library() {
+            return; // a libcaffeine-capi from before C ABI 29
+        }
+        // A sun, or the ground is unlit and black.
+        let sun = engine.create_entity("Sun").expect("sun");
+        for name in ["Light", "Directional Light"] {
+            let type_id = engine
+                .component_types()
+                .iter()
+                .find(|kind| kind.name == name)
+                .unwrap_or_else(|| panic!("a {name} component"))
+                .id;
+            engine.add_component(sun, type_id).expect("light component");
+        }
+        engine.set_rotation(sun, [-60.0, 30.0, 0.0]).unwrap();
+        let entity = engine.create_entity("Ground").expect("entity");
+        let terrain = Terrain {
+            resolution: [129, 129],
+            size: [256.0, 256.0],
+            max_height: 80.0,
+            ..Terrain::default()
+        };
+        engine
+            .set_terrain(entity, &terrain, &vec![0.3; 129 * 129], None)
+            .expect("terrain");
+        assert_eq!(
+            engine.terrain_layers(entity).map(|l| l.enabled),
+            Some(false)
+        );
+        engine
+            .terrain_layers_enable(entity, true)
+            .expect("layers on");
+        let info = engine.terrain_layers(entity).unwrap();
+        assert!(info.enabled);
+        assert_eq!(info.palette_count, 4);
+
+        // Two flat-coloured layers (no pictures): red and blue.
+        let text = engine.palette_text(entity).expect("palette text");
+        let more = format!(
+            "{text}layer Red\n  tint 1 0 0\n  tile 4\nlayer Blue\n  tint 0 0 1\n  tile 4\n"
+        );
+        let added = engine
+            .palette_apply(entity, &more, 0)
+            .expect("two more layers");
+        assert!(added != 0);
+        let layers = engine.palette_layers(entity);
+        assert_eq!(layers.len(), 6);
+        assert_eq!(layers[4].name, "Red");
+        assert_eq!(layers[5].tint, [0.0, 0.0, 1.0]);
+
+        let round = engine
+            .builtin_brushes()
+            .into_iter()
+            .find(|b| b.name == "Round hard")
+            .expect("a round brush");
+        let paint = |engine: &mut Engine, layer: u32, from: f64, to: f64| {
+            let brush = PaintBrush {
+                shape: BrushPreset {
+                    radius_m: 40.0,
+                    strength: 1.0,
+                    ..round.clone()
+                },
+                mode: PaintMode::Paint,
+                layer,
+                from_layer: 0,
+            };
+            engine.terrain_paint_begin(entity, &brush).expect("begin");
+            for step in 0..=10 {
+                let x = from + (to - from) * f64::from(step) / 10.0;
+                engine
+                    .terrain_stroke_point([x, 0.0, 0.0], 1.0)
+                    .expect("point");
+            }
+            engine.terrain_stroke_end().expect("end")
+        };
+        // The left half red, the right half blue.
+        let red = paint(&mut engine, 4, -128.0, -20.0);
+        let blue = paint(&mut engine, 5, 20.0, 128.0);
+        assert!(red.record != 0 && blue.record != 0);
+        assert_eq!(
+            engine
+                .terrain_layer_at(entity, [-60.0, 0.0, 0.0])
+                .unwrap()
+                .layer[0],
+            4
+        );
+        assert_eq!(
+            engine
+                .terrain_layer_at(entity, [60.0, 0.0, 0.0])
+                .unwrap()
+                .layer[0],
+            5
+        );
+
+        // Looked at from above, both colours are on screen, each over a good share of the picture.
+        engine
+            .set_camera(Camera {
+                yaw: 0.0,
+                pitch: 1.5,
+                distance: 300.0,
+                focus: [0.0, 0.0, 0.0],
+            })
+            .unwrap();
+        let count = |engine: &mut Engine| {
+            let pixels = engine.render(320, 240).expect("a frame");
+            let (mut reddish, mut bluish) = (0usize, 0usize);
+            for px in pixels.as_chunks::<4>().0 {
+                let (r, g, b) = (i32::from(px[0]), i32::from(px[1]), i32::from(px[2]));
+                if r > 40 && r > 2 * b && r > 2 * g {
+                    reddish += 1;
+                }
+                if b > 40 && b > 2 * r && b > 2 * g {
+                    bluish += 1;
+                }
+            }
+            (reddish, bluish)
+        };
+        let (reddish, bluish) = count(&mut engine);
+        assert!(reddish > 2000, "{reddish} red pixels");
+        assert!(bluish > 2000, "{bluish} blue pixels");
+
+        // Undoing the red stroke takes the red off the picture; redoing puts it back.
+        engine.terrain_stroke_revert(red.record).unwrap();
+        let (reddish_after, bluish_after) = count(&mut engine);
+        assert!(
+            reddish_after < reddish / 10,
+            "{reddish_after} left of {reddish}"
+        );
+        assert!(bluish_after > 2000);
+        engine.terrain_stroke_reapply(red.record).unwrap();
+        let (again, _) = count(&mut engine);
+        assert!(again > 2000);
+
+        // Turned off, the terrain is painted by its four layers again: neither colour is there.
+        engine.terrain_layers_enable(entity, false).unwrap();
+        let (off_red, off_blue) = count(&mut engine);
+        assert!(off_red < 500 && off_blue < 500, "{off_red} {off_blue}");
     }
 }

@@ -25,6 +25,7 @@ use crate::uikit::panels::profiler as profiler_panel;
 use crate::uikit::panels::project_manager;
 use crate::uikit::panels::terrain_brush as terrain_brush_panel;
 use crate::uikit::panels::terrain_generator;
+use crate::uikit::panels::terrain_paint as terrain_paint_panel;
 use crate::uikit::panels::texture_generator;
 use crate::uikit::panels::texture_set as texture_set_panel;
 use serde_json::{json, Value};
@@ -308,6 +309,185 @@ pub fn run() -> iced::Result {
                 let field = required_str(args, "field")?;
                 let value = args.get("value").ok_or_else(|| "missing \"value\"".to_owned())?;
                 performance_edit(field, value).map(Message::Performance)
+            },
+        )
+        .query(
+            "terrain_paint",
+            "Terrain Paint: whether the paint brush is on, the terrain being edited, whether it has layered painting, the palette (name, picture, tile, rotation, tint, resolution, locked, texels covered, share of the terrain), the selected layer, the brush (mode, radius, strength, spacing, falloff), the auto-layering rules, the GPU array and the status line.",
+            |app, _| Ok(terrain_paint_json(app)),
+        )
+        .query(
+            "terrain_layer_at",
+            "The layers under a world-space point of a terrain, up to four with their weights (what an eyedropper reads). args: { \"x\": number, \"z\": number, \"terrain_id\"?: number }",
+            |app, args| {
+                let x = args.get("x").and_then(Value::as_f64).ok_or("missing \"x\"")?;
+                let z = args.get("z").and_then(Value::as_f64).ok_or("missing \"z\"")?;
+                let entity = args
+                    .get("terrain_id")
+                    .and_then(Value::as_u64)
+                    .map(|id| id as u32)
+                    .or(app.terrain_paint.entity)
+                    .ok_or("there is no terrain")?;
+                let engine = app.engine.as_ref().ok_or("no engine")?;
+                let sample = engine
+                    .terrain_layer_at(entity, [x, 0.0, z])
+                    .ok_or("that point is off the terrain, or its layers are off")?;
+                Ok(json!({
+                    "layers": (0..4).filter(|i| sample.weight[*i] > 0.0).map(|i| json!({
+                        "layer": sample.layer[i],
+                        "name": app.terrain_paint.palette.get(sample.layer[i] as usize).map(|l| l.name.clone()),
+                        "weight": sample.weight[i],
+                    })).collect::<Vec<_>>(),
+                }))
+            },
+        )
+        .action(
+            "show_terrain_paint",
+            "Brings the Terrain Paint tab to the front. args: {}",
+            |_| Ok(Message::ShowTerrainPaint),
+        )
+        .action(
+            "terrain_paint_active",
+            "Turns the paint brush on or off (the brush cursor follows the mouse while it is on). args: { \"active\"?: boolean (default true) }",
+            |args| {
+                Ok(Message::TerrainPaint(terrain_paint_panel::Edit::Active(
+                    args.get("active").and_then(Value::as_bool).unwrap_or(true),
+                )))
+            },
+        )
+        .action(
+            "terrain_paint_layers",
+            "Layered painting on or off for the terrain (on: a palette of up to 64 layers, starting from its four). One undo step. args: { \"enabled\"?: boolean (default true) }",
+            |args| {
+                Ok(Message::TerrainPaint(terrain_paint_panel::Edit::EnableLayers(
+                    args.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+                )))
+            },
+        )
+        .action(
+            "terrain_paint_add_layer",
+            "Adds a layer to the palette (and selects it). One undo step. args: { \"name\"?: string, \"albedo\"?: string (project path of the picture), \"tint\"?: [r, g, b] (0 to 1), \"tile_size_m\"?: number }",
+            |args| {
+                let tint = args
+                    .get("tint")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_f64).map(|v| v as f32).collect::<Vec<_>>())
+                    .filter(|v| v.len() == 3)
+                    .map_or([0.55, 0.55, 0.55], |v| [v[0], v[1], v[2]]);
+                Ok(Message::TerrainPaint(terrain_paint_panel::Edit::AddLayerWith {
+                    name: optional_str(args, "name")?.unwrap_or("Layer").to_owned(),
+                    albedo: optional_str(args, "albedo")?.unwrap_or_default().to_owned(),
+                    tint,
+                    tile_size_m: optional_f32(args, "tile_size_m")?.unwrap_or(8.0),
+                }))
+            },
+        )
+        .action(
+            "terrain_paint_select_layer",
+            "Selects a layer of the palette: the one the brush paints. args: { \"index\": number }",
+            |args| {
+                let index = args.get("index").and_then(Value::as_u64).ok_or("missing \"index\"")?;
+                Ok(Message::TerrainPaint(terrain_paint_panel::Edit::SelectLayer(index as usize)))
+            },
+        )
+        .action(
+            "terrain_paint_edit_layer",
+            "Edits the selected layer: `name`, `albedo` (project path) take a string, `tile`, `rotation`, `tint_r`, `tint_g`, `tint_b` a number, `resolution` 256 to 4096, `locked` a bool. One undo step (a run of edits of one field is one). args: { \"field\": string, \"value\": string | number | bool }",
+            |args| {
+                let field = required_str(args, "field")?;
+                let value = args.get("value").ok_or("missing \"value\"")?;
+                terrain_paint_layer_edit(field, value).map(Message::TerrainPaint)
+            },
+        )
+        .action(
+            "terrain_paint_remove_layer",
+            "Removes the selected layer: its paint goes to the others and the layers after it move down. One undo step. args: {}",
+            |_| Ok(Message::TerrainPaint(terrain_paint_panel::Edit::RemoveLayer)),
+        )
+        .action(
+            "terrain_paint_move_layer",
+            "Moves the selected layer up (negative) or down (positive) by this many places; the painting follows it. args: { \"delta\": number }",
+            |args| {
+                let delta = args.get("delta").and_then(Value::as_i64).ok_or("missing \"delta\"")?;
+                Ok(Message::TerrainPaint(terrain_paint_panel::Edit::MoveLayer(delta as i32)))
+            },
+        )
+        .action(
+            "terrain_paint_set",
+            "Sets one paint brush setting: `mode` (paint, erase, replace, smooth), `falloff` (smooth, linear, sharp, constant) take a name; `radius`, `strength`, `spacing` a number; `from_layer` an index (Replace); `shared_shape` a bool (use the Terrain Brush's stamp, jitter, symmetry and protection). args: { \"field\": string, \"value\": string | number | bool }",
+            |args| {
+                let field = required_str(args, "field")?;
+                let value = args.get("value").ok_or("missing \"value\"")?;
+                terrain_paint_brush_edit(field, value).map(Message::TerrainPaint)
+            },
+        )
+        .action(
+            "terrain_paint_rule",
+            "Adds an auto-layering rule: the selected layer goes where the mask is inside a trapezoid (0 to 1). Several rules on one layer must all hold. args: { \"mask\": \"slope\" | \"height\" | \"curvature\" } (then `terrain_paint_set_rule`), or { \"clear\": true } to remove every rule",
+            |args| {
+                if args.get("clear").and_then(Value::as_bool).unwrap_or(false) {
+                    return Ok(Message::TerrainPaintClearRules);
+                }
+                Ok(Message::TerrainPaint(terrain_paint_panel::Edit::AddRule(
+                    required_str(args, "mask")?.to_owned(),
+                )))
+            },
+        )
+        .action(
+            "terrain_paint_set_rule",
+            "Sets a number of an auto-layering rule: `from`, `full_from`, `full_to`, `to` (0 to 1), or `layer` (a palette index). args: { \"rule\": number, \"field\": string, \"value\": number }",
+            |args| {
+                let rule = args.get("rule").and_then(Value::as_u64).ok_or("missing \"rule\"")? as usize;
+                let field = required_str(args, "field")?;
+                let value = args.get("value").and_then(Value::as_f64).ok_or("missing \"value\"")?;
+                use terrain_paint_panel::{Edit, RuleCorner};
+                Ok(Message::TerrainPaint(match field {
+                    "from" => Edit::RuleCorner(rule, RuleCorner::Rise0, value as f32),
+                    "full_from" => Edit::RuleCorner(rule, RuleCorner::Rise1, value as f32),
+                    "full_to" => Edit::RuleCorner(rule, RuleCorner::Fall1, value as f32),
+                    "to" => Edit::RuleCorner(rule, RuleCorner::Fall0, value as f32),
+                    "layer" => Edit::RuleLayer(rule, value as usize),
+                    other => return Err(format!("no rule field called \"{other}\"")),
+                }))
+            },
+        )
+        .action(
+            "terrain_paint_autolayer",
+            "Paints the layers from the rules, with `fallback` (a palette index, default 0) where none applies. One undo step; locked layers keep their weight. args: { \"fallback\"?: number }",
+            |args| {
+                use terrain_paint_panel::Edit;
+                if let Some(fallback) = args.get("fallback").and_then(Value::as_u64) {
+                    return Ok(Message::TerrainPaintApplyRules { fallback: Some(fallback as usize) });
+                }
+                let _ = Edit::ApplyRules;
+                Ok(Message::TerrainPaintApplyRules { fallback: None })
+            },
+        )
+        .action(
+            "terrain_paint_stroke",
+            "Paints one stroke with the selected layer and the paint brush along world-space points (metres), exactly as dragging the mouse would: one undo step. args: { \"points\": [[x, z] or [x, y, z], ...], \"terrain_id\"?: number (default: the selected terrain) }",
+            |args| {
+                let points = args
+                    .get("points")
+                    .and_then(Value::as_array)
+                    .ok_or("missing \"points\": [[x, z], ...]")?
+                    .iter()
+                    .map(|point| {
+                        let numbers: Vec<f64> = point
+                            .as_array()
+                            .map(|a| a.iter().filter_map(Value::as_f64).collect())
+                            .unwrap_or_default();
+                        match numbers.as_slice() {
+                            [x, z] => Ok([*x, 0.0, *z]),
+                            [x, y, z] => Ok([*x, *y, *z]),
+                            _ => Err("a point is [x, z] or [x, y, z] in metres".to_owned()),
+                        }
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                Ok(Message::TerrainPaintStroke {
+                    terrain: args.get("terrain_id").and_then(Value::as_u64).map(|id| id as u32),
+                    points,
+                })
             },
         )
         .query(
@@ -2960,6 +3140,134 @@ fn terrain_brush_protect(args: &Value) -> Result<Message, String> {
             optional_f32(args, "to")?.unwrap_or(1.0),
         ],
     )))
+}
+
+fn terrain_paint_layer_edit(
+    field: &str,
+    value: &Value,
+) -> Result<terrain_paint_panel::Edit, String> {
+    use terrain_paint_panel::{Edit, LayerNumber};
+    match normalized(field).as_str() {
+        "name" => value
+            .as_str()
+            .map(|v| Edit::LayerName(v.to_owned()))
+            .ok_or_else(|| "\"name\" takes a string".to_owned()),
+        "albedo" | "picture" => value
+            .as_str()
+            .map(|v| Edit::LayerAlbedo(v.to_owned()))
+            .ok_or_else(|| "\"albedo\" takes a project path".to_owned()),
+        "locked" => value
+            .as_bool()
+            .map(Edit::LayerLocked)
+            .ok_or_else(|| "\"locked\" takes a bool".to_owned()),
+        "resolution" | "sharpness" => value
+            .as_u64()
+            .map(|v| Edit::LayerResolution(v as u32))
+            .ok_or_else(|| "\"resolution\" takes a number of pixels".to_owned()),
+        _ => {
+            let number = LayerNumber::from_key(&field.to_lowercase())
+                .ok_or_else(|| format!("no layer setting called \"{field}\""))?;
+            value
+                .as_f64()
+                .map(|v| Edit::LayerNumber(number, v as f32))
+                .ok_or_else(|| format!("\"{field}\" takes a number"))
+        }
+    }
+}
+
+fn terrain_paint_brush_edit(
+    field: &str,
+    value: &Value,
+) -> Result<terrain_paint_panel::Edit, String> {
+    use doppio_engine::{Falloff, PaintMode};
+    use terrain_paint_panel::{BrushAmount, Edit};
+    let text = || {
+        value
+            .as_str()
+            .map(normalized)
+            .ok_or_else(|| format!("\"{field}\" takes a name"))
+    };
+    match normalized(field).as_str() {
+        "mode" => {
+            let wanted = text()?;
+            PaintMode::ALL
+                .iter()
+                .find(|m| normalized(m.label()) == wanted)
+                .map(|m| Edit::Mode(*m))
+                .ok_or_else(|| format!("no paint mode called \"{wanted}\""))
+        }
+        "falloff" => {
+            let wanted = text()?;
+            Falloff::ALL
+                .iter()
+                .find(|f| normalized(f.label()) == wanted)
+                .map(|f| Edit::Falloff(*f))
+                .ok_or_else(|| format!("no falloff called \"{wanted}\""))
+        }
+        "fromlayer" => value
+            .as_u64()
+            .map(|v| Edit::FromLayer(v as usize))
+            .ok_or_else(|| "\"from_layer\" takes a palette index".to_owned()),
+        "sharedshape" => value
+            .as_bool()
+            .map(Edit::SharedShape)
+            .ok_or_else(|| "\"shared_shape\" takes a bool".to_owned()),
+        _ => {
+            let amount = BrushAmount::from_key(field)
+                .ok_or_else(|| format!("no paint brush setting called \"{field}\""))?;
+            value
+                .as_f64()
+                .map(|v| Edit::Brush(amount, v as f32))
+                .ok_or_else(|| format!("\"{field}\" takes a number"))
+        }
+    }
+}
+
+fn terrain_paint_json(app: &App) -> Value {
+    let paint = &app.terrain_paint;
+    let layers = paint.layers.unwrap_or_default();
+    let total = f64::from(layers.map[0]) * f64::from(layers.map[1]);
+    json!({
+        "active": paint.active,
+        "terrain": paint.entity,
+        "terrain_name": paint.terrain_name,
+        "layers_enabled": layers.enabled,
+        "map": layers.map,
+        "gpu": {
+            "slices": layers.gpu_slices,
+            "array_size": layers.gpu_array_size,
+            "array_bytes": layers.gpu_array_bytes,
+        },
+        "selected": paint.selected,
+        "palette": paint.palette.iter().enumerate().map(|(i, l)| json!({
+            "index": i,
+            "name": l.name,
+            "albedo": l.albedo,
+            "tile_size_m": l.tile_size_m,
+            "rotation_degrees": l.rotation_degrees,
+            "tint": l.tint,
+            "resolution": l.resolution,
+            "locked": l.locked,
+            "texels": l.texels,
+            "share": if total > 0.0 { f64::from(l.texels) / total } else { 0.0 },
+        })).collect::<Vec<_>>(),
+        "brush": {
+            "mode": paint.mode.label(),
+            "from_layer": paint.from_layer,
+            "radius": paint.radius,
+            "strength": paint.strength,
+            "spacing": paint.spacing,
+            "falloff": paint.falloff.label(),
+            "shared_shape": paint.shared_shape,
+        },
+        "rules": paint.rules.iter().map(|r| json!({
+            "layer": r.layer,
+            "mask": r.mask,
+            "from": r.corners[0], "full_from": r.corners[1], "full_to": r.corners[2], "to": r.corners[3],
+        })).collect::<Vec<_>>(),
+        "fallback": paint.fallback,
+        "status": paint.status,
+    })
 }
 
 fn terrain_brush_json(app: &App) -> Value {

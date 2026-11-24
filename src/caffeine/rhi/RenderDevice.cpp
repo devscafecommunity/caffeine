@@ -761,8 +761,26 @@ bool RenderDevice::uploadTexture3D(Texture* texture, const void* pixels, u32 wid
     return uploadTextureVolume(texture, pixels, width, height, depth, bytesPerPixel, mipLevel);
 }
 
+bool RenderDevice::uploadTextureLayer(Texture* texture, const void* pixels, u32 width, u32 height,
+                                      u32 layer, u32 bytesPerPixel, u32 mipLevel) {
+    if (!texture || texture->type != TextureType::Texture2DArray || layer >= texture->depth) {
+        return false;
+    }
+    return uploadTextureVolume(texture, pixels, width, height, 1, bytesPerPixel, mipLevel, layer);
+}
+
+bool RenderDevice::uploadTextureRect(Texture* texture, const void* pixels, u32 x, u32 y, u32 width, u32 height,
+                                     u32 bytesPerPixel, u32 mipLevel) {
+    if (!texture || texture->type != TextureType::Texture2D || x + width > texture->width ||
+        y + height > texture->height) {
+        return false;
+    }
+    return uploadTextureVolume(texture, pixels, width, height, 1, bytesPerPixel, mipLevel, 0, x, y);
+}
+
 bool RenderDevice::uploadTextureVolume(Texture* texture, const void* pixels, u32 width,
-                                       u32 height, u32 depth, u32 bytesPerPixel, u32 mipLevel) {
+                                       u32 height, u32 depth, u32 bytesPerPixel, u32 mipLevel,
+                                       u32 layer, u32 x, u32 y) {
     if (!m_device || !texture || !texture->handle || !pixels || width < 1 || height < 1 ||
         depth < 1) {
         return false;
@@ -818,9 +836,9 @@ bool RenderDevice::uploadTextureVolume(Texture* texture, const void* pixels, u32
     SDL_GPUTextureRegion dst{};
     dst.texture = texture->handle;
     dst.mip_level = mipLevel;
-    dst.layer = 0;
-    dst.x = 0;
-    dst.y = 0;
+    dst.layer = layer;
+    dst.x = x;
+    dst.y = y;
     dst.z = 0;
     dst.w = width;
     dst.h = height;

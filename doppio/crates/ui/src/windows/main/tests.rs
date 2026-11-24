@@ -1068,8 +1068,8 @@ fn layout_presets_keep_every_page() {
         assert_eq!(state.len(), 4);
         let pages: usize = state.iter().map(|(_, group)| group.pages.len()).sum();
         assert_eq!(
-            pages, 22,
-            "the Gameplay, Camera and Terrain Brush tabs joined the workspace"
+            pages, 23,
+            "the Gameplay, Camera, Terrain Brush and Terrain Paint tabs joined the workspace"
         );
     }
     let mut harness = Harness::with_entities();
@@ -1093,6 +1093,7 @@ fn layouts_keep_the_right_column_for_inspector_profiler_photon_and_environment()
                 PaneKind::Profiler,
                 PaneKind::Performance,
                 PaneKind::TerrainBrush,
+                PaneKind::TerrainPaint,
                 PaneKind::Photon,
                 PaneKind::Environment,
                 PaneKind::Audio
@@ -16866,5 +16867,522 @@ mod terrain_editor {
         assert!(is_passive(&Message::TerrainModifiers { ctrl: true }));
         assert!(!is_passive(&Message::TerrainBrushRadius(1.2)));
         assert!(!is_passive(&Message::TerrainBrush(Edit::Active(true))));
+    }
+}
+
+mod terrain_paint {
+    use super::*;
+    use crate::uikit::panels::terrain_paint::{
+        AutoRule, BrushAmount, Edit, LayerNumber, RuleCorner,
+    };
+    use doppio_engine::PaintMode;
+
+    /// A flat terrain in front of the camera with a ramp on its right half, layers still off.
+    fn scene() -> Option<(Harness, u32)> {
+        let mut harness = engine_harness()?;
+        if !harness.app.engine.as_ref()?.has_terrain_layers() {
+            return None; // a libcaffeine-capi from before C ABI 29
+        }
+        let engine = harness.app.engine.as_mut().unwrap();
+        let id = engine.create_entity("Ground").ok()?;
+        let mut heights = vec![0.3f32; 129 * 129];
+        for z in 0..129 {
+            for x in 64..129 {
+                heights[z * 129 + x] = 0.3 + (x - 64) as f32 * 2.0 / 80.0;
+            }
+        }
+        engine
+            .set_terrain(
+                id,
+                &doppio_engine::Terrain {
+                    resolution: [129, 129],
+                    size: [256.0, 256.0],
+                    max_height: 80.0,
+                    ..doppio_engine::Terrain::default()
+                },
+                &heights,
+                None,
+            )
+            .ok()?;
+        harness.app.entities = projectloader::read_entities(harness.app.engine.as_ref().unwrap());
+        harness.app.selected = harness
+            .app
+            .entities
+            .iter()
+            .position(|e| e.id == id)
+            .unwrap_or(0);
+        harness.app.camera = doppio_engine::Camera {
+            yaw: 0.0,
+            pitch: 1.0,
+            distance: 120.0,
+            focus: [0.0, 12.0, 0.0],
+        };
+        harness.app.viewport_frame_camera = None;
+        harness.rebase_history();
+        Some((harness, id))
+    }
+
+    fn layer_at(harness: &Harness, id: u32, x: f64, z: f64) -> u32 {
+        harness
+            .app()
+            .engine
+            .as_ref()
+            .unwrap()
+            .terrain_layer_at(id, [x, 0.0, z])
+            .expect("a point on the terrain")
+            .layer[0]
+    }
+
+    fn centre(harness: &Harness) -> iced::Point {
+        iced::Point::new(
+            harness.app().viewport_logical.0 * 0.5,
+            harness.app().viewport_logical.1 * 0.5,
+        )
+    }
+
+    fn add_layers(harness: &mut Harness) {
+        harness.dispatch(Message::TerrainPaint(Edit::EnableLayers(true)));
+        for (name, tint) in [("Red", [1.0, 0.0, 0.0]), ("Blue", [0.0, 0.0, 1.0])] {
+            harness.dispatch(Message::TerrainPaint(Edit::AddLayerWith {
+                name: name.to_owned(),
+                albedo: String::new(),
+                tint,
+                tile_size_m: 4.0,
+            }));
+        }
+    }
+
+    #[test]
+    fn the_pane_shows_up_and_layers_start_off() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        assert!(PaneKind::ALL.contains(&PaneKind::TerrainPaint));
+        assert_eq!(
+            PaneKind::from_name("terrain_paint"),
+            Some(PaneKind::TerrainPaint)
+        );
+        harness.dispatch(Message::ShowTerrainPaint);
+        assert!(harness
+            .app()
+            .panes
+            .iter()
+            .any(|(_, group)| group.active_kind() == PaneKind::TerrainPaint));
+        let state = &harness.app().terrain_paint;
+        assert_eq!(state.entity, Some(id));
+        assert_eq!(state.terrain_name.as_deref(), Some("Ground"));
+        assert!(!state.layers.unwrap().enabled);
+        assert!(state.palette.is_empty());
+    }
+
+    #[test]
+    fn turning_layers_on_gives_the_four_layers_and_is_one_undoable_step() {
+        let Some((mut harness, _)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        let steps = harness.app().history.len();
+        harness.dispatch(Message::TerrainPaint(Edit::EnableLayers(true)));
+        let state = &harness.app().terrain_paint;
+        assert!(state.layers.unwrap().enabled);
+        assert_eq!(state.palette.len(), 4);
+        assert_eq!(state.palette[0].name, "Grass");
+        assert_eq!(harness.app().history.len(), steps + 1);
+
+        harness.dispatch(Message::Undo);
+        assert!(!harness.app().terrain_paint.layers.unwrap().enabled);
+        harness.dispatch(Message::Redo);
+        assert!(harness.app().terrain_paint.layers.unwrap().enabled);
+        assert_eq!(harness.app().terrain_paint.palette.len(), 4);
+    }
+
+    #[test]
+    fn a_layer_is_added_painted_and_undone_in_order() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        add_layers(&mut harness);
+        let palette = &harness.app().terrain_paint.palette;
+        assert_eq!(palette.len(), 6);
+        assert_eq!(palette[4].name, "Red");
+        assert_eq!(
+            harness.app().terrain_paint.selected,
+            5,
+            "the new layer is selected"
+        );
+
+        // Paint the blue one at the left, then select red and paint the right.
+        let steps = harness.app().history.len();
+        harness.dispatch(Message::TerrainPaintStroke {
+            terrain: Some(id),
+            points: vec![[-60.0, 0.0, 0.0], [-40.0, 0.0, 0.0]],
+        });
+        assert_eq!(harness.app().history.len(), steps + 1);
+        assert_eq!(layer_at(&harness, id, -50.0, 0.0), 5);
+        harness.dispatch(Message::TerrainPaint(Edit::SelectLayer(4)));
+        harness.dispatch(Message::TerrainPaintStroke {
+            terrain: Some(id),
+            points: vec![[-50.0, 0.0, 0.0]],
+        });
+        assert_eq!(layer_at(&harness, id, -50.0, 0.0), 4);
+
+        // Undo and redo the stroke; then the palette edits underneath it.
+        harness.dispatch(Message::Undo);
+        assert_eq!(layer_at(&harness, id, -50.0, 0.0), 5);
+        harness.dispatch(Message::Undo);
+        assert_eq!(layer_at(&harness, id, -50.0, 0.0), 0);
+        harness.dispatch(Message::Redo);
+        harness.dispatch(Message::Redo);
+        assert_eq!(layer_at(&harness, id, -50.0, 0.0), 4);
+        assert!(harness.app().terrain_paint.palette[4].texels > 0);
+    }
+
+    #[test]
+    fn turning_layers_off_and_undoing_it_brings_the_painting_back() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        add_layers(&mut harness);
+        harness.dispatch(Message::TerrainPaintStroke {
+            terrain: Some(id),
+            points: vec![[-50.0, 0.0, 0.0]],
+        });
+        assert_eq!(layer_at(&harness, id, -50.0, 0.0), 5);
+        harness.dispatch(Message::TerrainPaint(Edit::EnableLayers(false)));
+        assert!(!harness.app().terrain_paint.layers.unwrap().enabled);
+        assert!(harness.app().terrain_paint.palette.is_empty());
+        // Undo: layers are on again, with all six layers and the paint on layer 5.
+        harness.dispatch(Message::Undo);
+        assert_eq!(harness.app().terrain_paint.palette.len(), 6);
+        assert_eq!(layer_at(&harness, id, -50.0, 0.0), 5);
+        // Turning them on by hand starts again from the four-layer view.
+        harness.dispatch(Message::Redo);
+        harness.dispatch(Message::TerrainPaint(Edit::EnableLayers(true)));
+        assert_eq!(harness.app().terrain_paint.palette.len(), 4);
+    }
+
+    #[test]
+    fn a_mouse_drag_paints_one_stroke_and_does_not_orbit() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        add_layers(&mut harness);
+        harness.dispatch(Message::TerrainPaint(Edit::Brush(
+            BrushAmount::Radius,
+            14.0,
+        )));
+        harness.dispatch(Message::TerrainPaint(Edit::Brush(
+            BrushAmount::Strength,
+            1.0,
+        )));
+        harness.dispatch(Message::TerrainPaint(Edit::Active(true)));
+        assert!(harness.app().terrain_cursor.active);
+        assert_eq!(harness.app().terrain_cursor.radius_m, 14.0);
+
+        let camera = harness.app().camera;
+        let steps = harness.app().history.len();
+        let at = centre(&harness);
+        harness.dispatch(Message::ViewportMoved(at));
+        harness.dispatch(Message::ViewportPressed(iced::mouse::Button::Left));
+        assert!(harness
+            .app()
+            .terrain_editor
+            .stroke
+            .as_ref()
+            .is_some_and(|s| s.paint));
+        for dx in [4.0, 8.0, 12.0] {
+            harness.dispatch(Message::ViewportMoved(iced::Point::new(at.x + dx, at.y)));
+        }
+        harness.dispatch(Message::ViewportReleased(iced::mouse::Button::Left));
+        assert!(harness.app().terrain_editor.stroke.is_none());
+        assert_eq!(harness.app().camera, camera);
+        assert_eq!(harness.app().history.len(), steps + 1);
+        assert!(harness
+            .app()
+            .history
+            .undo_name()
+            .unwrap()
+            .starts_with("Paint"));
+        let hit = harness
+            .app()
+            .terrain_cursor
+            .hit
+            .expect("over the terrain")
+            .1;
+        assert_eq!(layer_at(&harness, id, hit[0], hit[2]), 5);
+
+        // Ctrl turns paint into erase: the same drag takes the layer away again.
+        harness.dispatch(Message::TerrainModifiers { ctrl: true });
+        harness.dispatch(Message::ViewportPressed(iced::mouse::Button::Left));
+        harness.dispatch(Message::ViewportMoved(iced::Point::new(at.x + 2.0, at.y)));
+        harness.dispatch(Message::ViewportReleased(iced::mouse::Button::Left));
+        harness.dispatch(Message::TerrainModifiers { ctrl: false });
+        assert_eq!(layer_at(&harness, id, hit[0], hit[2]), 0);
+    }
+
+    #[test]
+    fn painting_needs_layers_and_says_so() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        harness.dispatch(Message::TerrainPaintStroke {
+            terrain: Some(id),
+            points: vec![[0.0, 0.0, 0.0]],
+        });
+        assert!(harness
+            .app()
+            .terrain_paint
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("layered painting")));
+        harness.dispatch(Message::TerrainPaint(Edit::Active(true)));
+        let at = centre(&harness);
+        harness.dispatch(Message::ViewportMoved(at));
+        harness.dispatch(Message::ViewportPressed(iced::mouse::Button::Left));
+        assert!(
+            harness.app().terrain_editor.stroke.is_none(),
+            "no stroke without layers"
+        );
+        harness.dispatch(Message::ViewportReleased(iced::mouse::Button::Left));
+    }
+
+    #[test]
+    fn dragging_a_slider_is_one_undo_step() {
+        let Some((mut harness, _)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        add_layers(&mut harness);
+        let steps = harness.app().history.len();
+        let before = harness.app().terrain_paint.palette[5].tile_size_m;
+        for tile in [5.0, 6.0, 7.0, 8.0, 9.0] {
+            harness.dispatch(Message::TerrainPaint(Edit::LayerNumber(
+                LayerNumber::Tile,
+                tile,
+            )));
+        }
+        assert_eq!(harness.app().terrain_paint.palette[5].tile_size_m, 9.0);
+        assert_eq!(
+            harness.app().history.len(),
+            steps + 1,
+            "five ticks, one step"
+        );
+        // A different field starts a new step.
+        harness.dispatch(Message::TerrainPaint(Edit::LayerNumber(
+            LayerNumber::Rotation,
+            30.0,
+        )));
+        assert_eq!(harness.app().history.len(), steps + 2);
+        harness.dispatch(Message::Undo);
+        assert_eq!(harness.app().terrain_paint.palette[5].rotation_degrees, 0.0);
+        assert_eq!(harness.app().terrain_paint.palette[5].tile_size_m, 9.0);
+        harness.dispatch(Message::Undo);
+        assert_eq!(
+            harness.app().terrain_paint.palette[5].tile_size_m,
+            before,
+            "the whole drag is undone at once"
+        );
+        harness.dispatch(Message::Redo);
+        assert_eq!(harness.app().terrain_paint.palette[5].tile_size_m, 9.0);
+    }
+
+    #[test]
+    fn a_layer_is_renamed_locked_and_removed_with_its_paint_following() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        add_layers(&mut harness);
+        harness.dispatch(Message::TerrainPaintStroke {
+            terrain: Some(id),
+            points: vec![[-50.0, 0.0, 0.0]],
+        }); // blue (layer 5)
+        harness.dispatch(Message::TerrainPaint(Edit::LayerName("Sky".to_owned())));
+        assert_eq!(harness.app().terrain_paint.palette[5].name, "Sky");
+        harness.dispatch(Message::TerrainPaint(Edit::LayerLocked(true)));
+        assert!(harness.app().terrain_paint.palette[5].locked);
+
+        // Removing the red layer (4) renumbers: the blue paint is on layer 4 now.
+        harness.dispatch(Message::TerrainPaint(Edit::SelectLayer(4)));
+        harness.dispatch(Message::TerrainPaint(Edit::RemoveLayer));
+        assert_eq!(harness.app().terrain_paint.palette.len(), 5);
+        assert_eq!(layer_at(&harness, id, -50.0, 0.0), 4);
+        harness.dispatch(Message::Undo);
+        assert_eq!(harness.app().terrain_paint.palette.len(), 6);
+        assert_eq!(layer_at(&harness, id, -50.0, 0.0), 5);
+        harness.dispatch(Message::Redo);
+        assert_eq!(layer_at(&harness, id, -50.0, 0.0), 4);
+
+        // Moving a layer renumbers too, and undo puts it back.
+        harness.dispatch(Message::TerrainPaint(Edit::SelectLayer(4)));
+        harness.dispatch(Message::TerrainPaint(Edit::MoveLayer(-4)));
+        assert_eq!(harness.app().terrain_paint.palette[0].name, "Sky");
+        assert_eq!(layer_at(&harness, id, -50.0, 0.0), 0);
+        harness.dispatch(Message::Undo);
+        assert_eq!(harness.app().terrain_paint.palette[4].name, "Sky");
+
+        // The last layer cannot go.
+        for _ in 0..8 {
+            harness.dispatch(Message::TerrainPaint(Edit::SelectLayer(0)));
+            harness.dispatch(Message::TerrainPaint(Edit::RemoveLayer));
+        }
+        assert_eq!(harness.app().terrain_paint.palette.len(), 1);
+        assert!(harness
+            .app()
+            .terrain_paint
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("last layer")));
+    }
+
+    #[test]
+    fn auto_layering_by_slope_is_one_step() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        add_layers(&mut harness);
+        harness.dispatch(Message::TerrainPaint(Edit::SelectLayer(4)));
+        harness.dispatch(Message::TerrainPaint(Edit::AddRule("slope".to_owned())));
+        assert_eq!(harness.app().terrain_paint.rules.len(), 1);
+        harness.dispatch(Message::TerrainPaint(Edit::RuleCorner(
+            0,
+            RuleCorner::Rise0,
+            0.35,
+        )));
+        let rule = &harness.app().terrain_paint.rules[0];
+        assert!(
+            rule.corners.windows(2).all(|w| w[0] <= w[1]),
+            "{:?}",
+            rule.corners
+        );
+        let steps = harness.app().history.len();
+        harness.dispatch(Message::TerrainPaintApplyRules { fallback: Some(0) });
+        assert_eq!(harness.app().history.len(), steps + 1);
+        assert_eq!(layer_at(&harness, id, 50.0, 0.0), 4, "the ramp is red");
+        assert_eq!(
+            layer_at(&harness, id, -50.0, 0.0),
+            0,
+            "the flat is the fallback"
+        );
+        harness.dispatch(Message::Undo);
+        assert_eq!(layer_at(&harness, id, 50.0, 0.0), 0);
+
+        // A rule on a layer that is not in the palette is said, not swallowed.
+        harness.dispatch(Message::TerrainPaint(Edit::RemoveRule(0)));
+        harness.dispatch(Message::TerrainPaintApplyRules { fallback: None });
+        assert!(harness
+            .app()
+            .terrain_paint
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("Add a rule")));
+        harness.dispatch(Message::TerrainPaint(Edit::AddRule("moisture".to_owned())));
+        assert!(
+            harness.app().terrain_paint.rules.is_empty(),
+            "an unknown mask adds nothing"
+        );
+    }
+
+    #[test]
+    fn the_two_tools_take_turns_and_the_radius_keys_follow_the_active_one() {
+        let Some((mut harness, _)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        add_layers(&mut harness);
+        harness.dispatch(Message::TerrainBrush(
+            crate::uikit::panels::terrain_brush::Edit::Active(true),
+        ));
+        assert!(harness.app().terrain_editor.active);
+        harness.dispatch(Message::TerrainPaint(Edit::Active(true)));
+        assert!(harness.app().terrain_paint.active);
+        assert!(
+            !harness.app().terrain_editor.active,
+            "painting turned sculpting off"
+        );
+        let radius = harness.app().terrain_paint.radius;
+        let sculpt_radius = harness.app().terrain_editor.working.radius_m;
+        harness.dispatch(Message::TerrainBrushRadius(2.0));
+        assert_eq!(harness.app().terrain_paint.radius, radius * 2.0);
+        assert_eq!(harness.app().terrain_editor.working.radius_m, sculpt_radius);
+        harness.dispatch(Message::TerrainBrush(
+            crate::uikit::panels::terrain_brush::Edit::Active(true),
+        ));
+        assert!(
+            !harness.app().terrain_paint.active,
+            "sculpting turned painting off"
+        );
+        assert!(
+            !harness.app().terrain_cursor.cursor.is_some() || harness.app().terrain_cursor.active
+        );
+    }
+
+    #[test]
+    fn replace_and_the_brush_settings_reach_the_stroke() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        add_layers(&mut harness);
+        harness.dispatch(Message::TerrainPaint(Edit::Brush(
+            BrushAmount::Strength,
+            1.0,
+        )));
+        harness.dispatch(Message::TerrainPaint(Edit::Brush(
+            BrushAmount::Radius,
+            20.0,
+        )));
+        harness.dispatch(Message::TerrainPaintStroke {
+            terrain: Some(id),
+            points: vec![[-50.0, 0.0, 0.0]],
+        }); // layer 5 painted
+            // Replace layer 5 with layer 4.
+        harness.dispatch(Message::TerrainPaint(Edit::Mode(PaintMode::Replace)));
+        harness.dispatch(Message::TerrainPaint(Edit::FromLayer(5)));
+        harness.dispatch(Message::TerrainPaint(Edit::SelectLayer(4)));
+        harness.dispatch(Message::TerrainPaintStroke {
+            terrain: Some(id),
+            points: vec![[-50.0, 0.0, 0.0]],
+        });
+        assert_eq!(layer_at(&harness, id, -50.0, 0.0), 4);
+        // Settings clamp.
+        harness.dispatch(Message::TerrainPaint(Edit::Brush(
+            BrushAmount::Strength,
+            99.0,
+        )));
+        assert_eq!(harness.app().terrain_paint.strength, 1.0);
+        harness.dispatch(Message::TerrainPaint(Edit::Brush(
+            BrushAmount::Radius,
+            -3.0,
+        )));
+        assert_eq!(harness.app().terrain_paint.radius, 0.1);
+    }
+
+    #[test]
+    fn a_rule_is_written_as_biome_text_the_engine_reads() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        add_layers(&mut harness);
+        let rules = [AutoRule {
+            layer: 4,
+            mask: "slope".to_owned(),
+            corners: [0.3, 0.4, 1.0, 1.0],
+        }];
+        let text = super::super::terrainpaint::rules_text(&rules);
+        let engine = harness.app.engine.as_mut().unwrap();
+        assert!(
+            engine.terrain_autolayer(id, &text, 0, None).is_ok(),
+            "{text}"
+        );
+        assert!(engine
+            .terrain_autolayer(id, "class 99 base 1\n", 0, None)
+            .is_err());
     }
 }

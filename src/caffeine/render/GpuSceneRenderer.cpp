@@ -229,6 +229,9 @@ struct TerrainMaterialUBO {
     float worldSize[4];
     float flags[4];
     float modelInv[16];
+    // Layered painting: metres per repeat and turn (radians) of each of up to 64 array slices (std140: four to a vec4).
+    float layerTile[64];
+    float layerRot[64];
 };
 
 Mat4 buildLocalMatrix(const ECS::Transform& t) {
@@ -805,7 +808,7 @@ bool GpuSceneRenderer::createPipelines() {
     m_instancedVert = createBuiltinShader(m_device, BuiltinShader::SceneInstancedVertex,
                                           RHI::ShaderStage::Vertex, 1);
     m_terrainFrag = createBuiltinShader(m_device, BuiltinShader::TerrainLitFragment,
-                                        RHI::ShaderStage::Fragment, 3, 12);
+                                        RHI::ShaderStage::Fragment, 3, 15);
     m_shadowVert = createBuiltinShader(m_device, BuiltinShader::ShadowDepthVertex,
                                        RHI::ShaderStage::Vertex, 1);
     m_shadowFrag = createBuiltinShader(m_device, BuiltinShader::ShadowDepthFragment,
@@ -1879,7 +1882,12 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             }
             const Terrain::TerrainGpuTextures* gpu =
                 Terrain::TerrainCache::instance().gpuTexturesFor(draw.entity);
-            if (gpu && gpu->useSplatmap) {
+            const bool layered = gpu && gpu->useLayers && gpu->layerArray && gpu->indexMap && gpu->weightMap;
+            if (layered) {
+                mat.flags[2] = 1.0f;
+                std::memcpy(mat.layerTile, gpu->layerTile, sizeof(mat.layerTile));
+                std::memcpy(mat.layerRot, gpu->layerRotation, sizeof(mat.layerRot));
+            } else if (gpu && gpu->useSplatmap) {
                 mat.flags[0] = 1.0f;
             } else if (gpu && (!gpu->cachedAlbedoPath.empty() || gpu->albedo)) {
                 mat.flags[1] = 1.0f;
@@ -1895,7 +1903,15 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
                 for (u32 slot = 0; slot < 6; ++slot) {
                     if (whiteTex) cmd->bindTexture(whiteTex, slot, m_repeatSampler);
                 }
-                if (gpu && gpu->useSplatmap) {
+                // The layered maps (slots 12 to 14) are always bound, plain white when there are none: a pipeline
+                // must find every sampler it declares.
+                RHI::Texture* whiteArray = Render::GpuTextureCache::instance().whiteTextureArray(m_device);
+                cmd->bindTexture(layered ? gpu->indexMap : whiteTex, 12, m_pointSampler);
+                cmd->bindTexture(layered ? gpu->weightMap : whiteTex, 13, m_pointSampler);
+                if (layered ? gpu->layerArray != nullptr : whiteArray != nullptr) {
+                    cmd->bindTexture(layered ? gpu->layerArray : whiteArray, 14, m_repeatSampler);
+                }
+                if (gpu && gpu->useSplatmap && !layered) {
                     if (gpu->splatMap) cmd->bindTexture(gpu->splatMap, 0, m_sampler);
                     for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
                         RHI::Texture* layerTex = whiteTex;

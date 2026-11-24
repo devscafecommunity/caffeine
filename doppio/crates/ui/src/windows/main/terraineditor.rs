@@ -27,6 +27,8 @@ const THUMBNAIL_PIXELS: u32 = 64;
 pub(super) struct OpenStroke {
     pub entity: u32,
     pub points: u32,
+    /// A layer-painting stroke (Terrain Paint) rather than a sculpting one.
+    pub paint: bool,
 }
 
 #[derive(Default)]
@@ -306,6 +308,10 @@ impl App {
             self.refresh_terrain_presence();
             // One tool at a time: painting a texture set and sculpting a terrain both use the left button.
             self.texture_set_paint_mode = false;
+            // One tool at a time: the paint brush gives way.
+            if self.terrain_paint.active {
+                self.terrain_paint.active = false;
+            }
         } else {
             self.finish_terrain_stroke();
         }
@@ -508,6 +514,9 @@ impl App {
     /// Opens a stroke on the terrain under the cursor. `false` when there is no tool, no terrain hit or the engine
     /// refuses.
     pub(super) fn begin_terrain_stroke(&mut self) -> bool {
+        if self.terrain_paint.active {
+            return self.begin_paint_stroke();
+        }
         if !self.terrain_editor.active || self.terrain_editor.stroke.is_some() || self.views.session
         {
             return false;
@@ -530,7 +539,11 @@ impl App {
         };
         match engine.terrain_stroke_begin_preset(entity, brush) {
             Ok(()) => {
-                self.terrain_editor.stroke = Some(OpenStroke { entity, points: 0 });
+                self.terrain_editor.stroke = Some(OpenStroke {
+                    entity,
+                    points: 0,
+                    paint: false,
+                });
                 true
             }
             Err(error) => {
@@ -583,7 +596,16 @@ impl App {
         self.viewport_dirty = true;
         self.scene_epoch += 1;
         if summary.record != 0 {
-            let name = format!("Sculpt {}", self.terrain_editor.working.name);
+            let name = if stroke.paint {
+                let layer = self
+                    .terrain_paint
+                    .palette
+                    .get(self.terrain_paint.selected)
+                    .map_or("layer", |l| l.name.as_str());
+                format!("Paint {layer}")
+            } else {
+                format!("Sculpt {}", self.terrain_editor.working.name)
+            };
             self.commit_terrain_stroke(summary.record, name.clone());
             self.log(
                 LogLevel::Action,
@@ -595,7 +617,10 @@ impl App {
                 ),
             );
         }
-        let _ = stroke;
+        if stroke.paint {
+            // How many texels each layer covers changed.
+            self.refresh_paint_state();
+        }
         Some(summary)
     }
 
@@ -631,7 +656,7 @@ impl App {
             .ok_or_else(|| "the stroke could not be finished".to_owned())
     }
 
-    fn commit_terrain_stroke(&mut self, record: u32, name: String) {
+    pub(super) fn commit_terrain_stroke(&mut self, record: u32, name: String) {
         let mut after = self.capture_state();
         after.terrain_stroke = Some(record);
         self.history.push(after, name, None);

@@ -335,6 +335,36 @@ pub const TB_RADIAL_COUNT: UiId = UiId::fixed("terrain_brush.amount.radial_count
 pub const TB_CENTER_X: UiId = UiId::fixed("terrain_brush.amount.center_x");
 pub const TB_CENTER_Z: UiId = UiId::fixed("terrain_brush.amount.center_z");
 pub const TB_PRESSURE: UiId = UiId::fixed("terrain_brush.amount.pressure");
+pub const PANE_TERRAIN_PAINT: UiId = UiId::fixed("editor.pane.terrain_paint");
+pub const PANE_TAB_TERRAIN_PAINT: UiId = UiId::fixed("editor.pane.tab.terrain_paint");
+pub const SHOW_TERRAIN_PAINT: UiId = UiId::fixed("editor.menu.view.terrain_paint");
+pub const TP_ACTIVE: UiId = UiId::fixed("terrain_paint.tool.active");
+pub const TP_ENABLE: UiId = UiId::fixed("terrain_paint.layers.enable");
+pub const TP_DISABLE: UiId = UiId::fixed("terrain_paint.layers.disable");
+pub const TP_ADD: UiId = UiId::fixed("terrain_paint.palette.add");
+pub const TP_ADD_ASSET: UiId = UiId::fixed("terrain_paint.palette.add_asset");
+pub const TP_REMOVE: UiId = UiId::fixed("terrain_paint.layer.remove");
+pub const TP_UP: UiId = UiId::fixed("terrain_paint.layer.up");
+pub const TP_DOWN: UiId = UiId::fixed("terrain_paint.layer.down");
+pub const TP_NAME: UiId = UiId::fixed("terrain_paint.layer.name");
+pub const TP_ALBEDO: UiId = UiId::fixed("terrain_paint.layer.albedo");
+pub const TP_RESOLUTION: UiId = UiId::fixed("terrain_paint.layer.resolution");
+pub const TP_LOCKED: UiId = UiId::fixed("terrain_paint.layer.locked");
+pub const TP_TILE: UiId = UiId::fixed("terrain_paint.layer.tile");
+pub const TP_ROTATION: UiId = UiId::fixed("terrain_paint.layer.rotation");
+pub const TP_TINT_R: UiId = UiId::fixed("terrain_paint.layer.tint_r");
+pub const TP_TINT_G: UiId = UiId::fixed("terrain_paint.layer.tint_g");
+pub const TP_TINT_B: UiId = UiId::fixed("terrain_paint.layer.tint_b");
+pub const TP_MODE: UiId = UiId::fixed("terrain_paint.brush.mode");
+pub const TP_FROM: UiId = UiId::fixed("terrain_paint.brush.from_layer");
+pub const TP_RADIUS: UiId = UiId::fixed("terrain_paint.brush.radius");
+pub const TP_STRENGTH: UiId = UiId::fixed("terrain_paint.brush.strength");
+pub const TP_SPACING: UiId = UiId::fixed("terrain_paint.brush.spacing");
+pub const TP_FALLOFF: UiId = UiId::fixed("terrain_paint.brush.falloff");
+pub const TP_SHARED: UiId = UiId::fixed("terrain_paint.brush.shared");
+pub const TP_RULE_ADD: UiId = UiId::fixed("terrain_paint.auto.add");
+pub const TP_FALLBACK: UiId = UiId::fixed("terrain_paint.auto.fallback");
+pub const TP_APPLY: UiId = UiId::fixed("terrain_paint.auto.apply");
 pub const PANE_PERFORMANCE: UiId = UiId::fixed("editor.pane.performance");
 pub const PANE_TAB_PERFORMANCE: UiId = UiId::fixed("editor.pane.tab.performance");
 pub const SHOW_PERFORMANCE: UiId = UiId::fixed("editor.menu.view.performance");
@@ -908,6 +938,16 @@ pub fn terrain_brush_category(name: &str) -> UiId {
 /// A widget of the `index`-th protection term (`mask`, `rise0`, `rise1`, `fall1`, `fall0`, `remove`).
 pub fn terrain_brush_protect(index: usize, field: &str) -> UiId {
     UiId::dynamic(format!("terrain_brush.protect.{index}.{field}"))
+}
+
+/// One layer row of the Terrain Paint palette.
+pub fn terrain_paint_layer(index: usize) -> UiId {
+    UiId::dynamic(format!("terrain_paint.palette.layer.{index}"))
+}
+
+/// A widget of the `index`-th auto-layering rule (`layer`, `rise0`, `rise1`, `fall1`, `fall0`, `remove`).
+pub fn terrain_paint_rule(index: usize, field: &str) -> UiId {
+    UiId::dynamic(format!("terrain_paint.auto.rule.{index}.{field}"))
 }
 
 /// One card in the asset manager grid.
@@ -1608,6 +1648,166 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: UiId::fixed("terrain_brush.protect"),
         description: "Terrain Brush: A protection term of the brush (mask, four range sliders, remove); widgets use the .N.field suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: PANE_TERRAIN_PAINT,
+        description: "Terrain Paint: the material palette of a terrain (up to 64 layers), the paint brush and auto-layering.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_TERRAIN_PAINT,
+        description: "Tab of the Terrain Paint panel.",
+        kind: "tab",
+    },
+    UiMeta {
+        id: SHOW_TERRAIN_PAINT,
+        description: "Brings the Terrain Paint tab to the front.",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: TP_ACTIVE,
+        description: "Terrain Paint: Turns the paint brush on: a left click or drag on the terrain paints the selected layer.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TP_ENABLE,
+        description: "Terrain Paint: Turns layered painting on for the terrain: a palette of up to 64 layers instead of four.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TP_DISABLE,
+        description: "Terrain Paint: Back to the four-layer splat map (layers 0 to 3 are kept, the others cannot be shown).",
+        kind: "button",
+    },
+    UiMeta {
+        id: TP_ADD,
+        description: "Terrain Paint: Adds a layer to the palette.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TP_ADD_ASSET,
+        description: "Terrain Paint: Adds a layer whose picture is the asset selected in the Assets panel.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TP_REMOVE,
+        description: "Terrain Paint: Removes the selected layer: its paint goes to the other layers, and the layers after it move down.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TP_UP,
+        description: "Terrain Paint: Moves the selected layer one place up (painting follows it).",
+        kind: "button",
+    },
+    UiMeta {
+        id: TP_DOWN,
+        description: "Terrain Paint: Moves the selected layer one place down (painting follows it).",
+        kind: "button",
+    },
+    UiMeta {
+        id: TP_NAME,
+        description: "Terrain Paint: The selected layer's name.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: TP_ALBEDO,
+        description: "Terrain Paint: The project path of the selected layer's picture; empty draws its tint as a flat colour.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: TP_RESOLUTION,
+        description: "Terrain Paint: How sharp the layer's picture is on the GPU (256 to 4096 pixels); the array falls to a lower class when it would not fit the budget.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TP_LOCKED,
+        description: "Terrain Paint: A locked layer is never changed by painting or auto-layering.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TP_TILE,
+        description: "Terrain Paint: Metres one repeat of the layer's picture covers.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TP_ROTATION,
+        description: "Terrain Paint: Turns the layer's picture on the ground, degrees.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TP_TINT_R,
+        description: "Terrain Paint: Red of the layer's tint.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TP_TINT_G,
+        description: "Terrain Paint: Green of the layer's tint.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TP_TINT_B,
+        description: "Terrain Paint: Blue of the layer's tint.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TP_MODE,
+        description: "Terrain Paint: What a stamp does: paint the layer, erase it, replace another layer with it, or smooth the blend.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TP_FROM,
+        description: "Terrain Paint: Replace: the layer to be replaced by the selected one.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TP_RADIUS,
+        description: "Terrain Paint: Paint brush radius in metres.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TP_STRENGTH,
+        description: "Terrain Paint: The share of a texel moved per stamp at full weight.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TP_SPACING,
+        description: "Terrain Paint: Metres between stamps; 0 means a quarter of the radius.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TP_FALLOFF,
+        description: "Terrain Paint: How a stamp's weight falls from its centre to its edge.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TP_SHARED,
+        description: "Terrain Paint: Use the stamp picture, jitter, symmetry and protection of the Terrain Brush tab's brush.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TP_RULE_ADD,
+        description: "Terrain Paint: Adds an auto-layering rule on a mask: slope, height or curvature.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TP_FALLBACK,
+        description: "Terrain Paint: The layer a texel gets when no rule claims it.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TP_APPLY,
+        description: "Terrain Paint: Paints the layers from the rules (one undo step); locked layers keep their weight.",
+        kind: "button",
+    },
+    UiMeta {
+        id: UiId::fixed("terrain_paint.palette.layer"),
+        description: "Terrain Paint: A layer of the palette; rows use the .N suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("terrain_paint.auto.rule"),
+        description: "Terrain Paint: An auto-layering rule (layer, mask, four sliders, remove); widgets use the .N.field suffix.",
         kind: "list_row",
     },
     UiMeta {
