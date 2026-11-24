@@ -1,0 +1,53 @@
+{
+  "name": "Terrain Brush: the library, the brush settings and the sculpting switch are one tab away",
+  "fixture": "scene3d",
+  "size": [
+    1440,
+    800
+  ],
+  "steps": [
+    {
+      "action": "click",
+      "target": "id:editor.menu.view",
+      "label": "open the View menu"
+    },
+    {
+      "action": "click",
+      "target": "id:editor.menu.view.terrain_brush",
+      "label": "open the Terrain Brush tab"
+    },
+    {
+      "action": "expect",
+      "exists": [
+        "id:terrain_brush.tool.active",
+        "id:terrain_brush.library.search",
+        "id:terrain_brush.library.category.all",
+        "id:terrain_brush.brush.mode",
+        "id:terrain_brush.brush.falloff",
+        "id:terrain_brush.amount.radius",
+        "id:terrain_brush.amount.strength",
+        "id:terrain_brush.amount.spacing",
+        "id:terrain_brush.symmetry.kind",
+        "id:terrain_brush.protect.add",
+        "id:terrain_brush.file.name",
+        "id:terrain_brush.file.save"
+      ],
+      "label": "the tool's switch, the library, the settings, symmetry, protection and the file are all there"
+    },
+    {
+      "action": "expect",
+      "missing": [
+        "id:terrain_brush.amount.step",
+        "id:terrain_brush.amount.talus",
+        "id:terrain_brush.amount.droplets",
+        "id:terrain_brush.amount.offset_x"
+      ],
+      "label": "a raise brush does not offer the numbers of terraces, erosion or clone"
+    },
+    {
+      "action": "screenshot",
+      "name": "terrain-brush",
+      "target": "id:editor.pane.terrain_brush"
+    }
+  ]
+}

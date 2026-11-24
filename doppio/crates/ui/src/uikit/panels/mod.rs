@@ -18,6 +18,7 @@ pub mod project_manager;
 pub mod rig2d;
 pub mod sceneviewport;
 pub mod script;
+pub mod terrain_brush;
 pub mod terrain_generator;
 pub mod texture_generator;
 pub mod texture_set;

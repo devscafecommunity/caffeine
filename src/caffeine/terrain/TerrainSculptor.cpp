@@ -200,6 +200,8 @@ void TerrainSculptor::applyBrush(TerrainHeightmap& heightmap,
                     height += (noise - 0.5f) * amount * 2.0f;
                     break;
                 }
+                default:
+                    break;  // the newer modes belong to TerrainStroke
             }
             heightmap.setNormalized(ux, uz, height);
 

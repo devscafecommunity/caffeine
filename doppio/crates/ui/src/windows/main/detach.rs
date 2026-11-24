@@ -75,6 +75,7 @@ impl PaneKind {
             PaneKind::Environment => "environment",
             PaneKind::Audio => "audio",
             PaneKind::Performance => "performance",
+            PaneKind::TerrainBrush => "terrain_brush",
             PaneKind::PhaseShift => "phaseshift",
             PaneKind::Rig2d => "rig2d",
             PaneKind::Profiler => "profiler",
@@ -97,7 +98,7 @@ impl PaneKind {
     }
 
     /// Every kind of tab.
-    pub(super) const ALL: [PaneKind; 23] = [
+    pub(super) const ALL: [PaneKind; 24] = [
         PaneKind::Hierarchy,
         PaneKind::Assets,
         PaneKind::Viewport,
@@ -111,6 +112,7 @@ impl PaneKind {
         PaneKind::Environment,
         PaneKind::Audio,
         PaneKind::Performance,
+        PaneKind::TerrainBrush,
         PaneKind::PhaseShift,
         PaneKind::Rig2d,
         PaneKind::Profiler,

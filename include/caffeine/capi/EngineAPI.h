@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define CAFFEINE_CAPI_VERSION 27
+#define CAFFEINE_CAPI_VERSION 28
 #define CAFFEINE_ENTITY_NONE UINT32_MAX
 
 typedef struct CaffeineSession CaffeineSession;
@@ -1016,7 +1016,19 @@ typedef enum CaffeineTerrainBrushMode {
     CAFFEINE_BRUSH_LOWER = 1,
     CAFFEINE_BRUSH_SMOOTH = 2,
     CAFFEINE_BRUSH_FLATTEN = 3,
-    CAFFEINE_BRUSH_NOISE = 4
+    CAFFEINE_BRUSH_NOISE = 4,
+    /* v28 */
+    CAFFEINE_BRUSH_RAMP = 5,
+    CAFFEINE_BRUSH_TERRACE = 6,
+    CAFFEINE_BRUSH_PINCH = 7,
+    CAFFEINE_BRUSH_BULGE = 8,
+    CAFFEINE_BRUSH_STAMP_ABSOLUTE = 9,
+    CAFFEINE_BRUSH_STAMP_MAX = 10,
+    CAFFEINE_BRUSH_STAMP_MIN = 11,
+    CAFFEINE_BRUSH_CLONE = 12,
+    CAFFEINE_BRUSH_SMUDGE = 13,
+    CAFFEINE_BRUSH_ERODE_THERMAL = 14,
+    CAFFEINE_BRUSH_ERODE_HYDRAULIC = 15
 } CaffeineTerrainBrushMode;
 
 typedef enum CaffeineTerrainFalloff {
@@ -1063,6 +1075,69 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_data_legacy(const Caff
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_convert_native(CaffeineSession* session,
                                                          CaffeineEntity entity, char* out_path,
                                                          size_t out_path_size);
+
+/**
+ * Brushes as documents (v28). A `CaffeineBrushPreset` is everything a stroke needs besides the path: the mode and its
+ * numbers, the falloff, variation per stamp, symmetry, protection masks and a stamp (a procedural one of the library, or a
+ * project picture). The engine ships `caffeine_terrain_brush_count()` built-in brushes (one for each of the 42 procedural
+ * stamps and a tool for every mode); `.brush` files are text (`caffeine_terrain_brush_parse` / `_format`).
+ */
+enum { CAFFEINE_BRUSH_PROTECT_MAX = 4 };
+typedef enum CaffeineStampKind { CAFFEINE_STAMP_NONE = 0, CAFFEINE_STAMP_PROCEDURAL = 1, CAFFEINE_STAMP_IMAGE = 2 } CaffeineStampKind;
+typedef enum CaffeineSymmetryKind {
+    CAFFEINE_SYMMETRY_NONE = 0,
+    CAFFEINE_SYMMETRY_MIRROR_X = 1,
+    CAFFEINE_SYMMETRY_MIRROR_Z = 2,
+    CAFFEINE_SYMMETRY_MIRROR_BOTH = 3,
+    CAFFEINE_SYMMETRY_RADIAL = 4
+} CaffeineSymmetryKind;
+typedef struct CaffeineBrushProtect {
+    char mask[32];  /* slope, height, curvature, or a stored mask */
+    float rise0, rise1, fall1, fall0;
+} CaffeineBrushProtect;
+typedef struct CaffeineBrushPreset {
+    char name[64];
+    char category[32];
+    int32_t stamp_kind;   /* CaffeineStampKind */
+    char stamp[256];      /* a procedural stamp's id, or the project path of the picture */
+    uint32_t stamp_size;
+    int32_t mode;         /* CaffeineTerrainBrushMode, 0 to 15 */
+    float radius_m, strength, spacing_m;
+    int32_t falloff;      /* CaffeineTerrainFalloff */
+    float rotation_degrees, target_height_m;
+    uint64_t seed;
+    int32_t signed_stamp; /* 0.5 of the stamp is neutral */
+    float step_m, talus_degrees;
+    uint32_t iterations, droplets;
+    float offset_x, offset_z;
+    float position_jitter, rotation_jitter_degrees, size_jitter, opacity_jitter;
+    int32_t symmetry;     /* CaffeineSymmetryKind */
+    uint32_t radial_count;
+    float symmetry_center_x, symmetry_center_z;
+    float pressure_to_strength;
+    uint32_t protect_count;
+    CaffeineBrushProtect protect[CAFFEINE_BRUSH_PROTECT_MAX];
+} CaffeineBrushPreset;
+
+CAFFEINE_CAPI_API uint32_t caffeine_terrain_brush_count(void);
+CAFFEINE_CAPI_API CaffeineResult caffeine_terrain_brush_at(uint32_t index, CaffeineBrushPreset* out);
+/** The 0..1 image of a procedural stamp (`size` x `size` floats, 4 to 1024, row-major): the brush grid's preview. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_terrain_brush_stamp(const char* procedural_id, uint32_t size, uint64_t seed,
+                                              float* out_alpha);
+/** Reads the text of a `.brush`; on a bad line returns CAFFEINE_INVALID_ARGUMENT and says which in `error`. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_terrain_brush_parse(const char* text, CaffeineBrushPreset* out, char* error,
+                                              size_t error_size);
+/** The `.brush` text of a preset (CAFFEINE_ERROR when `text_size` is too small). */
+CAFFEINE_CAPI_API CaffeineResult caffeine_terrain_brush_format(const CaffeineBrushPreset* preset, char* text,
+                                               size_t text_size);
+/**
+ * Starts a stroke with a preset. A picture stamp is read through the session's asset manager (a project path); a stamp
+ * that cannot be made fails the call with CAFFEINE_ERROR. Protection masks name the terrain's built-in masks or the
+ * masks stored on it. Like `caffeine_session_terrain_stroke_begin`, an open stroke is ended first.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_stroke_begin_preset(CaffeineSession* session,
+                                                              CaffeineEntity entity,
+                                                              const CaffeineBrushPreset* preset);
 
 /**
  * Where a world-space ray meets a terrain (v27), in world space (metres): what a brush follows under the mouse.

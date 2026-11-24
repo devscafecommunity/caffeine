@@ -3,6 +3,7 @@ pub mod asset_picker;
 pub mod asset_preview;
 pub mod behaviour_picker;
 pub mod breadcrumb;
+pub mod brush_card;
 pub mod brush_cursor;
 pub mod button;
 pub mod card;

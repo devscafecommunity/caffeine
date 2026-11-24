@@ -23,6 +23,7 @@ use crate::uikit::panels::performance as performance_panel;
 use crate::uikit::panels::photon as photon_panel;
 use crate::uikit::panels::profiler as profiler_panel;
 use crate::uikit::panels::project_manager;
+use crate::uikit::panels::terrain_brush as terrain_brush_panel;
 use crate::uikit::panels::terrain_generator;
 use crate::uikit::panels::texture_generator;
 use crate::uikit::panels::texture_set as texture_set_panel;
@@ -307,6 +308,103 @@ pub fn run() -> iced::Result {
                 let field = required_str(args, "field")?;
                 let value = args.get("value").ok_or_else(|| "missing \"value\"".to_owned())?;
                 performance_edit(field, value).map(Message::Performance)
+            },
+        )
+        .query(
+            "terrain_brush",
+            "The Terrain Brush: whether the sculpting tool is on, the library (count, categories, names), the selected brush and the working brush's every setting by key (mode, falloff, symmetry, signed, radius, strength, spacing, rotation, target_height, step, talus, iterations, droplets, offset_x, offset_z, position_jitter, rotation_jitter, size_jitter, opacity_jitter, radial_count, center_x, center_z, pressure), its protection terms, the terrain under the mouse and the status line.",
+            |app, _| Ok(terrain_brush_json(app)),
+        )
+        .action(
+            "show_terrain_brush",
+            "Brings the Terrain Brush tab to the front and loads the brush library. args: {}",
+            |_| Ok(Message::ShowTerrainBrush),
+        )
+        .action(
+            "terrain_brush_active",
+            "Turns the sculpting tool on or off (the brush cursor follows the mouse while it is on). args: { \"active\"?: boolean (default true) }",
+            |args| {
+                Ok(Message::TerrainBrush(terrain_brush_panel::Edit::Active(
+                    args.get("active").and_then(Value::as_bool).unwrap_or(true),
+                )))
+            },
+        )
+        .action(
+            "terrain_brush_select",
+            "Makes a brush of the library the working brush. args: { \"name\": string (case-insensitive) } or { \"index\": number }",
+            |args| {
+                if let Some(index) = args.get("index").and_then(Value::as_u64) {
+                    return Ok(Message::TerrainBrush(terrain_brush_panel::Edit::Select(
+                        index as usize,
+                    )));
+                }
+                Ok(Message::TerrainBrushSelectNamed(
+                    required_str(args, "name")?.to_owned(),
+                ))
+            },
+        )
+        .action(
+            "terrain_brush_set",
+            "Sets one setting of the working brush by its key (see the `terrain_brush` query): the numbers take a number, `mode`, `falloff` and `symmetry` take a name (raise, lower, smooth, flatten, ramp, terrace, pinch, bulge, stamp_absolute, stamp_max, stamp_min, clone, smudge, erode_thermal, erode_hydraulic; smooth, linear, sharp, constant; none, mirror_x, mirror_z, mirror_both, radial), `signed` takes a bool and `name` a string. args: { \"field\": string, \"value\": number | string | bool }",
+            |args| {
+                let field = required_str(args, "field")?;
+                let value = args.get("value").ok_or_else(|| "missing \"value\"".to_owned())?;
+                terrain_brush_edit(field, value).map(Message::TerrainBrush)
+            },
+        )
+        .action(
+            "terrain_brush_protect",
+            "Adds a protection term to the working brush: it acts only where the mask is inside the range (values 0..1; the brush is full between `full_from` and `full_to`, fading to nothing at `from` and `to`). args: { \"mask\": \"slope\" | \"height\" | \"curvature\", \"from\"?: number, \"full_from\"?: number, \"full_to\"?: number, \"to\"?: number } (default: the whole range), or { \"clear\": true } to remove them all",
+            terrain_brush_protect,
+        )
+        .action(
+            "terrain_brush_stroke",
+            "Sculpts one stroke with the working brush along world-space points (metres), exactly as dragging the mouse would: one undo step. args: { \"points\": [[x, y, z], ...] (y is ignored: the stroke follows the ground), \"terrain_id\"?: number (default: the selected entity) }",
+            |args| {
+                let points = args
+                    .get("points")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "missing \"points\": [[x, y, z], ...]".to_owned())?
+                    .iter()
+                    .map(|point| {
+                        let numbers: Vec<f64> = point
+                            .as_array()
+                            .map(|a| a.iter().filter_map(Value::as_f64).collect())
+                            .unwrap_or_default();
+                        match numbers.as_slice() {
+                            [x, z] => Ok([*x, 0.0, *z]),
+                            [x, y, z] => Ok([*x, *y, *z]),
+                            _ => Err("a point is [x, y, z] in metres".to_owned()),
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Message::TerrainBrushStroke {
+                    terrain: args
+                        .get("terrain_id")
+                        .and_then(Value::as_u64)
+                        .map(|id| id as u32),
+                    points,
+                })
+            },
+        )
+        .action(
+            "terrain_brush_save",
+            "Saves the working brush as Brushes/<name>.brush in the project and adds it to the library under Custom. args: {}",
+            |_| Ok(Message::TerrainBrush(terrain_brush_panel::Edit::Save)),
+        )
+        .action(
+            "terrain_brush_search",
+            "Filters the brush library by a text (name, category or mode) and by a category. args: { \"text\"?: string, \"category\"?: string (empty for all) }",
+            |args| {
+                // One message per field is clumsy for an agent: the text is the common one.
+                if let Some(category) = args.get("category").and_then(Value::as_str) {
+                    return Ok(Message::TerrainBrush(terrain_brush_panel::Edit::Category(
+                        (!category.is_empty()).then(|| category.to_owned()),
+                    )));
+                }
+                Ok(Message::TerrainBrush(terrain_brush_panel::Edit::Search(
+                    optional_str(args, "text")?.unwrap_or_default().to_owned(),
+                )))
             },
         )
         .query(
@@ -2779,6 +2877,131 @@ pub(super) fn performance_edit(
             .ok_or_else(|| "\"grid\" takes true or false".to_owned()),
         _ => Err(format!("no performance option named \"{field}\"")),
     }
+}
+
+fn normalized(name: &str) -> String {
+    name.chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect::<String>()
+        .to_lowercase()
+}
+
+fn terrain_brush_edit(field: &str, value: &Value) -> Result<terrain_brush_panel::Edit, String> {
+    use doppio_engine::{BrushMode, Falloff, SymmetryKind};
+    use terrain_brush_panel::{Amount, Edit};
+    let text = || {
+        value
+            .as_str()
+            .map(normalized)
+            .ok_or_else(|| format!("\"{field}\" takes a name"))
+    };
+    match normalized(field).as_str() {
+        "mode" => {
+            let wanted = text()?;
+            BrushMode::ALL
+                .iter()
+                .find(|mode| {
+                    normalized(mode.label()) == wanted || normalized(&format!("{mode:?}")) == wanted
+                })
+                .map(|mode| Edit::Mode(*mode))
+                .ok_or_else(|| format!("no brush mode called \"{wanted}\""))
+        }
+        "falloff" => {
+            let wanted = text()?;
+            Falloff::ALL
+                .iter()
+                .find(|f| normalized(f.label()) == wanted)
+                .map(|f| Edit::Falloff(*f))
+                .ok_or_else(|| format!("no falloff called \"{wanted}\""))
+        }
+        "symmetry" => {
+            let wanted = text()?;
+            SymmetryKind::ALL
+                .iter()
+                .find(|k| {
+                    normalized(k.label()) == wanted
+                        || normalized(&format!("{k:?}")) == wanted
+                        || (wanted == "mirrorxz" && **k == SymmetryKind::MirrorBoth)
+                })
+                .map(|k| Edit::Symmetry(*k))
+                .ok_or_else(|| format!("no symmetry called \"{wanted}\""))
+        }
+        "signed" => value
+            .as_bool()
+            .map(Edit::Signed)
+            .ok_or_else(|| "\"signed\" takes a bool".to_owned()),
+        "name" => value
+            .as_str()
+            .map(|name| Edit::Name(name.to_owned()))
+            .ok_or_else(|| "\"name\" takes a string".to_owned()),
+        _ => {
+            let amount = Amount::from_key(field)
+                .ok_or_else(|| format!("no brush setting called \"{field}\""))?;
+            value
+                .as_f64()
+                .map(|v| Edit::Amount(amount, v as f32))
+                .ok_or_else(|| format!("\"{field}\" takes a number"))
+        }
+    }
+}
+
+fn terrain_brush_protect(args: &Value) -> Result<Message, String> {
+    use terrain_brush_panel::Edit;
+    if args.get("clear").and_then(Value::as_bool).unwrap_or(false) {
+        return Ok(Message::TerrainBrush(Edit::ClearProtect));
+    }
+    let mask = required_str(args, "mask")?;
+    Ok(Message::TerrainBrush(Edit::AddProtectRange(
+        mask.to_owned(),
+        [
+            optional_f32(args, "from")?.unwrap_or(0.0),
+            optional_f32(args, "full_from")?.unwrap_or(0.0),
+            optional_f32(args, "full_to")?.unwrap_or(1.0),
+            optional_f32(args, "to")?.unwrap_or(1.0),
+        ],
+    )))
+}
+
+fn terrain_brush_json(app: &App) -> Value {
+    use terrain_brush_panel::Amount;
+    let editor = &app.terrain_editor;
+    let brush = &editor.working;
+    let mut settings = serde_json::Map::new();
+    for amount in Amount::ALL {
+        settings.insert(amount.key().to_owned(), json!(amount.get(brush)));
+    }
+    json!({
+        "active": editor.active,
+        "terrain_present": editor.terrain_present,
+        "stroke_open": editor.stroke.is_some(),
+        "library_count": editor.library.len(),
+        "categories": editor.categories(),
+        "selected": editor.selected,
+        "brushes": editor.library.iter().map(|b| json!({
+            "name": b.name,
+            "category": b.category,
+            "mode": b.mode.label(),
+        })).collect::<Vec<_>>(),
+        "visible": editor.visible(),
+        "search": editor.search,
+        "category": editor.category,
+        "brush": {
+            "name": brush.name,
+            "category": brush.category,
+            "mode": brush.mode.label(),
+            "falloff": brush.falloff.label(),
+            "symmetry": brush.symmetry.label(),
+            "signed": brush.signed_stamp,
+            "stamp": brush.stamp,
+            "settings": Value::Object(settings),
+            "protect": brush.protect.iter().map(|t| json!({
+                "mask": t.mask,
+                "from": t.rise0, "full_from": t.rise1, "full_to": t.fall1, "to": t.fall0,
+            })).collect::<Vec<_>>(),
+        },
+        "cursor": app.terrain_cursor.hit.map(|(entity, hit)| json!({"terrain": entity, "point": hit})),
+        "status": editor.status,
+    })
 }
 
 fn performance_json(app: &App) -> Value {

@@ -1068,8 +1068,8 @@ fn layout_presets_keep_every_page() {
         assert_eq!(state.len(), 4);
         let pages: usize = state.iter().map(|(_, group)| group.pages.len()).sum();
         assert_eq!(
-            pages, 21,
-            "the Gameplay and Camera tabs joined the workspace"
+            pages, 22,
+            "the Gameplay, Camera and Terrain Brush tabs joined the workspace"
         );
     }
     let mut harness = Harness::with_entities();
@@ -1092,6 +1092,7 @@ fn layouts_keep_the_right_column_for_inspector_profiler_photon_and_environment()
                 PaneKind::Inspector,
                 PaneKind::Profiler,
                 PaneKind::Performance,
+                PaneKind::TerrainBrush,
                 PaneKind::Photon,
                 PaneKind::Environment,
                 PaneKind::Audio
@@ -16396,5 +16397,474 @@ mod terrain_cursor {
         assert!(harness.has(Id::from(id::VIEWPORT_BRUSH_CURSOR)));
         harness.dispatch(Message::ViewportHover(false));
         assert!(!harness.has(Id::from(id::VIEWPORT_BRUSH_CURSOR)));
+    }
+}
+
+mod terrain_editor {
+    use super::*;
+    use crate::history::StrokeMove;
+    use crate::uikit::panels::terrain_brush::{Amount, Corner, Edit};
+
+    /// A flat terrain in front of the camera, with the brush library loaded.
+    fn scene() -> Option<(Harness, u32)> {
+        let mut harness = engine_harness()?;
+        if !harness.app.engine.as_ref()?.has_brush_library() {
+            return None; // a libcaffeine-capi from before the brush library (C ABI 28)
+        }
+        let engine = harness.app.engine.as_mut().unwrap();
+        let id = engine.create_entity("Ground").ok()?;
+        let heights = vec![0.3f32; 129 * 129];
+        engine
+            .set_terrain(
+                id,
+                &doppio_engine::Terrain {
+                    resolution: [129, 129],
+                    size: [256.0, 256.0],
+                    max_height: 50.0,
+                    ..doppio_engine::Terrain::default()
+                },
+                &heights,
+                None,
+            )
+            .ok()?;
+        harness.app.entities = projectloader::read_entities(harness.app.engine.as_ref().unwrap());
+        harness.app.camera = doppio_engine::Camera {
+            yaw: 0.0,
+            pitch: 1.0,
+            distance: 120.0,
+            focus: [0.0, 12.0, 0.0],
+        };
+        harness.app.viewport_frame_camera = None;
+        harness.rebase_history();
+        Some((harness, id))
+    }
+
+    fn centre(harness: &Harness) -> iced::Point {
+        iced::Point::new(
+            harness.app().viewport_logical.0 * 0.5,
+            harness.app().viewport_logical.1 * 0.5,
+        )
+    }
+
+    /// The ground height at the middle of the terrain, metres.
+    fn middle(harness: &Harness, id: u32) -> f32 {
+        harness
+            .app()
+            .engine
+            .as_ref()
+            .unwrap()
+            .terrain_height(id, 128.0, 128.0)
+            .unwrap()
+    }
+
+    #[test]
+    fn the_pane_is_a_tab_of_the_inspector_group_and_loads_the_library() {
+        let Some((mut harness, _)) = scene() else {
+            return;
+        };
+        assert!(PaneKind::ALL.contains(&PaneKind::TerrainBrush));
+        assert_eq!(
+            PaneKind::from_name("terrain_brush"),
+            Some(PaneKind::TerrainBrush)
+        );
+        harness.dispatch(Message::ShowTerrainBrush);
+        let group_has = harness
+            .app()
+            .panes
+            .iter()
+            .any(|(_, group)| group.active_kind() == PaneKind::TerrainBrush);
+        assert!(group_has, "the tab is in front");
+        let editor = &harness.app().terrain_editor;
+        assert!(
+            editor.library.len() >= 55,
+            "{} brushes",
+            editor.library.len()
+        );
+        assert!(editor.categories().iter().any(|c| c == "Craters"));
+        assert!(editor.terrain_present);
+        assert_eq!(editor.thumbnails.len(), editor.library.len());
+        assert!(editor.thumbnails.iter().all(Option::is_some));
+        // The panel draws every brush with a card.
+        assert_eq!(
+            harness.app().terrain_brush_entries().len(),
+            editor.library.len()
+        );
+    }
+
+    #[test]
+    fn search_and_category_chips_narrow_the_grid() {
+        let Some((mut harness, _)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainBrush);
+        let all = harness.app().terrain_brush_entries().len();
+        harness.dispatch(Message::TerrainBrush(Edit::Search("crater".to_owned())));
+        let found = harness.app().terrain_brush_entries().len();
+        assert!(found >= 3 && found < all, "{found} of {all}");
+        harness.dispatch(Message::TerrainBrush(Edit::Search(String::new())));
+        harness.dispatch(Message::TerrainBrush(Edit::Category(Some(
+            "Dunes".to_owned(),
+        ))));
+        let dunes = harness.app().terrain_brush_entries().len();
+        assert!(dunes >= 3 && dunes < found + all);
+        harness.dispatch(Message::TerrainBrush(Edit::Category(None)));
+        assert_eq!(harness.app().terrain_brush_entries().len(), all);
+    }
+
+    #[test]
+    fn choosing_a_brush_copies_it_and_edits_leave_the_library_alone() {
+        let Some((mut harness, _)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::TerrainBrushSelectNamed("crater".to_owned()));
+        let editor = &harness.app().terrain_editor;
+        assert_ne!(editor.selected, 0, "the brush was found");
+        let original = editor.library[editor.selected].clone();
+        assert_eq!(original.stamp, "crater_simple");
+        assert_eq!(editor.working, original);
+
+        harness.dispatch(Message::TerrainBrush(Edit::Amount(Amount::Radius, 33.0)));
+        harness.dispatch(Message::TerrainBrush(Edit::Mode(
+            doppio_engine::BrushMode::Terrace,
+        )));
+        let editor = &harness.app().terrain_editor;
+        assert_eq!(editor.working.radius_m, 33.0);
+        assert_eq!(
+            editor.library[editor.selected], original,
+            "the library is untouched"
+        );
+
+        harness.dispatch(Message::TerrainBrush(Edit::Revert));
+        assert_eq!(harness.app().terrain_editor.working, original);
+        harness.dispatch(Message::TerrainBrushSelectNamed("no such brush".to_owned()));
+        assert!(harness
+            .app()
+            .terrain_editor
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("No brush called")));
+    }
+
+    #[test]
+    fn dragging_on_the_terrain_sculpts_one_stroke_that_undoes_and_redoes_exactly() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::TerrainBrushSelectNamed("Raise".to_owned()));
+        harness.dispatch(Message::TerrainBrush(Edit::Amount(Amount::Radius, 12.0)));
+        harness.dispatch(Message::TerrainBrush(Edit::Amount(Amount::Strength, 1.0)));
+        harness.dispatch(Message::TerrainBrush(Edit::Active(true)));
+        assert!(harness.app().terrain_cursor.active);
+        let before = middle(&harness, id);
+        let steps = harness.app().history.len();
+        let camera = harness.app().camera;
+
+        let at = centre(&harness);
+        harness.dispatch(Message::ViewportMoved(at));
+        assert!(
+            harness.app().terrain_cursor.hit.is_some(),
+            "the mouse is over the terrain"
+        );
+        harness.dispatch(Message::ViewportPressed(iced::mouse::Button::Left));
+        assert!(harness.app().terrain_editor.stroke.is_some());
+        for dx in [4.0, 8.0, 12.0] {
+            harness.dispatch(Message::ViewportMoved(iced::Point::new(at.x + dx, at.y)));
+        }
+        assert!(harness.app().terrain_editor.stroke.as_ref().unwrap().points >= 2);
+        harness.dispatch(Message::ViewportReleased(iced::mouse::Button::Left));
+
+        assert!(harness.app().terrain_editor.stroke.is_none());
+        assert_eq!(
+            harness.app().camera,
+            camera,
+            "a stroke does not orbit the camera"
+        );
+        assert_eq!(
+            harness.app().history.len(),
+            steps + 1,
+            "one stroke is one step"
+        );
+        assert!(harness
+            .app()
+            .history
+            .undo_name()
+            .unwrap()
+            .starts_with("Sculpt"));
+        let raised = middle(&harness, id);
+        assert!(raised > before + 0.05, "{before} -> {raised}");
+
+        harness.dispatch(Message::Undo);
+        assert_eq!(
+            middle(&harness, id),
+            before,
+            "undo restores the ground exactly"
+        );
+        harness.dispatch(Message::Redo);
+        assert_eq!(
+            middle(&harness, id),
+            raised,
+            "redo puts the stroke back exactly"
+        );
+    }
+
+    #[test]
+    fn without_the_tool_a_left_drag_still_orbits() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        let before = middle(&harness, id);
+        let yaw = harness.app().camera.yaw;
+        let at = centre(&harness);
+        harness.dispatch(Message::ViewportMoved(at));
+        harness.dispatch(Message::ViewportPressed(iced::mouse::Button::Left));
+        // The first move after a press only records where the drag began.
+        harness.dispatch(Message::ViewportMoved(iced::Point::new(at.x + 10.0, at.y)));
+        harness.dispatch(Message::ViewportMoved(iced::Point::new(at.x + 40.0, at.y)));
+        harness.dispatch(Message::ViewportReleased(iced::mouse::Button::Left));
+        assert_ne!(harness.app().camera.yaw, yaw);
+        assert_eq!(middle(&harness, id), before);
+        assert!(harness.app().terrain_editor.stroke.is_none());
+    }
+
+    #[test]
+    fn a_stroke_from_an_agent_is_the_same_as_the_mouse_and_interleaves_with_scene_edits() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::TerrainBrushSelectNamed("Raise".to_owned()));
+        harness.dispatch(Message::TerrainBrush(Edit::Amount(Amount::Strength, 1.0)));
+        let ground = middle(&harness, id);
+        let line: Vec<[f64; 3]> = (0..8).map(|i| [-10.0 + 3.0 * i as f64, 0.0, 0.0]).collect();
+
+        harness.dispatch(Message::TerrainBrushStroke {
+            terrain: Some(id),
+            points: line.clone(),
+        });
+        let first = middle(&harness, id);
+        assert!(first > ground);
+        harness.dispatch(Message::AddEntity);
+        let entities = harness.app().entities.len();
+        harness.dispatch(Message::TerrainBrushStroke {
+            terrain: Some(id),
+            points: line,
+        });
+        let second = middle(&harness, id);
+        assert!(second > first, "the second stroke builds on the first");
+
+        // Newest first: the second stroke, the new entity, the first stroke.
+        harness.dispatch(Message::Undo);
+        assert_eq!(middle(&harness, id), first);
+        assert_eq!(harness.app().entities.len(), entities);
+        harness.dispatch(Message::Undo);
+        assert_eq!(harness.app().entities.len(), entities - 1);
+        assert_eq!(
+            middle(&harness, id),
+            first,
+            "undoing the entity leaves the ground alone"
+        );
+        harness.dispatch(Message::Undo);
+        assert_eq!(middle(&harness, id), ground);
+        // And all the way forward again.
+        harness.dispatch(Message::Redo);
+        harness.dispatch(Message::Redo);
+        harness.dispatch(Message::Redo);
+        assert_eq!(middle(&harness, id), second);
+        assert_eq!(harness.app().entities.len(), entities);
+    }
+
+    #[test]
+    fn a_stroke_that_changes_nothing_leaves_no_step_and_bad_requests_say_why() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::TerrainBrushSelectNamed("Flatten".to_owned()));
+        harness.dispatch(Message::TerrainBrush(Edit::Amount(
+            Amount::TargetHeight,
+            15.0,
+        )));
+        let steps = harness.app().history.len();
+        // The ground is already flat at 0.3 * 50 = 15 m: nothing to do.
+        harness.dispatch(Message::TerrainBrushStroke {
+            terrain: Some(id),
+            points: vec![[0.0, 0.0, 0.0]],
+        });
+        assert_eq!(harness.app().history.len(), steps);
+
+        harness.dispatch(Message::TerrainBrushStroke {
+            terrain: Some(id),
+            points: Vec::new(),
+        });
+        assert!(harness
+            .app()
+            .terrain_editor
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("at least one point")));
+    }
+
+    #[test]
+    fn modifiers_and_the_radius_keys_change_the_stroke_not_the_library() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::TerrainBrushSelectNamed("Raise".to_owned()));
+        harness.dispatch(Message::TerrainBrush(Edit::Amount(Amount::Strength, 1.0)));
+        let ground = middle(&harness, id);
+        // Ctrl turns raise into lower.
+        harness.dispatch(Message::TerrainModifiers { ctrl: true });
+        harness.dispatch(Message::TerrainBrushStroke {
+            terrain: Some(id),
+            points: vec![[0.0, 0.0, 0.0]],
+        });
+        assert!(middle(&harness, id) < ground, "ctrl + raise digs");
+        harness.dispatch(Message::TerrainModifiers { ctrl: false });
+        assert_eq!(
+            harness.app().terrain_editor.working.mode,
+            doppio_engine::BrushMode::Raise
+        );
+
+        // [ and ] scale the radius only while the tool is on, and keep it in range.
+        let radius = harness.app().terrain_editor.working.radius_m;
+        harness.dispatch(Message::TerrainBrushRadius(2.0));
+        assert_eq!(
+            harness.app().terrain_editor.working.radius_m,
+            radius,
+            "tool off: nothing"
+        );
+        harness.dispatch(Message::TerrainBrush(Edit::Active(true)));
+        harness.dispatch(Message::TerrainBrushRadius(2.0));
+        assert_eq!(harness.app().terrain_editor.working.radius_m, radius * 2.0);
+        assert_eq!(
+            harness.app().terrain_cursor.radius_m,
+            radius * 2.0,
+            "the ring follows"
+        );
+        for _ in 0..40 {
+            harness.dispatch(Message::TerrainBrushRadius(2.0));
+        }
+        assert_eq!(harness.app().terrain_editor.working.radius_m, 500.0);
+        harness.dispatch(Message::TerrainBrush(Edit::Active(false)));
+        assert!(!harness.app().terrain_cursor.active);
+    }
+
+    #[test]
+    fn protection_terms_keep_their_numbers_in_order_and_reach_the_stroke() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::TerrainBrushSelectNamed("Raise".to_owned()));
+        harness.dispatch(Message::TerrainBrush(Edit::Amount(Amount::Strength, 1.0)));
+        harness.dispatch(Message::TerrainBrush(Edit::AddProtect("slope".to_owned())));
+        harness.dispatch(Message::TerrainBrush(Edit::AddProtect(
+            "nonsense".to_owned(),
+        )));
+        assert_eq!(harness.app().terrain_editor.working.protect.len(), 1);
+        harness.dispatch(Message::TerrainBrush(Edit::Protect(0, Corner::Fall0, 0.2)));
+        harness.dispatch(Message::TerrainBrush(Edit::Protect(0, Corner::Rise1, 0.9)));
+        let term = harness.app().terrain_editor.working.protect[0].clone();
+        assert!(
+            term.rise0 <= term.rise1 && term.rise1 <= term.fall1 && term.fall1 <= term.fall0,
+            "{term:?}"
+        );
+
+        // Flat ground is inside "slope 0..1": the brush still acts.
+        harness.dispatch(Message::TerrainBrush(Edit::AddProtectRange(
+            "height".to_owned(),
+            [0.9, 0.95, 1.0, 1.0],
+        )));
+        let ground = middle(&harness, id);
+        harness.dispatch(Message::TerrainBrushStroke {
+            terrain: Some(id),
+            points: vec![[0.0, 0.0, 0.0]],
+        });
+        assert_eq!(
+            middle(&harness, id),
+            ground,
+            "the ground is far below the height band: protected"
+        );
+        harness.dispatch(Message::TerrainBrush(Edit::ClearProtect));
+        assert!(harness.app().terrain_editor.working.protect.is_empty());
+        harness.dispatch(Message::TerrainBrushStroke {
+            terrain: Some(id),
+            points: vec![[0.0, 0.0, 0.0]],
+        });
+        assert!(middle(&harness, id) > ground);
+    }
+
+    #[test]
+    fn a_brush_is_saved_as_a_brush_file_and_comes_back_in_the_library() {
+        let Some((mut harness, _)) = scene() else {
+            return;
+        };
+        let root = std::env::temp_dir().join(format!("doppio-brushes-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        harness.app.asset_root_override = Some(root.clone());
+        harness.dispatch(Message::TerrainBrushSelectNamed("Crater".to_owned()));
+        assert_eq!(harness.app().terrain_editor.working.stamp, "crater_simple");
+        harness.dispatch(Message::TerrainBrush(Edit::Name("My Crater".to_owned())));
+        harness.dispatch(Message::TerrainBrush(Edit::Amount(Amount::Radius, 21.0)));
+        harness.dispatch(Message::TerrainBrush(Edit::Save));
+        let file = root.join("Brushes/My_Crater.brush");
+        assert!(file.exists(), "{:?}", harness.app().terrain_editor.status);
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains("My Crater"));
+
+        let editor = &harness.app().terrain_editor;
+        let saved = editor
+            .library
+            .iter()
+            .find(|brush| brush.name == "My Crater")
+            .expect("the library lists the new brush");
+        assert_eq!(saved.category, "Custom");
+        assert_eq!(saved.radius_m, 21.0);
+        assert_eq!(
+            editor.working.name, "My Crater",
+            "it is the one selected now"
+        );
+
+        // A broken file is reported with its line, and the rest still loads.
+        std::fs::write(
+            root.join("Brushes/Broken.brush"),
+            "mode raise\nradius many\n",
+        )
+        .unwrap();
+        harness.dispatch(Message::TerrainBrush(Edit::Reload));
+        let status = harness
+            .app()
+            .terrain_editor
+            .status
+            .clone()
+            .unwrap_or_default();
+        assert!(
+            status.contains("Broken.brush") && status.contains("line"),
+            "{status}"
+        );
+        assert!(harness
+            .app()
+            .terrain_editor
+            .library
+            .iter()
+            .any(|b| b.name == "My Crater"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_record_that_was_dropped_is_reported_not_swallowed() {
+        let Some((mut harness, _)) = scene() else {
+            return;
+        };
+        harness.app.move_terrain_stroke(StrokeMove::Revert(987_654));
+        assert!(harness
+            .app()
+            .log
+            .iter()
+            .any(|entry| entry.text.contains("could not be moved")));
+    }
+
+    #[test]
+    fn pointer_noise_about_the_tool_does_not_render_but_a_stroke_does() {
+        assert!(is_passive(&Message::TerrainModifiers { ctrl: true }));
+        assert!(!is_passive(&Message::TerrainBrushRadius(1.2)));
+        assert!(!is_passive(&Message::TerrainBrush(Edit::Active(true))));
     }
 }
