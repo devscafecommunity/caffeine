@@ -23,6 +23,8 @@ pub(super) struct State {
     pub radius_m: f32,
     /// The brush under the mouse now; `None` off the terrain, off the viewport or while no tool is on.
     pub cursor: Option<BrushCursor>,
+    /// The terrain entity and the world-space point under the mouse: where a stroke's next stamp goes.
+    pub hit: Option<(u32, [f64; 3])>,
 }
 
 impl Default for State {
@@ -31,6 +33,7 @@ impl Default for State {
             active: false,
             radius_m: 6.0,
             cursor: None,
+            hit: None,
         }
     }
 }
@@ -42,11 +45,13 @@ impl App {
         self.terrain_cursor.radius_m = radius_m.clamp(0.05, 2000.0);
         if !active {
             self.terrain_cursor.cursor = None;
+            self.terrain_cursor.hit = None;
         }
     }
 
     pub(super) fn clear_terrain_cursor(&mut self) {
         self.terrain_cursor.cursor = None;
+        self.terrain_cursor.hit = None;
     }
 
     /// Follows the mouse: the ring on the nearest terrain under `point` (a viewport position), or none.
@@ -54,10 +59,14 @@ impl App {
         if !self.terrain_cursor.active {
             return;
         }
-        self.terrain_cursor.cursor = self.terrain_cursor_at(point);
+        let hit = self.terrain_hit_at(point);
+        self.terrain_cursor.cursor =
+            hit.and_then(|(entity, hit)| self.terrain_cursor_ring(entity, hit));
+        self.terrain_cursor.hit = hit;
     }
 
-    fn terrain_cursor_at(&self, point: Point) -> Option<BrushCursor> {
+    /// The nearest terrain the mouse's ray meets, and the world-space point it meets it at.
+    fn terrain_hit_at(&self, point: Point) -> Option<(u32, [f64; 3])> {
         let engine = self.engine.as_ref()?;
         let camera = self.viewport_frame_camera.as_ref().unwrap_or(&self.camera);
         let basis = Basis::new(
@@ -68,8 +77,7 @@ impl App {
         let origin = origin.map(f64::from);
         let direction = direction.map(f64::from);
         // The nearest terrain the ray meets (a scene has one or two).
-        let (entity, hit) = self
-            .entities
+        self.entities
             .iter()
             .filter_map(|entity| {
                 engine
@@ -80,7 +88,11 @@ impl App {
                 let distance =
                     |hit: &[f64; 3]| (0..3).map(|i| (hit[i] - origin[i]).powi(2)).sum::<f64>();
                 distance(a).total_cmp(&distance(b))
-            })?;
+            })
+    }
+
+    fn terrain_cursor_ring(&self, entity: u32, hit: [f64; 3]) -> Option<BrushCursor> {
+        let engine = self.engine.as_ref()?;
         let radius = self.terrain_cursor.radius_m;
         let outer = engine.terrain_brush_outline(entity, hit, radius, OUTER_SEGMENTS)?;
         let inner = engine.terrain_brush_outline(entity, hit, radius * 0.5, INNER_SEGMENTS)?;

@@ -43,6 +43,8 @@
 #include "audio/volumetric/VolumetricAudio.hpp"
 #include "assets/AssetManager.hpp"
 #include "terrain/TerrainSculptor.hpp"
+#include "terrain/edit/BrushPreset.hpp"
+#include "terrain/edit/BrushStamps.hpp"
 #include "terrain/edit/TerrainStroke.hpp"
 #include "assets/MaterialCache.hpp"
 #include "micromesh/Micromesh.hpp"
@@ -3836,6 +3838,181 @@ CaffeineResult caffeine_session_terrain_brush_outline(const CaffeineSession* ses
     return CAFFEINE_OK;
 }
 
+namespace {
+
+void copyBrushText(char* out, size_t size, const std::string& text) {
+    std::snprintf(out, size, "%s", text.c_str());
+}
+
+void presetToC(const Caffeine::Terrain::BrushPreset& preset, CaffeineBrushPreset& out) {
+    using namespace Caffeine::Terrain;
+    std::memset(&out, 0, sizeof(out));
+    copyBrushText(out.name, sizeof(out.name), preset.name);
+    copyBrushText(out.category, sizeof(out.category), preset.category);
+    out.stamp_kind = static_cast<int32_t>(preset.source);
+    copyBrushText(out.stamp, sizeof(out.stamp), preset.stamp);
+    out.stamp_size = preset.stampSize;
+    const StrokeBrush& b = preset.brush;
+    out.mode = static_cast<int32_t>(b.mode);
+    out.radius_m = b.radiusM;
+    out.strength = b.strength;
+    out.spacing_m = b.spacingM;
+    out.falloff = static_cast<int32_t>(b.falloff);
+    out.rotation_degrees = b.rotationDegrees;
+    out.target_height_m = b.targetHeightM;
+    out.seed = b.seed;
+    out.signed_stamp = b.signedStamp ? 1 : 0;
+    out.step_m = b.stepM;
+    out.talus_degrees = b.talusDegrees;
+    out.iterations = b.iterations;
+    out.droplets = b.droplets;
+    out.offset_x = b.offsetX;
+    out.offset_z = b.offsetZ;
+    out.position_jitter = b.positionJitter;
+    out.rotation_jitter_degrees = b.rotationJitterDegrees;
+    out.size_jitter = b.sizeJitter;
+    out.opacity_jitter = b.opacityJitter;
+    out.symmetry = static_cast<int32_t>(b.symmetry);
+    out.radial_count = b.radialCount;
+    out.symmetry_center_x = b.symmetryCenterX;
+    out.symmetry_center_z = b.symmetryCenterZ;
+    out.pressure_to_strength = b.pressureToStrength;
+    out.protect_count = static_cast<uint32_t>(std::min<size_t>(b.protect.size(), CAFFEINE_BRUSH_PROTECT_MAX));
+    for (uint32_t i = 0; i < out.protect_count; ++i) {
+        copyBrushText(out.protect[i].mask, sizeof(out.protect[i].mask), b.protect[i].mask);
+        out.protect[i].rise0 = b.protect[i].rise0;
+        out.protect[i].rise1 = b.protect[i].rise1;
+        out.protect[i].fall1 = b.protect[i].fall1;
+        out.protect[i].fall0 = b.protect[i].fall0;
+    }
+}
+
+Caffeine::Terrain::BrushPreset presetFromC(const CaffeineBrushPreset& in) {
+    using namespace Caffeine::Terrain;
+    BrushPreset preset;
+    auto text = [](const char* chars, size_t max) { return std::string(chars, strnlen(chars, max)); };
+    preset.name = text(in.name, sizeof(in.name));
+    preset.category = text(in.category, sizeof(in.category));
+    preset.source = static_cast<StampSource>(std::clamp(in.stamp_kind, 0, 2));
+    preset.stamp = text(in.stamp, sizeof(in.stamp));
+    preset.stampSize = std::clamp(in.stamp_size, 4u, 1024u);
+    StrokeBrush& b = preset.brush;
+    b.mode = static_cast<TerrainBrushMode>(std::clamp(in.mode, 0, 15));
+    b.radiusM = std::clamp(in.radius_m, 0.05f, 2000.0f);
+    b.strength = std::max(in.strength, 0.0f);
+    b.spacingM = std::max(in.spacing_m, 0.0f);
+    b.falloff = static_cast<FalloffCurve>(std::clamp(in.falloff, 0, 3));
+    b.rotationDegrees = in.rotation_degrees;
+    b.targetHeightM = in.target_height_m;
+    b.seed = in.seed;
+    b.signedStamp = in.signed_stamp != 0;
+    b.stepM = in.step_m;
+    b.talusDegrees = in.talus_degrees;
+    b.iterations = in.iterations;
+    b.droplets = in.droplets;
+    b.offsetX = in.offset_x;
+    b.offsetZ = in.offset_z;
+    b.positionJitter = std::clamp(in.position_jitter, 0.0f, 4.0f);
+    b.rotationJitterDegrees = std::clamp(in.rotation_jitter_degrees, 0.0f, 360.0f);
+    b.sizeJitter = std::clamp(in.size_jitter, 0.0f, 1.9f);
+    b.opacityJitter = std::clamp(in.opacity_jitter, 0.0f, 1.0f);
+    b.symmetry = static_cast<Symmetry>(std::clamp(in.symmetry, 0, 4));
+    b.radialCount = std::clamp(in.radial_count, 2u, 16u);
+    b.symmetryCenterX = in.symmetry_center_x;
+    b.symmetryCenterZ = in.symmetry_center_z;
+    b.pressureToStrength = std::clamp(in.pressure_to_strength, 0.0f, 1.0f);
+    for (uint32_t i = 0; i < std::min<uint32_t>(in.protect_count, CAFFEINE_BRUSH_PROTECT_MAX); ++i) {
+        BiomeTerm term;
+        term.mask = text(in.protect[i].mask, sizeof(in.protect[i].mask));
+        term.rise0 = in.protect[i].rise0;
+        term.rise1 = in.protect[i].rise1;
+        term.fall1 = in.protect[i].fall1;
+        term.fall0 = in.protect[i].fall0;
+        b.protect.push_back(term);
+    }
+    return preset;
+}
+
+}  // namespace
+
+uint32_t caffeine_terrain_brush_count(void) {
+    return static_cast<uint32_t>(Caffeine::Terrain::builtinBrushes().size());
+}
+
+CaffeineResult caffeine_terrain_brush_at(uint32_t index, CaffeineBrushPreset* out) {
+    if (!out) return CAFFEINE_INVALID_ARGUMENT;
+    const auto& brushes = Caffeine::Terrain::builtinBrushes();
+    if (index >= brushes.size()) return CAFFEINE_NOT_FOUND;
+    presetToC(brushes[index], *out);
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_terrain_brush_stamp(const char* procedural_id, uint32_t size, uint64_t seed, float* out_alpha) {
+    if (!procedural_id || !out_alpha) return CAFFEINE_INVALID_ARGUMENT;
+    Caffeine::Terrain::BrushStamp stamp;
+    if (!Caffeine::Terrain::generateProceduralStamp(procedural_id, size, seed, stamp)) {
+        return Caffeine::Terrain::findProceduralStamp(procedural_id) ? CAFFEINE_INVALID_ARGUMENT : CAFFEINE_NOT_FOUND;
+    }
+    std::memcpy(out_alpha, stamp.alpha.data(), stamp.alpha.size() * sizeof(float));
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_terrain_brush_parse(const char* text, CaffeineBrushPreset* out, char* error, size_t error_size) {
+    if (error && error_size > 0) error[0] = '\0';
+    if (!text || !out) return CAFFEINE_INVALID_ARGUMENT;
+    Caffeine::Terrain::BrushPreset preset;
+    std::string message;
+    if (!Caffeine::Terrain::brushFromText(text, preset, &message)) {
+        if (error && error_size > 0) std::snprintf(error, error_size, "%s", message.c_str());
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    presetToC(preset, *out);
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_terrain_brush_format(const CaffeineBrushPreset* preset, char* text, size_t text_size) {
+    if (!preset || !text || text_size == 0) return CAFFEINE_INVALID_ARGUMENT;
+    const std::string result = Caffeine::Terrain::brushToText(presetFromC(*preset));
+    if (result.size() + 1 > text_size) return CAFFEINE_ERROR;
+    std::memcpy(text, result.c_str(), result.size() + 1);
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_stroke_begin_preset(CaffeineSession* session, CaffeineEntity entityId,
+                                                            const CaffeineBrushPreset* preset) {
+    using namespace Caffeine;
+    if (!session || !preset) return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+    const ECS::Entity entity = entityOf(*session, entityId);
+    auto* component = session->world.get<ECS::TerrainComponent>(entity);
+    auto* heightmap = Terrain::TerrainCache::instance().heightmapFor(entity);
+    if (!component || !heightmap || heightmap->empty()) return CAFFEINE_NOT_FOUND;
+
+    Terrain::BrushPreset settings = presetFromC(*preset);
+    // A picture is a project asset: the asset manager says where it is.
+    Assets::AssetManager& manager = session->assetManager;
+    manager.setProjectRoot(session->context.projectRootPath);
+    manager.setAssetRoot(session->assetRoot);
+    manager.setEngineAssetRoot(Assets::MeshCache::engineAssetsRoot());
+    std::string error;
+    if (!Terrain::resolveBrushStamp(
+            settings,
+            [&](const std::string& path) {
+                const Assets::AssetReference ref = manager.resolveReference(path);
+                return ref.ok() ? ref.absolutePath : std::string();
+            },
+            &error)) {
+        return CAFFEINE_ERROR;
+    }
+
+    if (session->terrainStroke.stroke) endTerrainStroke(*session, nullptr);
+    session->terrainStroke.stroke = std::make_unique<Terrain::TerrainStroke>(*heightmap, *component, settings.brush);
+    session->terrainStroke.stroke->setMasks(Terrain::TerrainCache::instance().masksFor(entity));
+    session->terrainStroke.entity = entityId;
+    session->terrainStroke.heightmap = heightmap;
+    return CAFFEINE_OK;
+}
+
 CaffeineResult caffeine_session_terrain_stroke_begin(CaffeineSession* session, CaffeineEntity entityId,
                                                      const CaffeineTerrainBrush* brush,
                                                      const float* stamp_alpha, uint32_t stamp_size) {
@@ -3851,7 +4028,7 @@ CaffeineResult caffeine_session_terrain_stroke_begin(CaffeineSession* session, C
     if (session->terrainStroke.stroke) endTerrainStroke(*session, nullptr);
 
     Terrain::StrokeBrush settings;
-    settings.mode = static_cast<Terrain::TerrainBrushMode>(std::clamp(brush->mode, 0, 4));
+    settings.mode = static_cast<Terrain::TerrainBrushMode>(std::clamp(brush->mode, 0, 15));
     settings.radiusM = std::clamp(brush->radius_m, 0.05f, 2000.0f);
     settings.strength = std::max(brush->strength, 0.0f);
     settings.spacingM = std::max(brush->spacing_m, 0.0f);

@@ -4,6 +4,11 @@
 //! in-memory engine scene blob, the dirty flag and the selection. Snapshot
 //! states are cheap enough for an editor, and they let undo cover every
 //! component the engine can serialize without a per-field command for each.
+//!
+//! Terrain heights are not in the scene snapshot (they live in the engine's
+//! height cache), so a brush stroke is recorded as a **stroke step**: its state
+//! carries the engine's stroke record id, and crossing the step undoes or redoes
+//! only that record, tile by tile, however large the terrain is.
 
 use crate::uikit::EntityView;
 
@@ -19,6 +24,24 @@ pub struct State {
     pub engine: Option<Vec<u8>>,
     pub dirty: bool,
     pub selected: usize,
+    /// The engine's record of the terrain stroke that produced this state, if it was a stroke step.
+    pub terrain_stroke: Option<u32>,
+}
+
+/// What a move through the timeline asks of the terrain: the stroke record to revert (undo) or reapply (redo).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StrokeMove {
+    Revert(u32),
+    Reapply(u32),
+}
+
+/// The result of one undo or redo.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Moved {
+    pub name: String,
+    pub state: State,
+    /// Set when the step crossed was a terrain stroke; the scene needs no restore then.
+    pub stroke: Option<StrokeMove>,
 }
 
 impl State {
@@ -28,6 +51,7 @@ impl State {
             engine,
             dirty,
             selected: 0,
+            terrain_stroke: None,
         }
     }
 }
@@ -124,21 +148,43 @@ impl History {
     }
 
     pub fn undo(&mut self) -> Option<(String, State)> {
-        if !self.can_undo() {
-            return None;
-        }
-        self.cursor -= 1;
-        let name = self.steps[self.cursor].name.clone();
-        Some((name, self.states[self.cursor].clone()))
+        self.undo_step().map(|moved| (moved.name, moved.state))
     }
 
     pub fn redo(&mut self) -> Option<(String, State)> {
+        self.redo_step().map(|moved| (moved.name, moved.state))
+    }
+
+    /// Undo that also says whether a terrain stroke has to be reverted.
+    pub fn undo_step(&mut self) -> Option<Moved> {
+        if !self.can_undo() {
+            return None;
+        }
+        let stroke = self.states[self.cursor]
+            .terrain_stroke
+            .map(StrokeMove::Revert);
+        self.cursor -= 1;
+        Some(Moved {
+            name: self.steps[self.cursor].name.clone(),
+            state: self.states[self.cursor].clone(),
+            stroke,
+        })
+    }
+
+    /// Redo that also says whether a terrain stroke has to be reapplied.
+    pub fn redo_step(&mut self) -> Option<Moved> {
         if !self.can_redo() {
             return None;
         }
         let name = self.steps[self.cursor].name.clone();
         self.cursor += 1;
-        Some((name, self.states[self.cursor].clone()))
+        let state = self.states[self.cursor].clone();
+        let stroke = state.terrain_stroke.map(StrokeMove::Reapply);
+        Some(Moved {
+            name,
+            state,
+            stroke,
+        })
     }
 
     pub fn steps(&self) -> &[Step] {
@@ -268,6 +314,67 @@ mod tests {
             history.undo();
         }
         assert!(!history.can_undo());
+    }
+
+    fn stroke_state(value: u8, record: u32) -> State {
+        let mut state = state(value);
+        state.terrain_stroke = Some(record);
+        state
+    }
+
+    #[test]
+    fn a_stroke_step_asks_for_its_record_to_be_reverted_and_reapplied() {
+        let mut history = History::new(state(1));
+        history.push(stroke_state(1, 7), "Sculpt Terrain", None);
+        // Same scene as before: the stroke state still differs by its record id.
+        assert_eq!(history.len(), 1);
+
+        let undone = history.undo_step().unwrap();
+        assert_eq!(undone.name, "Sculpt Terrain");
+        assert_eq!(undone.stroke, Some(StrokeMove::Revert(7)));
+        assert_eq!(undone.state.terrain_stroke, None);
+
+        let redone = history.redo_step().unwrap();
+        assert_eq!(redone.stroke, Some(StrokeMove::Reapply(7)));
+        assert_eq!(redone.state.terrain_stroke, Some(7));
+    }
+
+    #[test]
+    fn strokes_and_scene_edits_interleave_in_order() {
+        let mut history = History::new(state(1));
+        history.push(stroke_state(1, 1), "Stroke A", None);
+        history.push(state(2), "Rename", None);
+        history.push(stroke_state(2, 2), "Stroke B", None);
+
+        assert_eq!(
+            history.undo_step().unwrap().stroke,
+            Some(StrokeMove::Revert(2))
+        );
+        // Undoing the rename crosses a scene step: no stroke is touched.
+        assert_eq!(history.undo_step().unwrap().stroke, None);
+        assert_eq!(
+            history.undo_step().unwrap().stroke,
+            Some(StrokeMove::Revert(1))
+        );
+        assert!(!history.can_undo());
+
+        assert_eq!(
+            history.redo_step().unwrap().stroke,
+            Some(StrokeMove::Reapply(1))
+        );
+        assert_eq!(history.redo_step().unwrap().stroke, None);
+        assert_eq!(
+            history.redo_step().unwrap().stroke,
+            Some(StrokeMove::Reapply(2))
+        );
+    }
+
+    #[test]
+    fn two_strokes_in_a_row_are_two_steps() {
+        let mut history = History::new(state(1));
+        history.push(stroke_state(1, 1), "Sculpt Terrain", None);
+        history.push(stroke_state(1, 2), "Sculpt Terrain", None);
+        assert_eq!(history.len(), 2);
     }
 
     #[test]

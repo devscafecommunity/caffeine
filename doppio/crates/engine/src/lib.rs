@@ -787,6 +787,80 @@ pub enum BrushMode {
     Smooth = 2,
     Flatten = 3,
     Noise = 4,
+    /// Grades a slope from where the stroke began to where the cursor is.
+    Ramp = 5,
+    Terrace = 6,
+    Pinch = 7,
+    Bulge = 8,
+    StampAbsolute = 9,
+    StampMax = 10,
+    StampMin = 11,
+    Clone = 12,
+    Smudge = 13,
+    ErodeThermal = 14,
+    ErodeHydraulic = 15,
+}
+
+impl BrushMode {
+    pub const ALL: [BrushMode; 16] = [
+        BrushMode::Raise,
+        BrushMode::Lower,
+        BrushMode::Smooth,
+        BrushMode::Flatten,
+        BrushMode::Noise,
+        BrushMode::Ramp,
+        BrushMode::Terrace,
+        BrushMode::Pinch,
+        BrushMode::Bulge,
+        BrushMode::StampAbsolute,
+        BrushMode::StampMax,
+        BrushMode::StampMin,
+        BrushMode::Clone,
+        BrushMode::Smudge,
+        BrushMode::ErodeThermal,
+        BrushMode::ErodeHydraulic,
+    ];
+
+    pub fn from_index(index: i32) -> BrushMode {
+        BrushMode::ALL
+            .get(usize::try_from(index).unwrap_or(0))
+            .copied()
+            .unwrap_or(BrushMode::Raise)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BrushMode::Raise => "Raise",
+            BrushMode::Lower => "Lower",
+            BrushMode::Smooth => "Smooth",
+            BrushMode::Flatten => "Flatten",
+            BrushMode::Noise => "Noise",
+            BrushMode::Ramp => "Ramp",
+            BrushMode::Terrace => "Terrace",
+            BrushMode::Pinch => "Pinch",
+            BrushMode::Bulge => "Bulge",
+            BrushMode::StampAbsolute => "Stamp (absolute)",
+            BrushMode::StampMax => "Stamp (keep higher)",
+            BrushMode::StampMin => "Stamp (keep lower)",
+            BrushMode::Clone => "Clone",
+            BrushMode::Smudge => "Smudge",
+            BrushMode::ErodeThermal => "Erode (thermal)",
+            BrushMode::ErodeHydraulic => "Erode (hydraulic)",
+        }
+    }
+
+    /// The mode a held Ctrl turns this one into (raise becomes lower, pinch becomes bulge...).
+    pub fn inverted(self) -> BrushMode {
+        match self {
+            BrushMode::Raise => BrushMode::Lower,
+            BrushMode::Lower => BrushMode::Raise,
+            BrushMode::Pinch => BrushMode::Bulge,
+            BrushMode::Bulge => BrushMode::Pinch,
+            BrushMode::StampMax => BrushMode::StampMin,
+            BrushMode::StampMin => BrushMode::StampMax,
+            other => other,
+        }
+    }
 }
 
 /// How a stamp's weight falls from its centre to its edge.
@@ -796,6 +870,323 @@ pub enum Falloff {
     Linear = 1,
     Sharp = 2,
     Constant = 3,
+}
+
+impl Falloff {
+    pub const ALL: [Falloff; 4] = [
+        Falloff::Smooth,
+        Falloff::Linear,
+        Falloff::Sharp,
+        Falloff::Constant,
+    ];
+
+    pub fn from_index(index: i32) -> Falloff {
+        Falloff::ALL
+            .get(usize::try_from(index).unwrap_or(0))
+            .copied()
+            .unwrap_or(Falloff::Smooth)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Falloff::Smooth => "Smooth",
+            Falloff::Linear => "Linear",
+            Falloff::Sharp => "Sharp",
+            Falloff::Constant => "Constant",
+        }
+    }
+
+    /// The weight at `t` (1 at the centre, 0 at the edge): the curve the engine applies to every stamp.
+    pub fn weight(self, t: f32) -> f32 {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            Falloff::Smooth => t * t * (3.0 - 2.0 * t),
+            Falloff::Linear => t,
+            Falloff::Sharp => t * t,
+            Falloff::Constant => {
+                if t > 0.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+        }
+    }
+}
+
+/// Copies of every stamp about a centre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymmetryKind {
+    None = 0,
+    MirrorX = 1,
+    MirrorZ = 2,
+    MirrorBoth = 3,
+    Radial = 4,
+}
+
+impl SymmetryKind {
+    pub const ALL: [SymmetryKind; 5] = [
+        SymmetryKind::None,
+        SymmetryKind::MirrorX,
+        SymmetryKind::MirrorZ,
+        SymmetryKind::MirrorBoth,
+        SymmetryKind::Radial,
+    ];
+
+    pub fn from_index(index: i32) -> SymmetryKind {
+        SymmetryKind::ALL
+            .get(usize::try_from(index).unwrap_or(0))
+            .copied()
+            .unwrap_or(SymmetryKind::None)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SymmetryKind::None => "None",
+            SymmetryKind::MirrorX => "Mirror X",
+            SymmetryKind::MirrorZ => "Mirror Z",
+            SymmetryKind::MirrorBoth => "Mirror X and Z",
+            SymmetryKind::Radial => "Radial",
+        }
+    }
+}
+
+/// Where a brush's stamp comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StampKind {
+    #[default]
+    None = 0,
+    Procedural = 1,
+    Image = 2,
+}
+
+/// A protection term: the brush acts only where the mask is inside the trapezoid.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BrushProtect {
+    pub mask: String,
+    pub rise0: f32,
+    pub rise1: f32,
+    pub fall1: f32,
+    pub fall0: f32,
+}
+
+/// A brush as a document: everything a stroke needs besides the path (C ABI 28, `CaffeineBrushPreset`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BrushPreset {
+    pub name: String,
+    pub category: String,
+    pub stamp_kind: StampKind,
+    /// A procedural stamp's id, or the project path of a picture.
+    pub stamp: String,
+    pub stamp_size: u32,
+    pub mode: BrushMode,
+    pub radius_m: f32,
+    pub strength: f32,
+    pub spacing_m: f32,
+    pub falloff: Falloff,
+    pub rotation_degrees: f32,
+    pub target_height_m: f32,
+    pub seed: u64,
+    pub signed_stamp: bool,
+    pub step_m: f32,
+    pub talus_degrees: f32,
+    pub iterations: u32,
+    pub droplets: u32,
+    pub offset: [f32; 2],
+    pub position_jitter: f32,
+    pub rotation_jitter_degrees: f32,
+    pub size_jitter: f32,
+    pub opacity_jitter: f32,
+    pub symmetry: SymmetryKind,
+    pub radial_count: u32,
+    pub symmetry_center: [f32; 2],
+    pub pressure_to_strength: f32,
+    pub protect: Vec<BrushProtect>,
+}
+
+impl Default for BrushPreset {
+    fn default() -> Self {
+        BrushPreset {
+            name: "Brush".to_owned(),
+            category: "Custom".to_owned(),
+            stamp_kind: StampKind::None,
+            stamp: String::new(),
+            stamp_size: 128,
+            mode: BrushMode::Raise,
+            radius_m: 6.0,
+            strength: 0.25,
+            spacing_m: 0.0,
+            falloff: Falloff::Smooth,
+            rotation_degrees: 0.0,
+            target_height_m: -1.0,
+            seed: 0,
+            signed_stamp: false,
+            step_m: 2.0,
+            talus_degrees: 35.0,
+            iterations: 4,
+            droplets: 24,
+            offset: [0.0, 0.0],
+            position_jitter: 0.0,
+            rotation_jitter_degrees: 0.0,
+            size_jitter: 0.0,
+            opacity_jitter: 0.0,
+            symmetry: SymmetryKind::None,
+            radial_count: 4,
+            symmetry_center: [0.0, 0.0],
+            pressure_to_strength: 0.0,
+            protect: Vec::new(),
+        }
+    }
+}
+
+const BRUSH_PROTECT_MAX: usize = 4;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawBrushProtect {
+    mask: [c_char; 32],
+    rise0: f32,
+    rise1: f32,
+    fall1: f32,
+    fall0: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawBrushPreset {
+    name: [c_char; 64],
+    category: [c_char; 32],
+    stamp_kind: i32,
+    stamp: [c_char; 256],
+    stamp_size: u32,
+    mode: i32,
+    radius_m: f32,
+    strength: f32,
+    spacing_m: f32,
+    falloff: i32,
+    rotation_degrees: f32,
+    target_height_m: f32,
+    seed: u64,
+    signed_stamp: i32,
+    step_m: f32,
+    talus_degrees: f32,
+    iterations: u32,
+    droplets: u32,
+    offset_x: f32,
+    offset_z: f32,
+    position_jitter: f32,
+    rotation_jitter_degrees: f32,
+    size_jitter: f32,
+    opacity_jitter: f32,
+    symmetry: i32,
+    radial_count: u32,
+    symmetry_center_x: f32,
+    symmetry_center_z: f32,
+    pressure_to_strength: f32,
+    protect_count: u32,
+    protect: [RawBrushProtect; BRUSH_PROTECT_MAX],
+}
+
+fn fill_c_chars<const N: usize>(target: &mut [c_char; N], text: &str) {
+    target.fill(0);
+    for (slot, byte) in target.iter_mut().zip(text.bytes().take(N - 1)) {
+        *slot = byte as c_char;
+    }
+}
+
+impl RawBrushPreset {
+    fn zeroed() -> Self {
+        // Plain data: every field is a number or a byte array.
+        unsafe { std::mem::zeroed() }
+    }
+
+    fn from_preset(preset: &BrushPreset) -> Self {
+        let mut raw = RawBrushPreset::zeroed();
+        fill_c_chars(&mut raw.name, &preset.name);
+        fill_c_chars(&mut raw.category, &preset.category);
+        raw.stamp_kind = preset.stamp_kind as i32;
+        fill_c_chars(&mut raw.stamp, &preset.stamp);
+        raw.stamp_size = preset.stamp_size;
+        raw.mode = preset.mode as i32;
+        raw.radius_m = preset.radius_m;
+        raw.strength = preset.strength;
+        raw.spacing_m = preset.spacing_m;
+        raw.falloff = preset.falloff as i32;
+        raw.rotation_degrees = preset.rotation_degrees;
+        raw.target_height_m = preset.target_height_m;
+        raw.seed = preset.seed;
+        raw.signed_stamp = i32::from(preset.signed_stamp);
+        raw.step_m = preset.step_m;
+        raw.talus_degrees = preset.talus_degrees;
+        raw.iterations = preset.iterations;
+        raw.droplets = preset.droplets;
+        raw.offset_x = preset.offset[0];
+        raw.offset_z = preset.offset[1];
+        raw.position_jitter = preset.position_jitter;
+        raw.rotation_jitter_degrees = preset.rotation_jitter_degrees;
+        raw.size_jitter = preset.size_jitter;
+        raw.opacity_jitter = preset.opacity_jitter;
+        raw.symmetry = preset.symmetry as i32;
+        raw.radial_count = preset.radial_count;
+        raw.symmetry_center_x = preset.symmetry_center[0];
+        raw.symmetry_center_z = preset.symmetry_center[1];
+        raw.pressure_to_strength = preset.pressure_to_strength;
+        raw.protect_count = preset.protect.len().min(BRUSH_PROTECT_MAX) as u32;
+        for (slot, term) in raw.protect.iter_mut().zip(&preset.protect) {
+            fill_c_chars(&mut slot.mask, &term.mask);
+            slot.rise0 = term.rise0;
+            slot.rise1 = term.rise1;
+            slot.fall1 = term.fall1;
+            slot.fall0 = term.fall0;
+        }
+        raw
+    }
+
+    fn into_preset(self) -> BrushPreset {
+        BrushPreset {
+            name: c_char_array(&self.name),
+            category: c_char_array(&self.category),
+            stamp_kind: match self.stamp_kind {
+                1 => StampKind::Procedural,
+                2 => StampKind::Image,
+                _ => StampKind::None,
+            },
+            stamp: c_char_array(&self.stamp),
+            stamp_size: self.stamp_size,
+            mode: BrushMode::from_index(self.mode),
+            radius_m: self.radius_m,
+            strength: self.strength,
+            spacing_m: self.spacing_m,
+            falloff: Falloff::from_index(self.falloff),
+            rotation_degrees: self.rotation_degrees,
+            target_height_m: self.target_height_m,
+            seed: self.seed,
+            signed_stamp: self.signed_stamp != 0,
+            step_m: self.step_m,
+            talus_degrees: self.talus_degrees,
+            iterations: self.iterations,
+            droplets: self.droplets,
+            offset: [self.offset_x, self.offset_z],
+            position_jitter: self.position_jitter,
+            rotation_jitter_degrees: self.rotation_jitter_degrees,
+            size_jitter: self.size_jitter,
+            opacity_jitter: self.opacity_jitter,
+            symmetry: SymmetryKind::from_index(self.symmetry),
+            radial_count: self.radial_count,
+            symmetry_center: [self.symmetry_center_x, self.symmetry_center_z],
+            pressure_to_strength: self.pressure_to_strength,
+            protect: self.protect[..(self.protect_count as usize).min(BRUSH_PROTECT_MAX)]
+                .iter()
+                .map(|term| BrushProtect {
+                    mask: c_char_array(&term.mask),
+                    rise0: term.rise0,
+                    rise1: term.rise1,
+                    fall1: term.fall1,
+                    fall0: term.fall0,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// A terrain brush in real units (metres), see `caffeine_session_terrain_stroke_begin`.
@@ -1031,6 +1422,13 @@ type StrokeBeginFn =
 type StrokePointFn = unsafe extern "C" fn(*mut c_void, f64, f64, f64, f32, *mut u32) -> i32;
 type StrokeEndFn = unsafe extern "C" fn(*mut c_void, *mut RawStrokeResult) -> i32;
 type StrokeRecordFn = unsafe extern "C" fn(*mut c_void, u32) -> i32;
+type BrushCountFn = unsafe extern "C" fn() -> u32;
+type BrushAtFn = unsafe extern "C" fn(u32, *mut RawBrushPreset) -> i32;
+type BrushStampFn = unsafe extern "C" fn(*const c_char, u32, u64, *mut f32) -> i32;
+type BrushParseFn =
+    unsafe extern "C" fn(*const c_char, *mut RawBrushPreset, *mut c_char, usize) -> i32;
+type BrushFormatFn = unsafe extern "C" fn(*const RawBrushPreset, *mut c_char, usize) -> i32;
+type StrokeBeginPresetFn = unsafe extern "C" fn(*mut c_void, u32, *const RawBrushPreset) -> i32;
 type TerrainRaycastFn =
     unsafe extern "C" fn(*const c_void, u32, *const f64, *const f64, *mut f64) -> i32;
 type TerrainOutlineFn =
@@ -1283,6 +1681,12 @@ struct Functions {
     simulating: Option<SimulatingFn>,
     set_water: Option<SetWaterFn>,
     set_terrain: Option<SetTerrainFn>,
+    brush_count: Option<BrushCountFn>,
+    brush_at: Option<BrushAtFn>,
+    brush_stamp: Option<BrushStampFn>,
+    brush_parse: Option<BrushParseFn>,
+    brush_format: Option<BrushFormatFn>,
+    stroke_begin_preset: Option<StrokeBeginPresetFn>,
     terrain_raycast: Option<TerrainRaycastFn>,
     terrain_outline: Option<TerrainOutlineFn>,
     terrain_data_legacy: Option<TerrainDataLegacyFn>,
@@ -1526,6 +1930,14 @@ impl Engine {
                 load_symbol(library, b"caffeine_session_set_material_preview_light\0")
             },
             set_terrain: unsafe { load_symbol(library, b"caffeine_session_set_terrain\0") },
+            brush_count: unsafe { load_symbol(library, b"caffeine_terrain_brush_count\0") },
+            brush_at: unsafe { load_symbol(library, b"caffeine_terrain_brush_at\0") },
+            brush_stamp: unsafe { load_symbol(library, b"caffeine_terrain_brush_stamp\0") },
+            brush_parse: unsafe { load_symbol(library, b"caffeine_terrain_brush_parse\0") },
+            brush_format: unsafe { load_symbol(library, b"caffeine_terrain_brush_format\0") },
+            stroke_begin_preset: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_stroke_begin_preset\0")
+            },
             terrain_raycast: unsafe { load_symbol(library, b"caffeine_session_terrain_raycast\0") },
             terrain_outline: unsafe {
                 load_symbol(library, b"caffeine_session_terrain_brush_outline\0")
@@ -2403,6 +2815,80 @@ impl Engine {
         read_string(256, |buffer, size| unsafe {
             convert(self.session, entity, buffer, size)
         })
+    }
+
+    /// Whether the engine library has the brush library and brushes as documents (C ABI 28).
+    pub fn has_brush_library(&self) -> bool {
+        self.functions.brush_count.is_some()
+            && self.functions.brush_at.is_some()
+            && self.functions.stroke_begin_preset.is_some()
+    }
+
+    /// The brushes the engine ships: one for each procedural stamp and a tool for every mode (C ABI 28).
+    pub fn builtin_brushes(&self) -> Vec<BrushPreset> {
+        let (Some(count), Some(at)) = (self.functions.brush_count, self.functions.brush_at) else {
+            return Vec::new();
+        };
+        (0..unsafe { count() })
+            .filter_map(|index| {
+                let mut raw = RawBrushPreset::zeroed();
+                (unsafe { at(index, &mut raw) } == 0).then(|| raw.into_preset())
+            })
+            .collect()
+    }
+
+    /// The grey image (`size` x `size`, 0..1, row-major) of a procedural stamp, for a preview.
+    pub fn brush_stamp_image(&self, id: &str, size: u32, seed: u64) -> Option<Vec<f32>> {
+        let stamp = self.functions.brush_stamp?;
+        let id = CString::new(id).ok()?;
+        let mut out = vec![0.0f32; size as usize * size as usize];
+        (unsafe { stamp(id.as_ptr(), size, seed, out.as_mut_ptr()) } == 0).then_some(out)
+    }
+
+    /// Reads the text of a `.brush`; the error names the bad line.
+    pub fn parse_brush(&self, text: &str) -> Result<BrushPreset, String> {
+        let parse = self
+            .functions
+            .brush_parse
+            .ok_or("this engine library has no brush files (C ABI 28)")?;
+        let text = CString::new(text).map_err(|_| "the text holds a zero byte".to_owned())?;
+        let mut raw = RawBrushPreset::zeroed();
+        let mut error = [0 as c_char; 160];
+        let status = unsafe { parse(text.as_ptr(), &mut raw, error.as_mut_ptr(), error.len()) };
+        if status == 0 {
+            Ok(raw.into_preset())
+        } else {
+            Err(c_char_array(&error))
+        }
+    }
+
+    /// The `.brush` text of a preset.
+    pub fn format_brush(&self, preset: &BrushPreset) -> Option<String> {
+        let format = self.functions.brush_format?;
+        let raw = RawBrushPreset::from_preset(preset);
+        let mut buffer = vec![0 as c_char; 8192];
+        (unsafe { format(&raw, buffer.as_mut_ptr(), buffer.len()) } == 0).then(|| {
+            let bytes: Vec<u8> = buffer
+                .iter()
+                .take_while(|c| **c != 0)
+                .map(|c| *c as u8)
+                .collect();
+            String::from_utf8_lossy(&bytes).into_owned()
+        })
+    }
+
+    /// Starts a stroke with a brush document (C ABI 28). A picture stamp is read through the asset manager.
+    pub fn terrain_stroke_begin_preset(
+        &mut self,
+        entity: u32,
+        preset: &BrushPreset,
+    ) -> EngineResult<()> {
+        let begin = self
+            .functions
+            .stroke_begin_preset
+            .ok_or(EngineError::Error)?;
+        let raw = RawBrushPreset::from_preset(preset);
+        result(unsafe { begin(self.session, entity, &raw) })
     }
 
     /// Whether the engine library can place a brush cursor on a terrain (C ABI 27).

@@ -39,6 +39,7 @@ set(CAFFEINE_TEST_SOURCES
     test_terrain.cpp
     test_terrain_masks.cpp
     test_terrain_edit.cpp
+    test_terrain_brushes.cpp
     test_terrain_container.cpp
     test_octree.cpp
     test_skeletal_animation.cpp

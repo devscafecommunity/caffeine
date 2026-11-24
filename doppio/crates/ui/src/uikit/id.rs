@@ -302,6 +302,39 @@ pub const PERF_RENDER_SCALE: UiId = UiId::fixed("performance.viewport.render_sca
 pub const PERF_ANTI_ALIASING: UiId = UiId::fixed("performance.viewport.anti_aliasing");
 pub const PERF_SHADOWS: UiId = UiId::fixed("performance.viewport.shadows");
 pub const PERF_GRID: UiId = UiId::fixed("performance.viewport.grid");
+pub const PANE_TERRAIN_BRUSH: UiId = UiId::fixed("editor.pane.terrain_brush");
+pub const PANE_TAB_TERRAIN_BRUSH: UiId = UiId::fixed("editor.pane.tab.terrain_brush");
+pub const SHOW_TERRAIN_BRUSH: UiId = UiId::fixed("editor.menu.view.terrain_brush");
+pub const TB_ACTIVE: UiId = UiId::fixed("terrain_brush.tool.active");
+pub const TB_SEARCH: UiId = UiId::fixed("terrain_brush.library.search");
+pub const TB_MODE: UiId = UiId::fixed("terrain_brush.brush.mode");
+pub const TB_FALLOFF: UiId = UiId::fixed("terrain_brush.brush.falloff");
+pub const TB_SIGNED: UiId = UiId::fixed("terrain_brush.brush.signed");
+pub const TB_SYMMETRY: UiId = UiId::fixed("terrain_brush.symmetry.kind");
+pub const TB_PROTECT_ADD: UiId = UiId::fixed("terrain_brush.protect.add");
+pub const TB_NAME: UiId = UiId::fixed("terrain_brush.file.name");
+pub const TB_SAVE: UiId = UiId::fixed("terrain_brush.file.save");
+pub const TB_REVERT: UiId = UiId::fixed("terrain_brush.file.revert");
+pub const TB_RELOAD: UiId = UiId::fixed("terrain_brush.file.reload");
+pub const TB_RADIUS: UiId = UiId::fixed("terrain_brush.amount.radius");
+pub const TB_STRENGTH: UiId = UiId::fixed("terrain_brush.amount.strength");
+pub const TB_SPACING: UiId = UiId::fixed("terrain_brush.amount.spacing");
+pub const TB_ROTATION: UiId = UiId::fixed("terrain_brush.amount.rotation");
+pub const TB_TARGET: UiId = UiId::fixed("terrain_brush.amount.target_height");
+pub const TB_STEP: UiId = UiId::fixed("terrain_brush.amount.step");
+pub const TB_TALUS: UiId = UiId::fixed("terrain_brush.amount.talus");
+pub const TB_ITERATIONS: UiId = UiId::fixed("terrain_brush.amount.iterations");
+pub const TB_DROPLETS: UiId = UiId::fixed("terrain_brush.amount.droplets");
+pub const TB_OFFSET_X: UiId = UiId::fixed("terrain_brush.amount.offset_x");
+pub const TB_OFFSET_Z: UiId = UiId::fixed("terrain_brush.amount.offset_z");
+pub const TB_POSITION_JITTER: UiId = UiId::fixed("terrain_brush.amount.position_jitter");
+pub const TB_ROTATION_JITTER: UiId = UiId::fixed("terrain_brush.amount.rotation_jitter");
+pub const TB_SIZE_JITTER: UiId = UiId::fixed("terrain_brush.amount.size_jitter");
+pub const TB_OPACITY_JITTER: UiId = UiId::fixed("terrain_brush.amount.opacity_jitter");
+pub const TB_RADIAL_COUNT: UiId = UiId::fixed("terrain_brush.amount.radial_count");
+pub const TB_CENTER_X: UiId = UiId::fixed("terrain_brush.amount.center_x");
+pub const TB_CENTER_Z: UiId = UiId::fixed("terrain_brush.amount.center_z");
+pub const TB_PRESSURE: UiId = UiId::fixed("terrain_brush.amount.pressure");
 pub const PANE_PERFORMANCE: UiId = UiId::fixed("editor.pane.performance");
 pub const PANE_TAB_PERFORMANCE: UiId = UiId::fixed("editor.pane.tab.performance");
 pub const SHOW_PERFORMANCE: UiId = UiId::fixed("editor.menu.view.performance");
@@ -859,6 +892,24 @@ pub fn entity_row(index: usize) -> UiId {
     UiId::dynamic(format!("hierarchy.list.entity_row.{index}"))
 }
 
+/// One brush card of the Terrain Brush library.
+pub fn terrain_brush_card(index: usize) -> UiId {
+    UiId::dynamic(format!("terrain_brush.library.brush_card.{index}"))
+}
+
+/// One category chip of the Terrain Brush library.
+pub fn terrain_brush_category(name: &str) -> UiId {
+    UiId::dynamic(format!(
+        "terrain_brush.library.category.{}",
+        name.to_lowercase()
+    ))
+}
+
+/// A widget of the `index`-th protection term (`mask`, `rise0`, `rise1`, `fall1`, `fall0`, `remove`).
+pub fn terrain_brush_protect(index: usize, field: &str) -> UiId {
+    UiId::dynamic(format!("terrain_brush.protect.{index}.{field}"))
+}
+
 /// One card in the asset manager grid.
 pub fn asset_card(index: usize) -> UiId {
     UiId::dynamic(format!("assets.grid.asset_card.{index}"))
@@ -1378,6 +1429,186 @@ pub const CATALOG: &[UiMeta] = &[
         id: PERF_GRID,
         description: "Shows the ground grid in the editor viewport.",
         kind: "checkbox",
+    },
+    UiMeta {
+        id: PANE_TERRAIN_BRUSH,
+        description: "Terrain Brush: the brush library, the brush's settings and the sculpting tool for terrains.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_TERRAIN_BRUSH,
+        description: "Tab of the Terrain Brush panel.",
+        kind: "tab",
+    },
+    UiMeta {
+        id: SHOW_TERRAIN_BRUSH,
+        description: "Brings the Terrain Brush tab to the front.",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: TB_ACTIVE,
+        description: "Terrain Brush: Turns the terrain brush on: a left click or drag on the terrain sculpts it.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TB_SEARCH,
+        description: "Terrain Brush: Searches the brush library by name, category or mode.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: TB_MODE,
+        description: "Terrain Brush: What the brush does to the ground: raise, lower, smooth, flatten, ramp, terrace, pinch, bulge, stamp, clone, smudge or erode.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TB_FALLOFF,
+        description: "Terrain Brush: How a stamp's weight falls from its centre to its edge.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TB_SIGNED,
+        description: "Terrain Brush: The stamp is signed: grey does nothing, lighter raises and darker lowers (a crater, a valley).",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TB_SYMMETRY,
+        description: "Terrain Brush: Copies every stamp: mirrored across X, Z or both, or repeated around a centre.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TB_PROTECT_ADD,
+        description: "Terrain Brush: Adds a protection term: the brush acts only where the mask (slope, height or curvature) is inside a range.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TB_NAME,
+        description: "Terrain Brush: The name of the brush when saved as a .brush file.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: TB_SAVE,
+        description: "Terrain Brush: Saves the brush as a .brush file in the project's Brushes folder.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TB_REVERT,
+        description: "Terrain Brush: Puts the selected brush back as the library has it.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TB_RELOAD,
+        description: "Terrain Brush: Reads the project's Brushes folder again.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TB_RADIUS,
+        description: "Terrain Brush: Radius (m). Brush radius in metres.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_STRENGTH,
+        description: "Terrain Brush: Strength. How much one stamp changes the ground: metres of height for raise and lower, a share toward the target for smooth and flatten.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_SPACING,
+        description: "Terrain Brush: Spacing (m). Metres between stamps along the stroke; 0 means a quarter of the radius.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_ROTATION,
+        description: "Terrain Brush: Rotation. Turns the stamp, degrees.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_TARGET,
+        description: "Terrain Brush: Flatten height (m). Flatten: the height to flatten to, in metres; below zero takes the ground under the first stamp.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_STEP,
+        description: "Terrain Brush: Step height (m). Terrace: the height of one step, metres.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_TALUS,
+        description: "Terrain Brush: Talus angle. Thermal erosion: the steepest slope that stays, degrees.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_ITERATIONS,
+        description: "Terrain Brush: Passes. Thermal erosion: sliding passes per stamp.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_DROPLETS,
+        description: "Terrain Brush: Droplets. Hydraulic erosion: droplets released per stamp.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_OFFSET_X,
+        description: "Terrain Brush: Source X (m). Clone: where the relief is copied from, metres east of the stamp.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_OFFSET_Z,
+        description: "Terrain Brush: Source Z (m). Clone: where the relief is copied from, metres south of the stamp.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_POSITION_JITTER,
+        description: "Terrain Brush: Scatter. Moves each stamp off the path by up to this share of the radius.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_ROTATION_JITTER,
+        description: "Terrain Brush: Turn jitter. Turns each stamp by up to this many degrees either way.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_SIZE_JITTER,
+        description: "Terrain Brush: Size jitter. Varies each stamp's radius.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_OPACITY_JITTER,
+        description: "Terrain Brush: Strength jitter. Weakens each stamp by up to this share.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_RADIAL_COUNT,
+        description: "Terrain Brush: Copies. Radial symmetry: how many copies of every stamp.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_CENTER_X,
+        description: "Terrain Brush: Centre X (m). Symmetry centre, metres from the terrain's centre.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_CENTER_Z,
+        description: "Terrain Brush: Centre Z (m). Symmetry centre, metres from the terrain's centre.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TB_PRESSURE,
+        description: "Terrain Brush: Pen pressure. How much a pen's pressure scales the strength; 0 ignores it.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: UiId::fixed("terrain_brush.library.brush_card"),
+        description: "Terrain Brush: A brush of the library; cards use the .N suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("terrain_brush.library.category"),
+        description: "Terrain Brush: A category filter of the brush library; chips use the .name suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("terrain_brush.protect"),
+        description: "Terrain Brush: A protection term of the brush (mask, four range sliders, remove); widgets use the .N.field suffix.",
+        kind: "list_row",
     },
     UiMeta {
         id: PANE_PERFORMANCE,

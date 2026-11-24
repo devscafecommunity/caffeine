@@ -77,6 +77,7 @@ fn is_passive(message: &Message) -> bool {
                 | Message::ViewportResized(_, _)
                 | Message::ViewportMoved(_)
                 | Message::TerrainBrushCursor { .. }
+                | Message::TerrainModifiers { .. }
                 | Message::PointerReleased
                 | Message::TabEnter(_, _)
                 | Message::TabExit(_, _)
@@ -236,6 +237,13 @@ fn keyboard_event_message(event: iced::keyboard::Event) -> Option<Message> {
                         return Some(Message::GizmoShortcut(key));
                     }
                 }
+                if let iced::keyboard::Key::Character(character) = key.as_ref() {
+                    match character {
+                        "[" => return Some(Message::TerrainBrushRadius(1.0 / 1.15)),
+                        "]" => return Some(Message::TerrainBrushRadius(1.15)),
+                        _ => {}
+                    }
+                }
                 if matches!(
                     key.as_ref(),
                     iced::keyboard::Key::Character(character)
@@ -341,7 +349,9 @@ fn keyboard_event_message(event: iced::keyboard::Event) -> Option<Message> {
                 fly_key(&key).map(|key| Message::ViewportKey(key, false))
             }
         }
-        _ => None,
+        iced::keyboard::Event::ModifiersChanged(modifiers) => Some(Message::TerrainModifiers {
+            ctrl: modifiers.control(),
+        }),
     }
 }
 
@@ -446,6 +456,7 @@ enum PaneKind {
     Environment,
     Audio,
     Performance,
+    TerrainBrush,
     PhaseShift,
     Rig2d,
     Profiler,
@@ -662,6 +673,24 @@ enum Message {
     ShowAudio,
     Performance(crate::uikit::panels::performance::Edit),
     ShowPerformance,
+    /// An edit of the Terrain Brush panel (library, brush settings, the tool's switch).
+    TerrainBrush(crate::uikit::panels::terrain_brush::Edit),
+    ShowTerrainBrush,
+    /// One whole sculpting stroke along world-space points, metres (the `terrain_brush_stroke` agent action).
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    TerrainBrushStroke {
+        terrain: Option<u32>,
+        points: Vec<[f64; 3]>,
+    },
+    /// `[` and `]`: the brush radius is multiplied by this.
+    TerrainBrushRadius(f32),
+    /// Selects the library brush with this name (the `terrain_brush_select` agent action).
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    TerrainBrushSelectNamed(String),
+    /// Ctrl is held or released (inverts the brush's mode).
+    TerrainModifiers {
+        ctrl: bool,
+    },
     PhaseShift(phaseshift_panel::Edit),
     ShowPhaseShift,
     Rig2d(rig2d_panel::Edit),
@@ -823,6 +852,7 @@ struct App {
     viewport_frames: u32,
     viewport_hovered: bool,
     terrain_cursor: terraincursor::State,
+    terrain_editor: terraineditor::State,
     /// The scene holds a water surface, so the editor keeps stepping the engine for it.
     has_water: bool,
     water_scan: u32,
@@ -987,6 +1017,7 @@ impl PaneKind {
             PaneKind::Environment => "Environment",
             PaneKind::Audio => "Audio",
             PaneKind::Performance => "Performance",
+            PaneKind::TerrainBrush => "Terrain Brush",
             PaneKind::PhaseShift => "PhaseShift",
             PaneKind::Rig2d => "Rig 2D",
             PaneKind::Profiler => "Profiler",
@@ -1015,6 +1046,7 @@ impl PaneKind {
             PaneKind::Environment => id::PANE_TAB_ENVIRONMENT,
             PaneKind::Audio => id::PANE_TAB_AUDIO,
             PaneKind::Performance => id::PANE_TAB_PERFORMANCE,
+            PaneKind::TerrainBrush => id::PANE_TAB_TERRAIN_BRUSH,
             PaneKind::PhaseShift => id::PANE_TAB_PHASESHIFT,
             PaneKind::Rig2d => id::PANE_TAB_RIG2D,
             PaneKind::Profiler => id::PANE_TAB_PROFILER,
@@ -1069,6 +1101,7 @@ impl App {
                         PaneKind::Inspector,
                         PaneKind::Profiler,
                         PaneKind::Performance,
+                        PaneKind::TerrainBrush,
                         PaneKind::Photon,
                         PaneKind::Environment,
                         PaneKind::Audio,
@@ -1223,6 +1256,7 @@ impl App {
             viewport_frames: 0,
             viewport_hovered: false,
             terrain_cursor: terraincursor::State::default(),
+            terrain_editor: terraineditor::State::default(),
             has_water: false,
             water_scan: 0,
             viewport_last_tick: None,
@@ -1877,14 +1911,24 @@ impl App {
         self.refresh_components();
     }
 
+    /// Applies one step of the timeline: a terrain stroke moves only its record (the scene is the same on both
+    /// sides of it); anything else restores the scene snapshot.
+    fn apply_history_move(&mut self, moved: &history::Moved) {
+        match moved.stroke {
+            Some(stroke) => self.move_terrain_stroke(stroke),
+            None => self.apply_history_state(moved.state.clone()),
+        }
+    }
+
     fn undo(&mut self) {
         if self.generator_is_active() {
             self.undo_generator();
             return;
         }
-        if let Some((name, state)) = self.history.undo() {
-            self.apply_history_state(state);
-            self.log(LogLevel::Action, format!("Undo {name}"));
+        self.finish_terrain_stroke();
+        if let Some(moved) = self.history.undo_step() {
+            self.apply_history_move(&moved);
+            self.log(LogLevel::Action, format!("Undo {}", moved.name));
         }
     }
 
@@ -1893,9 +1937,10 @@ impl App {
             self.redo_generator();
             return;
         }
-        if let Some((name, state)) = self.history.redo() {
-            self.apply_history_state(state);
-            self.log(LogLevel::Action, format!("Redo {name}"));
+        self.finish_terrain_stroke();
+        if let Some(moved) = self.history.redo_step() {
+            self.apply_history_move(&moved);
+            self.log(LogLevel::Action, format!("Redo {}", moved.name));
         }
     }
 
@@ -7391,6 +7436,7 @@ impl App {
                 self.hierarchy_root_hover = false;
             }
             Message::PointerReleased => {
+                self.finish_terrain_stroke();
                 self.finish_tab_drag();
                 self.finish_hierarchy_drag();
                 self.asset_drag = None;
@@ -7674,6 +7720,25 @@ impl App {
             Message::ShowAudio => self.show_audio_pane(),
             Message::Performance(edit) => self.edit_performance(edit),
             Message::ShowPerformance => self.show_performance_pane(),
+            Message::TerrainBrush(edit) => self.edit_terrain_brush(edit),
+            Message::ShowTerrainBrush => self.show_terrain_brush_pane(),
+            Message::TerrainBrushStroke { terrain, points } => {
+                if let Err(error) = self.terrain_stroke_along(terrain, &points) {
+                    self.log(LogLevel::Error, format!("Terrain brush: {error}"));
+                    self.terrain_editor.status = Some(format!("Could not sculpt: {error}"));
+                }
+            }
+            Message::TerrainBrushSelectNamed(name) => {
+                if !self.select_terrain_brush_named(&name) {
+                    self.terrain_editor.status = Some(format!("No brush called {name}"));
+                }
+            }
+            Message::TerrainBrushRadius(factor) => {
+                if self.terrain_editor.active {
+                    self.scale_terrain_brush(factor);
+                }
+            }
+            Message::TerrainModifiers { ctrl } => self.terrain_editor.invert = ctrl,
             Message::Profiler(edit) => self.edit_profiler(edit),
             Message::ShowProfiler => self.show_profiler_pane(),
             Message::ProfilerRefresh => {
@@ -8029,6 +8094,10 @@ impl App {
             }
             Message::ViewportPressed(button) => {
                 self.viewport_hovered = true;
+                if button == mouse::Button::Left {
+                    // With the sculpting tool on, a press on the terrain starts a stroke instead of an orbit.
+                    self.begin_terrain_stroke();
+                }
                 self.viewport_drag = Some(ViewportDrag {
                     button,
                     last: None,
@@ -8036,6 +8105,9 @@ impl App {
                 });
             }
             Message::ViewportReleased(button) => {
+                if button == mouse::Button::Left {
+                    self.finish_terrain_stroke();
+                }
                 if button == mouse::Button::Left
                     && self.texture_set_paint_mode
                     && self.texture_set_painting
@@ -8051,6 +8123,14 @@ impl App {
             Message::ViewportMoved(point) => {
                 self.viewport_hovered = true;
                 self.update_terrain_cursor(point);
+                if self.terrain_editor.stroke.is_some() {
+                    self.extend_terrain_stroke();
+                    if let Some(drag) = self.viewport_drag.as_mut() {
+                        drag.distance += 1.0;
+                        drag.last = Some(point);
+                    }
+                    return;
+                }
                 let paint_drag = self.texture_set_paint_mode
                     && self
                         .viewport_drag
@@ -8281,6 +8361,12 @@ impl App {
                         label: "Camera (Preview a Camera)",
                         shortcut: None,
                         message: Message::ShowCameraPreview,
+                    },
+                    menu::Item {
+                        id: id::SHOW_TERRAIN_BRUSH,
+                        label: "Terrain Brush (Sculpt)",
+                        shortcut: None,
+                        message: Message::ShowTerrainBrush,
                     },
                     menu::Item {
                         id: id::SHOW_PERFORMANCE,
@@ -9638,6 +9724,30 @@ impl App {
                 None,
                 self.camera_preview_view(),
             ),
+            PaneKind::TerrainBrush => (
+                id::PANE_TERRAIN_BRUSH,
+                "Terrain Brush",
+                Some(panels::terrain_brush::summary(
+                    self.terrain_editor.active,
+                    &self.terrain_editor.working,
+                )),
+                {
+                    panels::terrain_brush::view(
+                        panels::terrain_brush::View {
+                            active: self.terrain_editor.active,
+                            has_terrain: self.terrain_editor.terrain_present,
+                            search: &self.terrain_editor.search,
+                            categories: self.terrain_editor.categories(),
+                            category: self.terrain_editor.category.as_deref(),
+                            entries: self.terrain_brush_entries(),
+                            selected: Some(self.terrain_editor.selected),
+                            brush: &self.terrain_editor.working,
+                            status: self.terrain_editor.status.as_deref(),
+                        },
+                        Message::TerrainBrush,
+                    )
+                },
+            ),
             PaneKind::Performance => (
                 id::PANE_PERFORMANCE,
                 "Performance",
@@ -10491,6 +10601,7 @@ mod recipes;
 mod scatter;
 mod sceneview;
 mod terraincursor;
+mod terraineditor;
 mod terrainformat;
 mod terraingen;
 mod texturegen;

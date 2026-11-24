@@ -1903,3 +1903,108 @@ TEST_CASE("C API terrain cursor: a ray meets the terrain and the brush outline h
     CHECK(caffeine_session_terrain_brush_outline(session, 9999u, hit, 5.0f, 48, ring.data()) == CAFFEINE_NOT_FOUND);
     caffeine_session_destroy(session);
 }
+
+TEST_CASE("C API brushes: the built-in library, .brush text, stamp previews and a stroke with a preset", "[capi][terrain][brush]") {
+    const uint32_t count = caffeine_terrain_brush_count();
+    REQUIRE(count >= 56);
+    CaffeineBrushPreset first{};
+    REQUIRE(caffeine_terrain_brush_at(0, &first) == CAFFEINE_OK);
+    CHECK(std::string(first.name) == "Round soft");
+    CHECK(first.stamp_kind == CAFFEINE_STAMP_PROCEDURAL);
+    CHECK(std::string(first.stamp) == "round_soft");
+    CHECK(caffeine_terrain_brush_at(count, &first) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_terrain_brush_at(0, nullptr) == CAFFEINE_INVALID_ARGUMENT);
+
+    // Every mode has a brush.
+    bool seen[16] = {};
+    for (uint32_t i = 0; i < count; ++i) {
+        CaffeineBrushPreset p{};
+        REQUIRE(caffeine_terrain_brush_at(i, &p) == CAFFEINE_OK);
+        REQUIRE(p.mode >= 0);
+        REQUIRE(p.mode < 16);
+        seen[p.mode] = true;
+    }
+    for (bool mode : seen) CHECK(mode);
+
+    // A stamp preview.
+    std::vector<float> alpha(32 * 32);
+    REQUIRE(caffeine_terrain_brush_stamp("dome", 32, 0, alpha.data()) == CAFFEINE_OK);
+    CHECK(alpha[16 * 32 + 16] > 0.9f);
+    CHECK(alpha[0] == Approx(0.0f).margin(0.01f));
+    CHECK(caffeine_terrain_brush_stamp("nope", 32, 0, alpha.data()) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_terrain_brush_stamp("dome", 2, 0, alpha.data()) == CAFFEINE_INVALID_ARGUMENT);
+
+    // Text round trip, and the error of a bad line.
+    CaffeineBrushPreset custom{};
+    std::snprintf(custom.name, sizeof(custom.name), "%s", "Ridge");
+    custom.stamp_kind = CAFFEINE_STAMP_PROCEDURAL;
+    std::snprintf(custom.stamp, sizeof(custom.stamp), "%s", "ridged");
+    custom.stamp_size = 64;
+    custom.mode = CAFFEINE_BRUSH_TERRACE;
+    custom.radius_m = 12.0f;
+    custom.strength = 0.9f;
+    custom.step_m = 3.0f;
+    custom.symmetry = CAFFEINE_SYMMETRY_RADIAL;
+    custom.radial_count = 5;
+    custom.protect_count = 1;
+    std::snprintf(custom.protect[0].mask, sizeof(custom.protect[0].mask), "%s", "slope");
+    custom.protect[0].fall1 = 0.2f;
+    custom.protect[0].fall0 = 0.3f;
+    char text[4096];
+    REQUIRE(caffeine_terrain_brush_format(&custom, text, sizeof(text)) == CAFFEINE_OK);
+    CHECK(std::string(text).find("mode terrace") != std::string::npos);
+    CaffeineBrushPreset back{};
+    char error[128] = {};
+    REQUIRE(caffeine_terrain_brush_parse(text, &back, error, sizeof(error)) == CAFFEINE_OK);
+    CHECK(std::string(back.name) == "Ridge");
+    CHECK(back.mode == CAFFEINE_BRUSH_TERRACE);
+    CHECK(back.step_m == Approx(3.0f));
+    CHECK(back.symmetry == CAFFEINE_SYMMETRY_RADIAL);
+    CHECK(back.radial_count == 5);
+    CHECK(back.protect_count == 1);
+    CHECK(std::string(back.protect[0].mask) == "slope");
+    CHECK(caffeine_terrain_brush_parse("mode melt\n", &back, error, sizeof(error)) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(std::string(error).find("line 1") == 0);
+    CHECK(caffeine_terrain_brush_format(&custom, text, 8) == CAFFEINE_ERROR);
+
+    // A stroke with a built-in preset digs a crater into a terrain; undo restores it.
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Ground");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 129;
+    terrain.resolution_z = 129;
+    terrain.size_x = 256.0f;
+    terrain.size_z = 256.0f;
+    terrain.max_height = 80.0f;
+    std::vector<float> heights(129 * 129, 0.5f);
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+    CaffeineBrushPreset crater{};
+    for (uint32_t i = 0; i < count; ++i) {
+        REQUIRE(caffeine_terrain_brush_at(i, &crater) == CAFFEINE_OK);
+        if (std::string(crater.name) == "Crater") break;
+    }
+    REQUIRE(std::string(crater.name) == "Crater");
+    REQUIRE(caffeine_session_terrain_stroke_begin_preset(session, entity, &crater) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_stroke_point(session, 0.0, 0.0, 0.0, 1.0f, nullptr) == CAFFEINE_OK);
+    CaffeineTerrainStrokeResult result{};
+    REQUIRE(caffeine_session_terrain_stroke_end(session, &result) == CAFFEINE_OK);
+    CHECK(result.record != 0);
+    float centre = 0.0f, rim = 0.0f;
+    REQUIRE(caffeine_session_terrain_height(session, entity, 128.0f, 128.0f, &centre) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_height(session, entity, 128.0f + 9.5f, 128.0f, &rim) == CAFFEINE_OK);
+    CHECK(centre < 40.0f - 1.0f);  // a bowl
+    CHECK(rim > 40.0f);            // inside a raised rim
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, result.record) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_height(session, entity, 128.0f, 128.0f, &centre) == CAFFEINE_OK);
+    CHECK(centre == Approx(40.0f).margin(1e-3f));
+
+    // A stamp that cannot be made fails the call, and the open stroke is left alone.
+    CaffeineBrushPreset broken = crater;
+    broken.stamp_kind = CAFFEINE_STAMP_IMAGE;
+    std::snprintf(broken.stamp, sizeof(broken.stamp), "%s", "Textures/does-not-exist.png");
+    CHECK(caffeine_session_terrain_stroke_begin_preset(session, entity, &broken) == CAFFEINE_ERROR);
+    CHECK(caffeine_session_terrain_stroke_begin_preset(session, 9999u, &crater) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_stroke_begin_preset(session, entity, nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    caffeine_session_destroy(session);
+}

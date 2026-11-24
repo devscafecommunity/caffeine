@@ -15,6 +15,18 @@ enum class TerrainBrushMode : u8 {
     Smooth,
     Flatten,
     Noise,
+    // Terrain editing, phase 1 (`TerrainStroke`; the legacy sculptor below only does the first five).
+    Ramp,            ///< grade a slope from where the stroke began to where the cursor is
+    Terrace,         ///< round heights toward steps of `stepM`
+    Pinch,           ///< pull the relief toward the stamp's centre
+    Bulge,           ///< push the relief away from the stamp's centre
+    StampAbsolute,   ///< replace the height under the stamp by the stamp's shape on top of the ground at its centre
+    StampMax,        ///< keep the higher of the ground and the stamp's shape
+    StampMin,        ///< keep the lower of the ground and the stamp's shape, cut down from the centre
+    Clone,           ///< copy the relief from `offset` metres away
+    Smudge,          ///< drag the relief along the stroke
+    ErodeThermal,    ///< slopes steeper than the talus angle slide down
+    ErodeHydraulic,  ///< droplets carry material downhill
 };
 
 struct TerrainBrushSettings {
