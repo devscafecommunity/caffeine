@@ -1,0 +1,1568 @@
+//! Editor state and message handling of the **World Composer** tab (`caffeine-website/.../world-composition.md`).
+//!
+//! The tab edits a composition (`uikit::world`, the Rust mirror of the engine's text grammar) with its own undo
+//! history, checks it with the engine (`world_check`), previews it with a coarse build whose terrain is baked off the
+//! UI thread, and builds it: every recipe resolved and hashed, the terrain recipe baked, the engine's cached build
+//! (`world_build_cached`), then the scene. A small world becomes entities (one per instance, its nature model's parts
+//! as children, like Scatter); a large one an instance bake (`World/<name>.cinst`), a models file and one entity with
+//! the `World Instances` component. The build is one undo step.
+
+use super::{App, LogLevel, PaneKind};
+use crate::uikit::panels::world_composer::{
+    self as panel, Edit, LibraryItem, OverrideField, OverrideKind, WaterField,
+};
+use crate::uikit::recipe::{self, Kind, Recipe};
+use crate::uikit::recipe_ref::{self, Baked};
+use crate::uikit::world::{self, Composition, Override, OverrideOp, Term};
+use crate::uikit::{asset_folders, nature, terrain};
+use doppio_engine::{WorldBuild, WorldBuildDesc, WorldMask, WorldRecipe, WorldRecipeKind};
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+/// Up to this many instances a build becomes entities; above it, an instance bake drawn by one entity.
+pub(super) const SMALL_WORLD: usize = 3000;
+/// The coarse preview stops counting here.
+pub(super) const PREVIEW_MAX: u32 = 2000;
+/// The preview bakes the terrain at this resolution (the build at the recipe's own).
+const PREVIEW_RESOLUTION: usize = 129;
+/// Bake parameters (`adapt param.<name>`) are quantised to this many steps per unit: one model per bucket.
+pub(super) const PARAM_STEPS: u32 = 4;
+/// Edits settle for this long before the preview runs again.
+const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(250);
+
+/// A terrain recipe baked to heights and masks.
+#[derive(Debug, Clone)]
+pub(super) struct BakedTerrain {
+    pub heights: Vec<f32>,
+    pub res: usize,
+    pub size: [f32; 2],
+    pub max_height: f32,
+    pub splat: Vec<u8>,
+    pub masks: Vec<(String, Vec<u8>)>,
+}
+
+/// What the last build placed, for the edit layer (`Remove in region`).
+#[derive(Debug, Clone)]
+pub(super) struct LastBuild {
+    /// (class id, cell, position in metres from the terrain's corner).
+    pub instances: Vec<(String, [i32; 2], [f32; 3])>,
+}
+
+type TerrainJob = (u64, Receiver<Result<BakedTerrain, String>>);
+
+pub(super) struct WorldGen {
+    pub comp: Composition,
+    undo: Vec<(Composition, Option<String>)>,
+    cursor: usize,
+    pub name: String,
+    /// The `.generator.world` file the composition came from or was saved to.
+    pub path: Option<PathBuf>,
+    pub selected: Option<usize>,
+    pub dirty: bool,
+    pub status: Option<String>,
+    pub problems: Vec<String>,
+    pub seed_text: String,
+    pub search: String,
+    pub region: [f32; 4],
+    pub library: Vec<LibraryItem>,
+    pub preview: Option<Vec<(String, u32)>>,
+    pub preview_note: String,
+    preview_at: Option<Instant>,
+    preview_job: Option<TerrainJob>,
+    /// Baked terrains by (content hash of the recipe file, resolution).
+    terrains: HashMap<(u64, usize), Arc<BakedTerrain>>,
+    pub last_build: Option<LastBuild>,
+    /// The terrain's size in metres, once known (the region sliders' range).
+    pub size: [f32; 2],
+}
+
+impl WorldGen {
+    pub fn new() -> Self {
+        let comp = Composition::default();
+        WorldGen {
+            seed_text: comp.seed.to_string(),
+            undo: vec![(comp.clone(), None)],
+            cursor: 0,
+            comp,
+            name: "World".to_owned(),
+            path: None,
+            selected: None,
+            dirty: false,
+            status: None,
+            problems: Vec::new(),
+            search: String::new(),
+            region: [0.0; 4],
+            library: Vec::new(),
+            preview: None,
+            preview_note: "No preview yet.".to_owned(),
+            preview_at: None,
+            preview_job: None,
+            terrains: HashMap::new(),
+            last_build: None,
+            size: [256.0, 256.0],
+        }
+    }
+
+    /// Replaces the composition (a file was opened, or New): a fresh history.
+    pub(super) fn load(&mut self, comp: Composition) {
+        self.undo = vec![(comp.clone(), None)];
+        self.cursor = 0;
+        self.seed_text = comp.seed.to_string();
+        self.comp = comp;
+        self.selected = (!self.comp.classes.is_empty()).then_some(0);
+        self.preview = None;
+        self.last_build = None;
+        self.dirty = false;
+        self.schedule_preview();
+    }
+
+    /// Records the composition as one undo step; edits with the same `key` in a row merge (a slider drag).
+    fn push(&mut self, key: Option<String>) {
+        self.dirty = true;
+        self.schedule_preview();
+        if key.is_some()
+            && self.undo.get(self.cursor).and_then(|(_, k)| k.clone()) == key
+            && self.cursor + 1 == self.undo.len()
+        {
+            self.undo[self.cursor].0 = self.comp.clone();
+            return;
+        }
+        self.undo.truncate(self.cursor + 1);
+        self.undo.push((self.comp.clone(), key));
+        self.cursor = self.undo.len() - 1;
+        if self.undo.len() > 200 {
+            self.undo.remove(0);
+            self.cursor -= 1;
+        }
+    }
+
+    fn step(&mut self, forward: bool) -> bool {
+        let target = if forward {
+            (self.cursor + 1 < self.undo.len()).then(|| self.cursor + 1)
+        } else {
+            self.cursor.checked_sub(1)
+        };
+        let Some(target) = target else {
+            return false;
+        };
+        self.cursor = target;
+        self.comp = self.undo[target].0.clone();
+        self.seed_text = self.comp.seed.to_string();
+        if self.selected.is_some_and(|i| i >= self.comp.classes.len()) {
+            self.selected = self.comp.classes.len().checked_sub(1);
+        }
+        self.dirty = true;
+        self.schedule_preview();
+        true
+    }
+
+    fn schedule_preview(&mut self) {
+        self.preview_at = Some(Instant::now() + PREVIEW_DEBOUNCE);
+    }
+
+    pub fn view_state(&self) -> panel::View<'_> {
+        panel::View {
+            comp: &self.comp,
+            name: &self.name,
+            dirty: self.dirty,
+            selected: self.selected,
+            library: self.library.clone(),
+            search: &self.search,
+            seed_text: &self.seed_text,
+            region: self.region,
+            size: self.size,
+            preview: self.preview.as_deref(),
+            preview_note: &self.preview_note,
+            problems: &self.problems,
+            status: self.status.as_deref(),
+        }
+    }
+
+    /// Instances of the last build per class id, as `oak 120, rock 30`.
+    fn counts_text(counts: &[(String, u32)]) -> String {
+        counts
+            .iter()
+            .map(|(id, n)| format!("{id} {n}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// The project's `*.generator.*` recipes under `root` (hidden folders skipped), sorted by path.
+pub(super) fn scan_library(root: &Path) -> Vec<LibraryItem> {
+    fn walk(root: &Path, dir: &Path, out: &mut Vec<LibraryItem>, depth: usize) {
+        if depth > 8 {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let hidden = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with('.'));
+            if hidden {
+                continue;
+            }
+            if path.is_dir() {
+                walk(root, &path, out, depth + 1);
+            } else if let Some(kind) = recipe::kind_of(&path) {
+                if kind != Kind::World {
+                    out.push(LibraryItem {
+                        kind,
+                        path: asset_folders::relative(root, &path),
+                    });
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, root, &mut out, 0);
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
+}
+
+fn engine_kind(kind: Kind) -> Option<WorldRecipeKind> {
+    match kind {
+        Kind::Terrain => Some(WorldRecipeKind::Terrain),
+        Kind::Nature => Some(WorldRecipeKind::Nature),
+        Kind::Water => Some(WorldRecipeKind::Water),
+        Kind::Material => Some(WorldRecipeKind::Material),
+        Kind::Texture => Some(WorldRecipeKind::Texture),
+        Kind::World => None,
+    }
+}
+
+/// What the project knows about every recipe the composition references (kind, version, content hash). A missing
+/// file is left out: the engine then reports the reference as missing and builds nothing.
+pub(super) fn resolve_recipes(root: &Path, comp: &Composition) -> Vec<WorldRecipe> {
+    comp.references()
+        .into_iter()
+        .filter_map(|reference| {
+            let path = root.join(&reference);
+            let kind = engine_kind(recipe::kind_of(&path)?)?;
+            let bytes = std::fs::read(&path).ok()?;
+            let generator_version = recipe::read(&path)
+                .map(|r| r.generator_version)
+                .unwrap_or(1);
+            Some(WorldRecipe {
+                reference,
+                kind,
+                generator_version,
+                content_hash: recipe_ref::content_hash(&bytes),
+            })
+        })
+        .collect()
+}
+
+/// Bakes a terrain recipe file to heights and masks at `res` (its Output's resolution when `None`, never above it).
+pub(super) fn bake_terrain(path: &Path, res: Option<usize>) -> Result<BakedTerrain, String> {
+    let recipe = recipe::read(path)?;
+    if recipe.kind() != Some(Kind::Terrain) {
+        return Err(format!("{} is not a terrain recipe", path.display()));
+    }
+    let (_, graph) = terrain::from_text(&recipe.graph)
+        .ok_or_else(|| format!("{}: the terrain graph is unreadable", path.display()))?;
+    let full = graph.output_resolution();
+    let res = res.map_or(full, |r| r.min(full));
+    let model = graph.build(res)?;
+    Ok(BakedTerrain {
+        heights: model.height.data,
+        res: model.height.res,
+        size: model.size,
+        max_height: model.max_height,
+        splat: model.splat,
+        masks: model.masks,
+    })
+}
+
+/// The terrain's size: the composition's when it sets one, else the recipe's.
+fn world_size(comp: &Composition, terrain: &BakedTerrain) -> [f32; 2] {
+    if comp.size[0] > 0.0 && comp.size[1] > 0.0 {
+        comp.size
+    } else {
+        terrain.size
+    }
+}
+
+fn build_desc(
+    comp: &Composition,
+    terrain: &BakedTerrain,
+    recipes: Vec<WorldRecipe>,
+    region: Option<[f32; 4]>,
+    max_instances: u32,
+) -> WorldBuildDesc {
+    let res = terrain.res as u32;
+    WorldBuildDesc {
+        graph: comp.to_text(),
+        generator_version: recipe::GENERATOR_VERSION,
+        recipes: Some(recipes),
+        heights: terrain.heights.clone(),
+        resolution: [res, res],
+        size: world_size(comp, terrain),
+        max_height: terrain.max_height,
+        masks: terrain
+            .masks
+            .iter()
+            .map(|(name, data)| WorldMask {
+                name: name.clone(),
+                resolution: [res, res],
+                data: data.clone(),
+            })
+            .collect(),
+        region,
+        max_instances,
+    }
+}
+
+fn per_class_counts(build: &WorldBuild) -> Vec<(String, u32)> {
+    build
+        .classes
+        .iter()
+        .map(|class| (class.id.clone(), class.instance_count))
+        .collect()
+}
+
+/// The variant seed `nature_variants` uses for variant `index` of a pool seeded with `base_seed`.
+fn variant_seed(base_seed: u64, index: u32) -> u32 {
+    (recipe_ref::derive_seed(base_seed, 0xBA5E, index as i32, 0) % 9_999) as u32 + 1
+}
+
+/// Which model an instance draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum ModelKey {
+    Variant(u32),
+    Cell([i32; 2]),
+}
+
+/// The baked models of every class of a build: (class index, key) -> mesh paths relative to the asset root.
+type Models = BTreeMap<(usize, ModelKey), Vec<String>>;
+
+/// Bakes the nature models a build needs: the variant pool of each class, or one model per parameter bucket
+/// (`adapt param.<name>`, quantised) or per instance (`unique`).
+fn bake_models(root: &Path, build: &WorldBuild, cache: &Path) -> Result<(Models, usize), String> {
+    let mut models = Models::new();
+    let mut baked = 0usize;
+    let mesh_paths = |baked: &Baked| -> Vec<String> {
+        baked
+            .files
+            .iter()
+            .map(|file| asset_folders::relative(root, &baked.directory.join(file)))
+            .collect()
+    };
+    for (index, class) in build.classes.iter().enumerate() {
+        let recipe_path = root.join(&class.reference);
+        let base_seed = u64::from(class.salt);
+        if class.unique || !class.params.is_empty() {
+            let mut buckets: HashMap<Vec<u32>, Vec<String>> = HashMap::new();
+            for instance in build.instances_of(index) {
+                let (seed, values): (u32, Vec<f32>) = if class.unique {
+                    (
+                        (instance.seed % 9_999) as u32 + 1,
+                        instance.params[..class.params.len()].to_vec(),
+                    )
+                } else {
+                    (
+                        variant_seed(base_seed, instance.variant),
+                        instance.params[..class.params.len()]
+                            .iter()
+                            .map(|v| recipe_ref::quantize_param(*v, PARAM_STEPS))
+                            .collect(),
+                    )
+                };
+                let mut bucket = vec![seed];
+                bucket.extend(values.iter().map(|v| v.to_bits()));
+                let files = match buckets.get(&bucket) {
+                    Some(files) => files.clone(),
+                    None => {
+                        let params: Vec<(String, f32)> = class
+                            .params
+                            .iter()
+                            .cloned()
+                            .zip(values.iter().copied())
+                            .collect();
+                        let result = recipe_ref::bake_nature_instance(
+                            &recipe_path,
+                            seed,
+                            None,
+                            &params,
+                            cache,
+                        )
+                        .map_err(|e| format!("{}: {e}", class.id))?;
+                        baked += 1;
+                        let files = mesh_paths(&result);
+                        buckets.insert(bucket, files.clone());
+                        files
+                    }
+                };
+                models.insert((index, ModelKey::Cell(instance.cell)), files);
+            }
+        } else {
+            let count = build
+                .instances_of(index)
+                .iter()
+                .map(|i| i.variant + 1)
+                .max()
+                .unwrap_or(0);
+            let pool = recipe_ref::nature_variants(&recipe_path, base_seed, count, None, cache)
+                .map_err(|e| format!("{}: {e}", class.id))?;
+            for (variant, result) in pool.iter().enumerate() {
+                baked += usize::from(!result.cached);
+                models.insert(
+                    (index, ModelKey::Variant(variant as u32)),
+                    mesh_paths(result),
+                );
+            }
+        }
+    }
+    Ok((models, baked))
+}
+
+impl App {
+    pub(super) fn show_world_pane(&mut self) {
+        self.refresh_world_library();
+        self.refresh_world_problems();
+        self.panes.restore();
+        let mut target = None;
+        for (pane, group) in self.panes.iter_mut() {
+            if let Some(index) = group.pages.iter().position(|page| *page == PaneKind::World) {
+                group.active = index;
+                target = Some(*pane);
+            }
+        }
+        if target.is_none() {
+            for (pane, group) in self.panes.iter_mut() {
+                if group.pages.contains(&PaneKind::Viewport) {
+                    group.pages.push(PaneKind::World);
+                    group.active = group.pages.len() - 1;
+                    target = Some(*pane);
+                    break;
+                }
+            }
+        }
+        if let Some(pane) = target {
+            self.panes.maximize(pane);
+        }
+    }
+
+    pub(super) fn refresh_world_library(&mut self) {
+        self.worldgen.library = self
+            .asset_root_dir()
+            .map(|root| scan_library(&root))
+            .unwrap_or_default();
+    }
+
+    /// Asks the engine what is wrong with the composition (or checks it in Rust without an engine library).
+    pub(super) fn refresh_world_problems(&mut self) {
+        let text = self.worldgen.comp.to_text();
+        let checked = self.engine.as_ref().map(|engine| engine.world_check(&text));
+        self.worldgen.problems = match checked {
+            Some(Ok(())) => Vec::new(),
+            Some(Err(error)) if !error.contains("C ABI v28") => error
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(str::to_owned)
+                .collect(),
+            _ => self.worldgen.comp.validate(),
+        };
+    }
+
+    /// Opens a `.generator.world` recipe in the World tab.
+    pub(super) fn open_world_recipe(&mut self, path: &Path, recipe: &Recipe) -> bool {
+        match Composition::parse(&recipe.graph) {
+            Ok(comp) => {
+                self.worldgen.name = recipe.name.clone();
+                self.worldgen.path = Some(path.to_path_buf());
+                self.worldgen.load(comp);
+                self.worldgen.status = None;
+                self.show_world_pane();
+                true
+            }
+            Err(error) => {
+                self.log(LogLevel::Error, format!("World recipe: {error}"));
+                false
+            }
+        }
+    }
+
+    fn world_dir(&self) -> Option<PathBuf> {
+        self.asset_root_dir().map(|root| root.join("World"))
+    }
+
+    pub(super) fn edit_world(&mut self, edit: Edit) {
+        let w = &mut self.worldgen;
+        match edit {
+            Edit::Undo => {
+                w.step(false);
+            }
+            Edit::Redo => {
+                w.step(true);
+            }
+            Edit::New => {
+                let terrain = w.comp.terrain.clone();
+                w.path = None;
+                w.load(world::starter(&terrain));
+                w.dirty = true;
+            }
+            Edit::Save => {
+                self.worldgen.status = Some(match self.save_world() {
+                    Ok(path) => format!("Saved {path}"),
+                    Err(error) => format!("Could not save: {error}"),
+                });
+                self.refresh_world_library();
+            }
+            Edit::SaveAsPrefab => self.save_world_prefab(),
+            Edit::Build => self.build_world(),
+            Edit::Preview => {
+                w.preview_at = Some(Instant::now());
+                self.pump_world_preview(false);
+            }
+            Edit::SetName(name) => w.name = name,
+            Edit::SetSearch(search) => w.search = search,
+            Edit::Add(path) => self.add_to_world(&path, None),
+            Edit::AddClass { reference, id } => self.add_to_world(&reference, id),
+            Edit::SelectClass(index) => {
+                if index < w.comp.classes.len() {
+                    w.selected = Some(index);
+                }
+            }
+            Edit::RemoveClass(index) => {
+                if index < w.comp.classes.len() {
+                    let removed = w.comp.classes.remove(index);
+                    // Hand edits of a class that is gone would make the composition invalid.
+                    w.comp.overrides.retain(|o| o.class != removed.id);
+                    w.selected = w
+                        .selected
+                        .filter(|_| !w.comp.classes.is_empty())
+                        .map(|s| s.min(w.comp.classes.len() - 1));
+                    w.push(None);
+                }
+            }
+            Edit::RemoveWater(index) => {
+                if index < w.comp.water.len() {
+                    w.comp.water.remove(index);
+                    w.push(None);
+                }
+            }
+            Edit::RemoveMaterial(index) => {
+                if index < w.comp.materials.len() {
+                    w.comp.materials.remove(index);
+                    w.push(None);
+                }
+            }
+            Edit::SetWater(index, field, value) => {
+                if let Some(body) = w.comp.water.get_mut(index) {
+                    match field {
+                        WaterField::Min => body.min = value.clamp(0.0, 1.0),
+                        WaterField::Level => body.level = value.clamp(0.0, 1.0),
+                        WaterField::Carve => body.carve = value.max(0.0),
+                    }
+                    w.push(Some(format!("water:{index}:{field:?}")));
+                }
+            }
+            Edit::SetMaterialSlot(index, slot) => {
+                let slot: String = slot.chars().filter(|c| !c.is_whitespace()).collect();
+                if let Some(binding) = w.comp.materials.get_mut(index) {
+                    if !slot.is_empty() {
+                        binding.slot = slot;
+                        w.push(Some(format!("slot:{index}")));
+                    }
+                }
+            }
+            Edit::SetTerrainSize(axis, value) => {
+                if axis < 2 {
+                    w.comp.size[axis] = value.max(0.0);
+                    w.push(Some(format!("size:{axis}")));
+                }
+            }
+            Edit::SetSeed(text) => {
+                w.seed_text = text.clone();
+                if let Ok(seed) = text.trim().parse::<u64>() {
+                    if seed != w.comp.seed {
+                        w.comp.seed = seed;
+                        w.push(Some("seed".to_owned()));
+                    }
+                }
+            }
+            Edit::Reseed => {
+                w.comp.seed = w.comp.reseeded();
+                w.seed_text = w.comp.seed.to_string();
+                w.push(None);
+                w.status = Some(format!("Reseeded: seed {}", w.comp.seed));
+            }
+            Edit::SetClass(index, field, value) => {
+                if let Some(class) = w.comp.classes.get_mut(index) {
+                    field.set(class, value);
+                    w.push(Some(format!("class:{index}:{}", field.key())));
+                }
+            }
+            Edit::SetClassById {
+                class,
+                field,
+                value,
+            } => match w.comp.class_index(&class) {
+                Some(index) => {
+                    field.set(&mut w.comp.classes[index], value);
+                    w.selected = Some(index);
+                    w.push(Some(format!("class:{index}:{}", field.key())));
+                }
+                None => w.status = Some(format!("No class `{class}` in the composition")),
+            },
+            Edit::SetUnique(index, on) => {
+                if let Some(class) = w.comp.classes.get_mut(index) {
+                    class.unique = on;
+                    w.push(None);
+                }
+            }
+            Edit::AddTerm(index) => {
+                if let Some(class) = w.comp.classes.get_mut(index) {
+                    let used: Vec<&str> = class.terms.iter().map(|t| t.mask.as_str()).collect();
+                    let mask = world::MASKS
+                        .iter()
+                        .find(|m| !used.contains(m))
+                        .unwrap_or(&"slope");
+                    class.terms.push(Term {
+                        mask: (*mask).to_owned(),
+                        values: [0.0, 0.0, 1.0, 1.0],
+                    });
+                    w.push(None);
+                }
+            }
+            Edit::RemoveTerm(index, term) => {
+                if let Some(class) = w.comp.classes.get_mut(index) {
+                    if term < class.terms.len() {
+                        class.terms.remove(term);
+                        w.push(None);
+                    }
+                }
+            }
+            Edit::SetTermMask(index, term, mask) => {
+                if let Some(t) = w
+                    .comp
+                    .classes
+                    .get_mut(index)
+                    .and_then(|c| c.terms.get_mut(term))
+                {
+                    t.mask = mask;
+                    w.push(None);
+                }
+            }
+            Edit::SetTerm(index, term, value_index, value) => {
+                if let Some(t) = w
+                    .comp
+                    .classes
+                    .get_mut(index)
+                    .and_then(|c| c.terms.get_mut(term))
+                {
+                    if value_index < 4 {
+                        // The four numbers never decrease: moving one pushes its neighbours along.
+                        let value = value.clamp(0.0, 1.0);
+                        t.values[value_index] = value;
+                        for i in value_index + 1..4 {
+                            t.values[i] = t.values[i].max(value);
+                        }
+                        for i in 0..value_index {
+                            t.values[i] = t.values[i].min(value);
+                        }
+                        w.push(Some(format!("term:{index}:{term}:{value_index}")));
+                    }
+                }
+            }
+            Edit::SetRule {
+                class,
+                mask,
+                values,
+            } => {
+                let Some(index) = w.comp.class_index(&class) else {
+                    w.status = Some(format!("No class `{class}` in the composition"));
+                    return;
+                };
+                let mut values = values.map(|v| v.clamp(0.0, 1.0));
+                for i in 1..4 {
+                    values[i] = values[i].max(values[i - 1]);
+                }
+                let terms = &mut w.comp.classes[index].terms;
+                match terms.iter_mut().find(|t| t.mask == mask) {
+                    Some(term) => term.values = values,
+                    None => terms.push(Term { mask, values }),
+                }
+                w.selected = Some(index);
+                w.push(None);
+            }
+            Edit::AddAdapt(index) => {
+                if let Some(class) = w.comp.classes.get_mut(index) {
+                    class.adapt.push(world::Adapt {
+                        target: "size".to_owned(),
+                        mask: "wetness".to_owned(),
+                        amount: None,
+                    });
+                    w.push(None);
+                }
+            }
+            Edit::RemoveAdapt(index, adapt) => {
+                if let Some(class) = w.comp.classes.get_mut(index) {
+                    if adapt < class.adapt.len() {
+                        class.adapt.remove(adapt);
+                        w.push(None);
+                    }
+                }
+            }
+            Edit::SetAdaptTarget(index, adapt, target) => {
+                if let Some(a) = w
+                    .comp
+                    .classes
+                    .get_mut(index)
+                    .and_then(|c| c.adapt.get_mut(adapt))
+                {
+                    if world::is_adapt_target(&target) {
+                        a.target = target;
+                        w.push(None);
+                    }
+                }
+            }
+            Edit::SetAdaptMask(index, adapt, mask) => {
+                if let Some(a) = w
+                    .comp
+                    .classes
+                    .get_mut(index)
+                    .and_then(|c| c.adapt.get_mut(adapt))
+                {
+                    a.mask = mask;
+                    w.push(None);
+                }
+            }
+            Edit::SetAdaptAmount(index, adapt, amount) => {
+                if let Some(a) = w
+                    .comp
+                    .classes
+                    .get_mut(index)
+                    .and_then(|c| c.adapt.get_mut(adapt))
+                {
+                    a.amount = Some(amount.max(0.0));
+                    w.push(Some(format!("adapt:{index}:{adapt}")));
+                }
+            }
+            Edit::SetRegion(index, value) => {
+                if index < 4 {
+                    w.region[index] = value.max(0.0);
+                }
+            }
+            Edit::RemoveIn(region) => self.remove_world_in_region(region),
+            Edit::AddOverride(index, kind) => {
+                if let Some(class) = w.comp.classes.get(index) {
+                    let op = match kind {
+                        OverrideKind::Pin => OverrideOp::Pin { variant: 0 },
+                        OverrideKind::Move => OverrideOp::Move {
+                            x: w.size[0] * 0.5,
+                            z: w.size[1] * 0.5,
+                        },
+                    };
+                    w.comp.overrides.push(Override {
+                        op,
+                        class: class.id.clone(),
+                        cell: [0, 0],
+                    });
+                    w.push(None);
+                }
+            }
+            Edit::RemoveOverride(index) => {
+                if index < w.comp.overrides.len() {
+                    w.comp.overrides.remove(index);
+                    w.push(None);
+                }
+            }
+            Edit::SetOverride(index, field, value) => {
+                let variants = w
+                    .comp
+                    .overrides
+                    .get(index)
+                    .and_then(|o| w.comp.class(&o.class))
+                    .map_or(1, |c| c.variants.max(1));
+                if let Some(o) = w.comp.overrides.get_mut(index) {
+                    match (field, &mut o.op) {
+                        (OverrideField::CellX, _) => o.cell[0] = value.round() as i32,
+                        (OverrideField::CellZ, _) => o.cell[1] = value.round() as i32,
+                        (OverrideField::X, OverrideOp::Move { x, .. }) => *x = value.max(0.0),
+                        (OverrideField::Z, OverrideOp::Move { z, .. }) => *z = value.max(0.0),
+                        (OverrideField::Variant, OverrideOp::Pin { variant }) => {
+                            *variant = (value.round().max(0.0) as u32).min(variants - 1)
+                        }
+                        _ => return,
+                    }
+                    w.push(Some(format!("override:{index}:{field:?}")));
+                }
+            }
+            Edit::Noop => {}
+        }
+        self.refresh_world_problems();
+    }
+
+    /// A library recipe joins the composition by its kind.
+    fn add_to_world(&mut self, reference: &str, id: Option<String>) {
+        let kind = recipe::kind_of(Path::new(reference));
+        let w = &mut self.worldgen;
+        match kind {
+            Some(Kind::Terrain) => {
+                w.comp.terrain = reference.to_owned();
+                w.push(None);
+                w.status = Some(format!("The world grows on {reference}"));
+            }
+            Some(Kind::Nature) => {
+                let taken: Vec<String> = w.comp.classes.iter().map(|c| c.id.clone()).collect();
+                let id = id
+                    .filter(|id| !id.trim().is_empty())
+                    .unwrap_or_else(|| world::class_id_for(reference, &taken));
+                if taken.contains(&id) {
+                    w.status = Some(format!("A class `{id}` is already in the composition"));
+                    return;
+                }
+                let mut class = world::Class::new(&id, reference);
+                class.variants = 4;
+                class.priority = 10;
+                w.comp.classes.push(class);
+                w.selected = Some(w.comp.classes.len() - 1);
+                w.push(None);
+                w.status = Some(format!("Added class {id}"));
+            }
+            Some(Kind::Water) => {
+                w.comp.water.push(world::Water::river(reference));
+                w.push(None);
+            }
+            Some(Kind::Material | Kind::Texture) => {
+                let slot = format!("terrain.layer{}", w.comp.materials.len());
+                w.comp.materials.push(world::Material {
+                    slot,
+                    reference: reference.to_owned(),
+                });
+                w.push(None);
+            }
+            Some(Kind::World) | None => {
+                w.status = Some(format!(
+                    "{reference} is not a terrain, nature, water, material or texture recipe"
+                ));
+            }
+        }
+    }
+
+    /// Writes `World/<Name>.generator.world` (generator version 2) and returns its project path.
+    pub(super) fn save_world(&mut self) -> Result<String, String> {
+        self.ensure_workspace();
+        let root = self
+            .asset_root_dir()
+            .ok_or("open a project first: worlds are written to its World folder")?;
+        let slug = nature::slug(&self.worldgen.name);
+        let slug = if slug.is_empty() {
+            "world".to_owned()
+        } else {
+            slug
+        };
+        let path = self
+            .worldgen
+            .path
+            .clone()
+            .filter(|p| p.starts_with(&root) && p.is_file())
+            .unwrap_or_else(|| {
+                root.join("World")
+                    .join(recipe::file_name(&slug, Kind::World))
+            });
+        let mut recipe = Recipe::new(
+            Kind::World,
+            &self.worldgen.name,
+            "",
+            self.worldgen.comp.to_text(),
+        );
+        recipe.generator_version = 2;
+        recipe::write(&path, &recipe)?;
+        self.worldgen.path = Some(path.clone());
+        self.worldgen.dirty = false;
+        self.refresh_assets();
+        Ok(asset_folders::relative(&root, &path))
+    }
+
+    /// Bakes (or reuses) the terrain of `comp` at `res`.
+    fn world_terrain(
+        &mut self,
+        root: &Path,
+        comp: &Composition,
+        res: Option<usize>,
+    ) -> Result<Arc<BakedTerrain>, String> {
+        if comp.terrain.is_empty() {
+            return Err("the composition has no terrain".to_owned());
+        }
+        let path = root.join(&comp.terrain);
+        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", comp.terrain))?;
+        let key = (recipe_ref::content_hash(&bytes), res.unwrap_or(0));
+        if let Some(baked) = self.worldgen.terrains.get(&key) {
+            return Ok(baked.clone());
+        }
+        let baked = Arc::new(bake_terrain(&path, res)?);
+        self.worldgen.terrains.insert(key, baked.clone());
+        Ok(baked)
+    }
+
+    /// The coarse preview: its terrain is baked on a worker thread, then the engine counts at most `PREVIEW_MAX`
+    /// instances. Runs from the tick once edits settle; `wait` blocks until it is done (tests).
+    pub(super) fn pump_world_preview(&mut self, wait: bool) {
+        if let Some((key, rx)) = self.worldgen.preview_job.take() {
+            let result = if wait {
+                rx.recv()
+                    .unwrap_or_else(|_| Err("the preview worker stopped".to_owned()))
+            } else {
+                match rx.try_recv() {
+                    Ok(result) => result,
+                    Err(TryRecvError::Empty) => {
+                        self.worldgen.preview_job = Some((key, rx));
+                        return;
+                    }
+                    Err(TryRecvError::Disconnected) => Err("the preview worker stopped".to_owned()),
+                }
+            };
+            match result {
+                Ok(baked) => {
+                    self.worldgen
+                        .terrains
+                        .insert((key, PREVIEW_RESOLUTION), Arc::new(baked));
+                    self.worldgen.preview_at = Some(Instant::now());
+                }
+                Err(error) => {
+                    self.worldgen.preview_note = format!("Preview: {error}");
+                    return;
+                }
+            }
+        }
+        let due = self
+            .worldgen
+            .preview_at
+            .is_some_and(|at| wait || Instant::now() >= at);
+        if !due {
+            return;
+        }
+        let visible = wait
+            || self
+                .panes
+                .iter()
+                .any(|(_, group)| group.active_kind() == PaneKind::World);
+        if !visible {
+            return;
+        }
+        self.worldgen.preview_at = None;
+        let comp = self.worldgen.comp.clone();
+        let Some(root) = self.asset_root_dir() else {
+            self.worldgen.preview_note =
+                "Preview: open a project to resolve the recipes".to_owned();
+            return;
+        };
+        if comp.terrain.is_empty() {
+            self.worldgen.preview_note = "Preview: add a terrain recipe first".to_owned();
+            return;
+        }
+        let path = root.join(&comp.terrain);
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.worldgen.preview_note = format!("Preview: {}: {error}", comp.terrain);
+                return;
+            }
+        };
+        let key = recipe_ref::content_hash(&bytes);
+        let Some(terrain) = self
+            .worldgen
+            .terrains
+            .get(&(key, PREVIEW_RESOLUTION))
+            .cloned()
+        else {
+            // Bake it off the UI thread, then come back here.
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(bake_terrain(&path, Some(PREVIEW_RESOLUTION)));
+            });
+            self.worldgen.preview_job = Some((key, rx));
+            self.worldgen.preview_note = "Preview: baking the terrain…".to_owned();
+            if wait {
+                self.pump_world_preview(true);
+            }
+            return;
+        };
+        let recipes = resolve_recipes(&root, &comp);
+        let desc = build_desc(&comp, &terrain, recipes, None, PREVIEW_MAX);
+        self.worldgen.size = desc.size;
+        let Some(engine) = self.engine.as_ref() else {
+            self.worldgen.preview_note = "Preview: the engine is not available".to_owned();
+            return;
+        };
+        let started = Instant::now();
+        match engine.world_build(&desc) {
+            Ok(build) if build.ok => {
+                let counts = per_class_counts(&build);
+                self.worldgen.preview_note = format!(
+                    "Preview ({}² terrain, {:.0} ms): {} instance{}{} — {}",
+                    terrain.res,
+                    started.elapsed().as_secs_f32() * 1000.0,
+                    build.instances.len(),
+                    if build.instances.len() == 1 { "" } else { "s" },
+                    if build.truncated {
+                        format!(" of {} (capped)", build.total)
+                    } else {
+                        String::new()
+                    },
+                    WorldGen::counts_text(&counts)
+                );
+                self.worldgen.preview = Some(counts);
+            }
+            Ok(build) => {
+                self.worldgen.preview = None;
+                self.worldgen.preview_note = format!("Preview: {}", build.errors.join("; "));
+            }
+            Err(error) => {
+                self.worldgen.preview = None;
+                self.worldgen.preview_note = format!("Preview: {error}");
+            }
+        }
+    }
+
+    pub(super) fn build_world(&mut self) {
+        match self.run_world_build() {
+            Ok(summary) => {
+                self.log(LogLevel::Action, summary.clone());
+                self.worldgen.status = Some(summary);
+            }
+            Err(error) => {
+                self.log(LogLevel::Error, format!("World build: {error}"));
+                self.worldgen.status = Some(format!("Build: {error}"));
+            }
+        }
+    }
+
+    /// The `World <name>` entity of a world, if the scene has one.
+    fn world_holder(&self, name: &str) -> Option<u32> {
+        let wanted = format!("World {name}");
+        self.entities
+            .iter()
+            .find(|e| e.name == wanted && e.parent.is_none())
+            .map(|e| e.id)
+    }
+
+    fn run_world_build(&mut self) -> Result<String, String> {
+        let started = Instant::now();
+        self.ensure_workspace();
+        let root = self
+            .asset_root_dir()
+            .ok_or("open a project first: the recipes are resolved in its assets folder")?;
+        let comp = self.worldgen.comp.clone();
+        let name = self.worldgen.name.trim().to_owned();
+        let name = if name.is_empty() {
+            "World".to_owned()
+        } else {
+            name
+        };
+        {
+            let engine = self.engine.as_ref().ok_or("the engine is not available")?;
+            engine
+                .world_check(&comp.to_text())
+                .map_err(|e| e.trim().replace('\n', "; "))?;
+        }
+        let terrain = self.world_terrain(&root, &comp, None)?;
+        let recipes = resolve_recipes(&root, &comp);
+        let desc = build_desc(&comp, &terrain, recipes, None, 0);
+        let size = desc.size;
+        let cache = root.join(".cache").join("world");
+        let (build, hit) = self
+            .engine
+            .as_ref()
+            .ok_or("the engine is not available")?
+            .world_build_cached(&desc, &cache)?;
+        if !build.ok {
+            return Err(build.errors.join("; "));
+        }
+        let small = build.instances.len() <= SMALL_WORLD;
+        let nature_cache = cache.join("nature");
+        let (models, baked) = bake_models(&root, &build, &nature_cache)?;
+        let slug = {
+            let slug = nature::slug(&name);
+            if slug.is_empty() {
+                "world".to_owned()
+            } else {
+                slug
+            }
+        };
+        // A large world: the instance bake and its models file, written before the scene changes.
+        let mut bake_paths = None;
+        if !small {
+            let dir = root.join("World");
+            std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            let cinst = dir.join(format!("{slug}.cinst"));
+            let written = self
+                .engine
+                .as_ref()
+                .ok_or("the engine is not available")?
+                .world_build_baked(&desc, Some(&cinst), 64.0)?;
+            if !written.ok || !written.errors.is_empty() {
+                return Err(written.errors.join("; "));
+            }
+            let mut file = world::ModelsFile::default();
+            for ((class, key), meshes) in &models {
+                for mesh in meshes {
+                    let cutout = world::is_cutout_part(mesh);
+                    match key {
+                        ModelKey::Variant(v) => file.variant(*class, *v, mesh, cutout),
+                        ModelKey::Cell(cell) => file.cell(*class, *cell, mesh, cutout),
+                    }
+                }
+            }
+            let models_path = dir.join(format!("{slug}.models"));
+            std::fs::write(&models_path, file.to_text())
+                .map_err(|e| format!("{}: {e}", models_path.display()))?;
+            bake_paths = Some((
+                asset_folders::relative(&root, &cinst),
+                asset_folders::relative(&root, &models_path),
+            ));
+        }
+
+        // The scene: the previous build of this world goes, its place stays.
+        let previous = self.world_holder(&name);
+        let focus = self.camera.focus;
+        let mut problems: Vec<String> = Vec::new();
+        let engine = self.engine.as_mut().ok_or("the engine is not available")?;
+        let corner = match previous {
+            Some(id) => engine.position(id).unwrap_or([
+                focus[0] - size[0] * 0.5,
+                0.0,
+                focus[2] - size[1] * 0.5,
+            ]),
+            None => [focus[0] - size[0] * 0.5, 0.0, focus[2] - size[1] * 0.5],
+        };
+        if let Some(old) = previous {
+            destroy_tree(engine, old);
+        }
+        let holder = engine
+            .create_entity(&format!("World {name}"))
+            .map_err(|e| format!("could not create the holder: {e:?}"))?;
+        engine
+            .set_position(holder, corner)
+            .map_err(|e| format!("position: {e:?}"))?;
+        // The ground: the terrain recipe (carved by the rivers when the engine carved it), centred on its entity.
+        let heights = if build.carved && build.heights.len() == terrain.heights.len() {
+            build.heights.clone()
+        } else {
+            terrain.heights.clone()
+        };
+        match engine.create_entity(&format!("{name} terrain")) {
+            Ok(ground) => {
+                let _ = engine.set_entity_parent(ground, Some(holder));
+                let _ = engine.set_position(ground, [size[0] * 0.5, 0.0, size[1] * 0.5]);
+                let res = terrain.res as u32;
+                let settings = doppio_engine::Terrain {
+                    resolution: [res, res],
+                    size,
+                    max_height: terrain.max_height,
+                    cast_shadows: true,
+                };
+                let splat = (terrain.splat.len() == terrain.heights.len() * 4)
+                    .then_some(terrain.splat.as_slice());
+                if let Err(error) = engine.set_terrain(ground, &settings, &heights, splat) {
+                    problems.push(format!("terrain: {error:?}"));
+                } else {
+                    for (mask, data) in &terrain.masks {
+                        let _ = engine.set_terrain_mask(ground, mask, [res, res], data);
+                    }
+                    if build.water_distance.len() == terrain.heights.len() {
+                        let _ = engine.set_terrain_mask(
+                            ground,
+                            "water_distance",
+                            [res, res],
+                            &build.water_distance,
+                        );
+                    }
+                }
+            }
+            Err(error) => problems.push(format!("terrain: {error:?}")),
+        }
+
+        let mut placed: BTreeMap<String, u32> = BTreeMap::new();
+        if let Some((cinst, models_file)) = &bake_paths {
+            if let Err(error) = set_world_instances(engine, holder, cinst, models_file) {
+                problems.push(format!(
+                    "the World Instances component ({error}): the instance bake is written, the engine library cannot draw it yet"
+                ));
+            }
+            for class in &build.classes {
+                placed.insert(class.id.clone(), class.instance_count);
+            }
+        } else {
+            for (class_index, class) in build.classes.iter().enumerate() {
+                for instance in build.instances_of(class_index) {
+                    let key = if class.unique || !class.params.is_empty() {
+                        ModelKey::Cell(instance.cell)
+                    } else {
+                        ModelKey::Variant(instance.variant)
+                    };
+                    let meshes = models
+                        .get(&(class_index, key))
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]);
+                    match place_world_instance(engine, holder, &class.id, instance, meshes) {
+                        Ok(()) => *placed.entry(class.id.clone()).or_default() += 1,
+                        Err(error) => {
+                            if problems.len() < 3 {
+                                problems.push(error);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.entities = super::projectloader::read_entities(self.engine.as_ref().expect("engine"));
+        if let Some(position) = self.entities.iter().position(|e| e.id == holder) {
+            self.select_index(position);
+        }
+        self.refresh_components();
+        self.commit(format!("Build world {name}"), None);
+        self.worldgen.size = size;
+        if self.worldgen.region == [0.0; 4] {
+            self.worldgen.region = [0.0, 0.0, size[0], size[1]];
+        }
+        self.worldgen.last_build = Some(LastBuild {
+            instances: build
+                .classes
+                .iter()
+                .enumerate()
+                .flat_map(|(index, class)| {
+                    build
+                        .instances_of(index)
+                        .iter()
+                        .map(move |i| (class.id.clone(), i.cell, i.position))
+                })
+                .collect(),
+        });
+
+        let counts: Vec<String> = placed.iter().map(|(id, n)| format!("{n} {id}")).collect();
+        let total: u32 = placed.values().sum();
+        let mut summary = format!(
+            "Built World {name}: {total} instance{} ({}) in {:.2} s, {}; {}",
+            if total == 1 { "" } else { "s" },
+            counts.join(", "),
+            started.elapsed().as_secs_f32(),
+            if hit { "cache hit" } else { "cache miss" },
+            match &bake_paths {
+                Some((cinst, _)) => format!("instance bake {cinst}"),
+                None => "one entity per instance".to_owned(),
+            }
+        );
+        if baked > 0 {
+            summary.push_str(&format!(
+                "; {baked} model{} baked",
+                if baked == 1 { "" } else { "s" }
+            ));
+        }
+        if !build.water.is_empty() {
+            summary.push_str(&format!(
+                "; {} water bod{} (not placed yet)",
+                build.water.len(),
+                if build.water.len() == 1 { "y" } else { "ies" }
+            ));
+        }
+        if !problems.is_empty() {
+            summary.push_str(&format!("; problems: {}", problems.join(" | ")));
+        }
+        Ok(summary)
+    }
+
+    /// Appends `override remove` for every instance of the last build inside `region`, then rebuilds.
+    pub(super) fn remove_world_in_region(&mut self, region: [f32; 4]) {
+        self.worldgen.region = region;
+        let Some(last) = &self.worldgen.last_build else {
+            self.worldgen.status = Some(
+                "Build the world first: the region removes instances of the last build".to_owned(),
+            );
+            return;
+        };
+        let (x0, x1) = (region[0].min(region[2]), region[0].max(region[2]));
+        let (z0, z1) = (region[1].min(region[3]), region[1].max(region[3]));
+        let mut added = 0;
+        let inside: Vec<(String, [i32; 2])> = last
+            .instances
+            .iter()
+            .filter(|(_, _, p)| p[0] >= x0 && p[0] <= x1 && p[2] >= z0 && p[2] <= z1)
+            .map(|(class, cell, _)| (class.clone(), *cell))
+            .collect();
+        for (class, cell) in inside {
+            let exists =
+                self.worldgen.comp.overrides.iter().any(|o| {
+                    o.class == class && o.cell == cell && matches!(o.op, OverrideOp::Remove)
+                });
+            if !exists && self.worldgen.comp.class(&class).is_some() {
+                self.worldgen.comp.overrides.push(Override {
+                    op: OverrideOp::Remove,
+                    class,
+                    cell,
+                });
+                added += 1;
+            }
+        }
+        if added == 0 {
+            self.worldgen.status =
+                Some("No instance of the last build is in that region".to_owned());
+            return;
+        }
+        self.worldgen.push(None);
+        self.refresh_world_problems();
+        self.build_world();
+        let built = self.worldgen.status.clone().unwrap_or_default();
+        self.worldgen.status = Some(format!(
+            "Removed {added} instance{} in the region. {built}",
+            if added == 1 { "" } else { "s" }
+        ));
+    }
+
+    /// Saves the built world tree as `World/<name>.prefab`, linked to its `.generator.world` (saved first).
+    pub(super) fn save_world_prefab(&mut self) {
+        let result = (|| -> Result<String, String> {
+            let name = self.worldgen.name.clone();
+            let holder = self
+                .world_holder(&name)
+                .ok_or("build the world first: the prefab is the World entity's tree")?;
+            let generator = self.save_world()?;
+            let dir = self.world_dir().ok_or("open a project first")?;
+            let slug = nature::slug(&name);
+            let slug = if slug.is_empty() {
+                "world".to_owned()
+            } else {
+                slug
+            };
+            let path = dir.join(format!("{slug}.prefab"));
+            let prefab = self.capture_prefab(holder, &name, &generator)?;
+            crate::uikit::prefab_file::write(&path, &prefab)?;
+            self.refresh_assets();
+            Ok(format!("World/{slug}.prefab"))
+        })();
+        self.worldgen.status = Some(match result {
+            Ok(path) => {
+                self.log(LogLevel::Action, format!("Saved world prefab {path}"));
+                format!("Saved {path} (it remembers its .generator.world)")
+            }
+            Err(error) => format!("Could not save the prefab: {error}"),
+        });
+    }
+}
+
+/// A small project for tests and the headless `world` fixture: a 128 m hills terrain at 129², two rock recipes and
+/// the composition `World/Valley.generator.world` with two classes. Returns the composition's path.
+#[cfg(any(test, feature = "headless"))]
+pub(crate) fn write_world_fixture(root: &Path) -> Result<PathBuf, String> {
+    let preset = terrain::presets()
+        .into_iter()
+        .find(|p| p.name == "Rolling Hills")
+        .ok_or("no Rolling Hills preset")?;
+    let mut graph = preset.graph();
+    let output = graph.output_node().ok_or("the preset has no Output")?;
+    for (key, value) in [
+        ("size_x", 128.0),
+        ("size_z", 128.0),
+        ("max_height", 12.0),
+        ("resolution", 0.0),
+    ] {
+        graph.set(output, key, value);
+    }
+    recipe::write(
+        &root
+            .join("Terrain")
+            .join(recipe::file_name("Hills", Kind::Terrain)),
+        &Recipe::new(
+            Kind::Terrain,
+            "Hills",
+            "",
+            terrain::to_text("Hills", &graph),
+        ),
+    )?;
+    for (stem, preset) in [("Rock", "Low-poly Rock"), ("Stone", "Cut Stone")] {
+        let preset = nature::presets()
+            .into_iter()
+            .find(|p| p.name == preset)
+            .ok_or_else(|| format!("no {preset} preset"))?;
+        let text = nature::to_text(stem, &preset.graph(), preset.quality);
+        recipe::write(
+            &root
+                .join("Nature")
+                .join(recipe::file_name(stem, Kind::Nature)),
+            &Recipe::new(Kind::Nature, stem, "", text),
+        )?;
+    }
+    let comp = "seed 7
+terrain Terrain/Hills.generator.terrain
+class rock ref Nature/Rock.generator.nature variants 2 priority 30 cell 12 radius 2 density 0.6
+  slope 0 0 0.6 0.9
+class stone ref Nature/Stone.generator.nature variants 2 priority 20 cell 16 radius 2 density 0.5
+";
+    let path = root
+        .join("World")
+        .join(recipe::file_name("Valley", Kind::World));
+    let mut world = Recipe::new(Kind::World, "Valley", "", comp.to_owned());
+    world.generator_version = 2;
+    recipe::write(&path, &world)?;
+    Ok(path)
+}
+
+/// Destroys an entity and everything under it, children first.
+fn destroy_tree(engine: &mut doppio_engine::Engine, root: u32) {
+    let mut parents = Vec::new();
+    for index in 0..engine.entity_count() {
+        if let Ok(info) = engine.entity_at(index) {
+            parents.push((info.id, engine.entity_parent(info.id).ok().flatten()));
+        }
+    }
+    let mut order = vec![root];
+    let mut next = 0;
+    while next < order.len() {
+        let current = order[next];
+        next += 1;
+        for (id, parent) in &parents {
+            if *parent == Some(current) && !order.contains(id) {
+                order.push(*id);
+            }
+        }
+    }
+    for id in order.into_iter().rev() {
+        let _ = engine.destroy_entity(id);
+    }
+}
+
+/// The `World Instances` component of a large world: the bake, its models and how it draws.
+fn set_world_instances(
+    engine: &mut doppio_engine::Engine,
+    holder: u32,
+    cinst: &str,
+    models: &str,
+) -> Result<(), String> {
+    let component = super::add_component(engine, holder, "World Instances")?;
+    super::set_component_field(
+        engine,
+        holder,
+        component,
+        "Bake",
+        doppio_engine::FieldValue::String(cinst.to_owned()),
+    )?;
+    super::set_component_field(
+        engine,
+        holder,
+        component,
+        "Models",
+        doppio_engine::FieldValue::String(models.to_owned()),
+    )?;
+    super::set_component_field(
+        engine,
+        holder,
+        component,
+        "Draw distance",
+        doppio_engine::FieldValue::F32(0.0),
+    )?;
+    super::set_component_field(
+        engine,
+        holder,
+        component,
+        "Cast shadows",
+        doppio_engine::FieldValue::Bool(true),
+    )
+}
+
+/// One instance of a small world: an entity under the holder with its transform and one child per model part.
+fn place_world_instance(
+    engine: &mut doppio_engine::Engine,
+    holder: u32,
+    class: &str,
+    instance: &doppio_engine::WorldInstance,
+    meshes: &[String],
+) -> Result<(), String> {
+    let id = engine
+        .create_entity(&format!(
+            "{class} {} {}",
+            instance.cell[0], instance.cell[1]
+        ))
+        .map_err(|e| format!("create: {e:?}"))?;
+    engine
+        .set_entity_parent(id, Some(holder))
+        .map_err(|e| format!("parent: {e:?}"))?;
+    engine
+        .set_position(id, instance.position)
+        .map_err(|e| format!("position: {e:?}"))?;
+    engine
+        .set_rotation(id, world::instance_euler_degrees(instance.up, instance.yaw))
+        .map_err(|e| format!("rotation: {e:?}"))?;
+    let s = instance.scale;
+    engine
+        .set_scale(id, [s, s, s])
+        .map_err(|e| format!("scale: {e:?}"))?;
+    let tint = [instance.tint[0], instance.tint[1], instance.tint[2], 1.0];
+    for (number, mesh) in meshes.iter().enumerate() {
+        let child = engine
+            .create_entity(&format!("{class} part {}", number + 1))
+            .map_err(|e| format!("create part: {e:?}"))?;
+        engine
+            .set_entity_parent(child, Some(id))
+            .map_err(|e| format!("parent part: {e:?}"))?;
+        let filter = super::add_component(engine, child, "Mesh Filter")?;
+        let custom = super::enum_field(engine, "Mesh Filter", "Primitive", "Custom")?;
+        super::set_component_field(engine, child, filter, "Primitive", custom)?;
+        super::set_component_field(
+            engine,
+            child,
+            filter,
+            "Mesh",
+            doppio_engine::FieldValue::String(mesh.clone()),
+        )?;
+        let renderer = super::add_component(engine, child, "Mesh Renderer")?;
+        super::set_component_field(
+            engine,
+            child,
+            renderer,
+            "Tint",
+            doppio_engine::FieldValue::Color(tint),
+        )?;
+        if world::is_cutout_part(mesh) {
+            super::set_component_field(
+                engine,
+                child,
+                renderer,
+                "Cast shadows",
+                doppio_engine::FieldValue::Bool(false),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn variant_seeds_match_the_nature_pool() {
+        // `nature_variants` derives the same seeds, so a pool class and a parameter bucket share their models.
+        for index in 0..4 {
+            let seed = variant_seed(77, index);
+            assert!((1..=9_999).contains(&seed));
+        }
+        assert_ne!(variant_seed(77, 0), variant_seed(77, 1));
+    }
+
+    #[test]
+    fn the_library_lists_recipes_and_skips_hidden_folders() {
+        let dir = std::env::temp_dir().join(format!("doppio-world-lib-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Nature")).unwrap();
+        std::fs::create_dir_all(dir.join(".cache")).unwrap();
+        std::fs::write(dir.join("Nature/Oak.generator.nature"), "{}").unwrap();
+        std::fs::write(dir.join(".cache/Old.generator.nature"), "{}").unwrap();
+        std::fs::write(dir.join("Valley.generator.world"), "{}").unwrap();
+        let items = scan_library(&dir);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].path, "Nature/Oak.generator.nature");
+        assert_eq!(items[0].kind, Kind::Nature);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

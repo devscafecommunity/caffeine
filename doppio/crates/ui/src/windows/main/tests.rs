@@ -1068,8 +1068,8 @@ fn layout_presets_keep_every_page() {
         assert_eq!(state.len(), 4);
         let pages: usize = state.iter().map(|(_, group)| group.pages.len()).sum();
         assert_eq!(
-            pages, 21,
-            "the Gameplay and Camera tabs joined the workspace"
+            pages, 22,
+            "the Gameplay, Camera and World tabs joined the workspace"
         );
     }
     let mut harness = Harness::with_entities();
@@ -16397,4 +16397,271 @@ mod terrain_cursor {
         harness.dispatch(Message::ViewportHover(false));
         assert!(!harness.has(Id::from(id::VIEWPORT_BRUSH_CURSOR)));
     }
+}
+
+/// A project with the World Composer fixture (hills terrain, two rock recipes, `World/Valley.generator.world`).
+fn world_fixture(harness: &mut Harness, label: &str) -> std::path::PathBuf {
+    let root = test_temp_root(label);
+    std::fs::create_dir_all(&root).expect("temp root");
+    let path = worldgen::write_world_fixture(&root).expect("world fixture");
+    harness.app.asset_root_override = Some(root.clone());
+    harness.app.open_recipe_file(&path);
+    root
+}
+
+/// The engine library has the World Composer (C ABI v28).
+fn has_world_engine(harness: &Harness) -> bool {
+    harness.app().engine.as_ref().is_some_and(
+        |engine| !matches!(engine.world_check("seed 1\n"), Err(e) if e.contains("C ABI v28")),
+    )
+}
+
+#[test]
+fn a_world_recipe_opens_the_world_tab_with_its_composition() {
+    use crate::uikit::recipe;
+    let mut harness = Harness::empty();
+    let root = world_fixture(&mut harness, "world-open");
+    assert!(harness
+        .app()
+        .panes
+        .iter()
+        .any(|(_, g)| g.active_kind() == PaneKind::World));
+    let world = &harness.app().worldgen;
+    assert_eq!(world.name, "Valley");
+    assert_eq!(world.comp.classes.len(), 2);
+    assert_eq!(world.comp.terrain, "Terrain/Hills.generator.terrain");
+    // `.generator.world` is a recipe, classified as a generator.
+    let file = root.join("World/Valley.generator.world");
+    assert_eq!(recipe::kind_of(&file), Some(recipe::Kind::World));
+    assert_eq!(
+        crate::uikit::asset_kind::classify(&file),
+        Some(crate::uikit::asset_kind::AssetKind::Generator)
+    );
+    // The Library lists the project's recipes; the tab's widgets are there.
+    assert_eq!(world.library.len(), 3);
+    assert!(harness.has(id::WORLD_BUILD));
+    assert!(harness.has(id::world_class_row(0)));
+    assert!(harness.has(id::world_library_item(0)));
+    // The View menu reopens it.
+    harness.dispatch(Message::ShowWorldComposer);
+    assert!(harness
+        .app()
+        .panes
+        .iter()
+        .any(|(_, g)| g.active_kind() == PaneKind::World));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn world_edits_and_reseed_undo_in_the_world_tab() {
+    use crate::uikit::panels::world_composer::{ClassField, Edit};
+    let mut harness = Harness::empty();
+    let root = world_fixture(&mut harness, "world-edit");
+    let before = harness.app().worldgen.comp.clone();
+
+    // A rule set by the agent's message, then a slider of the selected class.
+    harness.dispatch(Message::WorldGen(Edit::SetRule {
+        class: "stone".to_owned(),
+        mask: "height".to_owned(),
+        values: [0.1, 0.2, 0.6, 0.9],
+    }));
+    let stone = harness.app().worldgen.comp.class("stone").unwrap().clone();
+    assert_eq!(stone.terms.len(), 1);
+    assert_eq!(stone.terms[0].values, [0.1, 0.2, 0.6, 0.9]);
+    harness.dispatch(Message::WorldGen(Edit::SetClass(
+        0,
+        ClassField::Density,
+        0.3,
+    )));
+    harness.dispatch(Message::WorldGen(Edit::SetClass(
+        0,
+        ClassField::Density,
+        0.25,
+    )));
+    assert_eq!(harness.app().worldgen.comp.classes[0].density, 0.25);
+    // A slider drag is one step.
+    harness.dispatch(Message::WorldGen(Edit::Undo));
+    assert_eq!(harness.app().worldgen.comp.classes[0].density, 0.6);
+    harness.dispatch(Message::WorldGen(Edit::Undo));
+    assert_eq!(harness.app().worldgen.comp, before);
+    harness.dispatch(Message::WorldGen(Edit::Redo));
+    assert_eq!(
+        harness
+            .app()
+            .worldgen
+            .comp
+            .class("stone")
+            .unwrap()
+            .terms
+            .len(),
+        1
+    );
+
+    // Reseed (the button): a new derived seed, undoable.
+    let seed = harness.app().worldgen.comp.seed;
+    harness.click(id::WORLD_RESEED);
+    let reseeded = harness.app().worldgen.comp.seed;
+    assert_ne!(reseeded, seed);
+    assert_eq!(harness.app().worldgen.seed_text, reseeded.to_string());
+    harness.click(id::WORLD_UNDO);
+    assert_eq!(harness.app().worldgen.comp.seed, seed);
+
+    // A library click adds a nature recipe as a new class with its own id.
+    let rock = harness
+        .app()
+        .worldgen
+        .library
+        .iter()
+        .position(|item| item.path == "Nature/Rock.generator.nature")
+        .unwrap();
+    harness.click(id::world_library_item(rock));
+    let comp = &harness.app().worldgen.comp;
+    assert_eq!(comp.classes.len(), 3);
+    assert_eq!(comp.classes[2].id, "rock_2");
+    // The composition text round-trips through the Rust mirror and the problems are empty.
+    let text = comp.to_text();
+    assert_eq!(
+        crate::uikit::world::Composition::parse(&text).unwrap(),
+        *comp
+    );
+    assert!(
+        harness.app().worldgen.problems.is_empty(),
+        "{:?}",
+        harness.app().worldgen.problems
+    );
+
+    // Save writes the recipe with generator version 2.
+    harness.dispatch(Message::WorldGen(Edit::Save));
+    let saved = crate::uikit::recipe::read(&root.join("World/Valley.generator.world")).unwrap();
+    assert_eq!(saved.generator_version, 2);
+    assert!(saved
+        .graph
+        .contains("class rock_2 ref Nature/Rock.generator.nature"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_world_builds_into_the_scene_with_cache_edits_and_a_prefab() {
+    use crate::uikit::panels::world_composer::Edit;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if !has_world_engine(&harness) {
+        return; // a libcaffeine-capi from before C ABI 28
+    }
+    let root = world_fixture(&mut harness, "world-build");
+
+    // The coarse preview bakes its terrain on a worker thread and counts per class.
+    harness.dispatch(Message::WorldGen(Edit::Preview));
+    harness.app.pump_world_preview(true);
+    let preview = harness.app().worldgen.preview.clone().expect("a preview");
+    assert_eq!(preview.len(), 2, "{}", harness.app().worldgen.preview_note);
+
+    harness.rebase_history();
+    harness.dispatch(Message::WorldGen(Edit::Build));
+    let status = harness.app().worldgen.status.clone().unwrap_or_default();
+    assert!(status.starts_with("Built World Valley"), "{status}");
+    assert!(status.contains("cache miss"), "{status}");
+    let holder = harness.app().entities[harness.app().selected].clone();
+    assert_eq!(holder.name, "World Valley");
+    let built = harness
+        .app()
+        .worldgen
+        .last_build
+        .as_ref()
+        .expect("last build")
+        .instances
+        .len();
+    assert!(built > 0 && built <= worldgen::SMALL_WORLD, "{built}");
+    let children = |app: &App| {
+        let holder = app
+            .entities
+            .iter()
+            .find(|e| e.name == "World Valley")
+            .map(|e| e.id);
+        app.entities
+            .iter()
+            .filter(|e| e.parent == holder && holder.is_some() && !e.name.ends_with("terrain"))
+            .count()
+    };
+    assert_eq!(children(harness.app()), built);
+    // Instances carry their nature model's parts.
+    let first = harness
+        .app()
+        .entities
+        .iter()
+        .find(|e| e.parent == Some(holder.id) && !e.name.ends_with("terrain"))
+        .unwrap()
+        .id;
+    assert!(harness
+        .app()
+        .entities
+        .iter()
+        .any(|e| e.parent == Some(first)));
+    // One undo step.
+    assert_eq!(
+        harness.app().history.undo_name(),
+        Some("Build world Valley")
+    );
+
+    // The same build again comes from the cache and replaces the first one.
+    harness.dispatch(Message::WorldGen(Edit::Build));
+    let status = harness.app().worldgen.status.clone().unwrap_or_default();
+    assert!(status.contains("cache hit"), "{status}");
+    assert_eq!(
+        harness
+            .app()
+            .entities
+            .iter()
+            .filter(|e| e.name == "World Valley")
+            .count(),
+        1
+    );
+    assert_eq!(children(harness.app()), built);
+
+    // Remove in a region: override lines, then a rebuild with fewer instances; undoable in the tab.
+    harness.dispatch(Message::WorldGen(Edit::RemoveIn([0.0, 0.0, 64.0, 64.0])));
+    let removed = harness.app().worldgen.comp.overrides.len();
+    assert!(removed > 0);
+    assert!(harness
+        .app()
+        .worldgen
+        .comp
+        .overrides
+        .iter()
+        .all(|o| o.op == crate::uikit::world::OverrideOp::Remove));
+    assert_eq!(children(harness.app()), built - removed);
+    harness.dispatch(Message::WorldGen(Edit::Undo));
+    assert!(harness.app().worldgen.comp.overrides.is_empty());
+
+    // Save as prefab: the tree, linked to the composition.
+    harness.dispatch(Message::WorldGen(Edit::SaveAsPrefab));
+    let prefab =
+        crate::uikit::prefab_file::read(&root.join("World/valley.prefab")).expect("prefab");
+    assert_eq!(prefab.generator, "World/Valley.generator.world");
+    assert_eq!(prefab.entities[0].name, "World Valley");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_world_that_does_not_check_builds_nothing() {
+    use crate::uikit::panels::world_composer::Edit;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if !has_world_engine(&harness) {
+        return;
+    }
+    let root = world_fixture(&mut harness, "world-refuse");
+    harness.dispatch(Message::WorldGen(Edit::AddClass {
+        reference: "Nature/Missing.generator.nature".to_owned(),
+        id: Some("ghost".to_owned()),
+    }));
+    let before = harness.app().entities.len();
+    harness.dispatch(Message::WorldGen(Edit::Build));
+    let status = harness.app().worldgen.status.clone().unwrap_or_default();
+    assert!(status.starts_with("Build:"), "{status}");
+    assert!(status.contains("Missing.generator.nature"), "{status}");
+    assert_eq!(harness.app().entities.len(), before);
+    let _ = std::fs::remove_dir_all(&root);
 }

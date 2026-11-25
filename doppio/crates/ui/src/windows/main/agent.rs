@@ -26,6 +26,7 @@ use crate::uikit::panels::project_manager;
 use crate::uikit::panels::terrain_generator;
 use crate::uikit::panels::texture_generator;
 use crate::uikit::panels::texture_set as texture_set_panel;
+use crate::uikit::panels::world_composer;
 use serde_json::{json, Value};
 
 /// Runs Doppio with the MCP bridge attached when `ICED_MCP=1`.
@@ -145,6 +146,36 @@ pub fn run() -> iced::Result {
                             Kind::Empty { .. } => "empty",
                         },
                     })).collect::<Vec<_>>(),
+                }))
+            },
+        )
+        .query(
+            "world",
+            "World Composer state: name, recipe path, the composition text and its classes (id, ref, variants, priority, terms, adapt), the overrides, the engine's problems, the preview counts and the last status.",
+            |app, _| {
+                let w = &app.worldgen;
+                Ok(json!({
+                    "name": w.name,
+                    "path": w.path.as_ref().map(|p| p.display().to_string()),
+                    "dirty": w.dirty,
+                    "seed": w.comp.seed,
+                    "terrain": w.comp.terrain,
+                    "text": w.comp.to_text(),
+                    "classes": w.comp.classes.iter().map(|c| json!({
+                        "id": c.id,
+                        "ref": c.reference,
+                        "variants": c.variants,
+                        "priority": c.priority,
+                        "unique": c.unique,
+                        "terms": c.terms.iter().map(|t| json!({"mask": t.mask, "values": t.values})).collect::<Vec<_>>(),
+                        "adapt": c.adapt.iter().map(|a| json!({"target": a.target, "mask": a.mask, "amount": a.effective_amount()})).collect::<Vec<_>>(),
+                    })).collect::<Vec<_>>(),
+                    "overrides": w.comp.overrides.len(),
+                    "problems": w.problems,
+                    "preview": w.preview.as_ref().map(|counts| counts.iter().map(|(id, n)| json!({"class": id, "count": n})).collect::<Vec<_>>()),
+                    "last_build_instances": w.last_build.as_ref().map(|b| b.instances.len()),
+                    "status": w.status,
+                    "library": w.library.iter().map(|item| item.path.clone()).collect::<Vec<_>>(),
                 }))
             },
         )
@@ -1162,6 +1193,110 @@ pub fn run() -> iced::Result {
             "nature_add_to_scatter",
             "Writes the Nature model as a class of Scatter/default.scatter (solid and foliage meshes with their material slots), so scatter_on_terrain plants it. args: {}",
             |_| Ok(Message::NatureGen(nature_generator::Edit::AddToScatter)),
+        )
+        .action(
+            "world_show",
+            "Opens the World Composer tab. No args.",
+            |_| Ok(Message::ShowWorldComposer),
+        )
+        .action(
+            "world_add",
+            "Adds a project recipe to the composition by its kind: a terrain becomes the ground, a nature recipe a class, a water recipe a river, a material or texture a binding. args: { \"ref\": string (project path, e.g. \"Terrain/Hills.generator.terrain\") }",
+            |args| {
+                Ok(Message::WorldGen(world_composer::Edit::Add(
+                    required_str(args, "ref")?.to_owned(),
+                )))
+            },
+        )
+        .action(
+            "world_add_class",
+            "Adds a class (things that grow) for a nature recipe. args: { \"ref\": string (a .generator.nature path), \"id\"?: string (default: from the file name) }",
+            |args| {
+                Ok(Message::WorldGen(world_composer::Edit::AddClass {
+                    reference: required_str(args, "ref")?.to_owned(),
+                    id: optional_str(args, "id")?.map(str::to_owned),
+                }))
+            },
+        )
+        .action(
+            "world_set_rule",
+            "Sets (or adds) a where term of a class: it grows where the mask rises from rise0 to rise1 and falls from fall1 to fall0 (0..1, not decreasing). args: { \"class\": string, \"mask\": string (height, slope, curvature, flow, wetness, wear, deposit, water_distance), \"rise0\": number, \"rise1\": number, \"fall1\": number, \"fall0\": number }",
+            |args| {
+                let number = |key: &str| -> Result<f32, String> {
+                    optional_f32(args, key)?.ok_or_else(|| format!("missing \"{key}\""))
+                };
+                Ok(Message::WorldGen(world_composer::Edit::SetRule {
+                    class: required_str(args, "class")?.to_owned(),
+                    mask: required_str(args, "mask")?.to_owned(),
+                    values: [
+                        number("rise0")?,
+                        number("rise1")?,
+                        number("fall1")?,
+                        number("fall0")?,
+                    ],
+                }))
+            },
+        )
+        .action(
+            "world_set_class",
+            "Sets a numeric property of a class. args: { \"class\": string, \"field\": \"variants\"|\"priority\"|\"cell\"|\"radius\"|\"density\"|\"scale_min\"|\"scale_max\"|\"tilt\"|\"sink\"|\"tint\"|\"base\", \"value\": number }",
+            |args| {
+                let class = required_str(args, "class")?.to_owned();
+                let field = required_str(args, "field")?;
+                let field = world_composer::ClassField::from_key(field)
+                    .ok_or_else(|| format!("unknown class field \"{field}\""))?;
+                let value = optional_f32(args, "value")?.ok_or("missing \"value\"")?;
+                Ok(Message::WorldGen(world_composer::Edit::SetClassById {
+                    class,
+                    field,
+                    value,
+                }))
+            },
+        )
+        .action(
+            "world_reseed",
+            "Derives a new world seed from the current one (undoable in the World tab). No args.",
+            |_| Ok(Message::WorldGen(world_composer::Edit::Reseed)),
+        )
+        .action(
+            "world_build",
+            "Builds the world into the scene (one undo step): entities for up to 3000 instances, else World/<name>.cinst + World/<name>.models and a World Instances entity. Reports instances per class, time and cache hit. No args.",
+            |_| Ok(Message::WorldGen(world_composer::Edit::Build)),
+        )
+        .action(
+            "world_preview",
+            "Runs the coarse preview (terrain baked off the UI thread, at most 2000 instances); read the counts with query world. No args.",
+            |_| Ok(Message::WorldGen(world_composer::Edit::Preview)),
+        )
+        .action(
+            "world_remove_in_region",
+            "Removes every instance of the last build inside a rectangle (override remove lines, undoable) and rebuilds. args: { \"x0\": number, \"z0\": number, \"x1\": number, \"z1\": number } (metres from the terrain's corner)",
+            |args| {
+                let number = |key: &str| -> Result<f32, String> {
+                    optional_f32(args, key)?.ok_or_else(|| format!("missing \"{key}\""))
+                };
+                Ok(Message::WorldGen(world_composer::Edit::RemoveIn([
+                    number("x0")?,
+                    number("z0")?,
+                    number("x1")?,
+                    number("z1")?,
+                ])))
+            },
+        )
+        .action(
+            "world_undo",
+            "Undoes the last composition edit of the World tab. No args.",
+            |_| Ok(Message::WorldGen(world_composer::Edit::Undo)),
+        )
+        .action(
+            "world_save",
+            "Saves the composition as World/<Name>.generator.world (generator version 2). No args.",
+            |_| Ok(Message::WorldGen(world_composer::Edit::Save)),
+        )
+        .action(
+            "world_save_prefab",
+            "Saves the built World <Name> tree as World/<Name>.prefab, linked to its .generator.world. No args.",
+            |_| Ok(Message::WorldGen(world_composer::Edit::SaveAsPrefab)),
         )
         .action(
             "terrain_scatter",

@@ -365,6 +365,25 @@ impl Driver {
                 }
                 app.show_water_pane();
             }
+            "world" => {
+                // The World Composer tab with a small project: a hills terrain, two rock recipes and the
+                // composition World/Valley.generator.world (written to a scratch asset folder). Needs libcaffeine-capi.
+                let engine = doppio_engine::Engine::load_default()
+                    .ok_or_else(|| "fixture `world` needs libcaffeine-capi".to_owned())?;
+                app.engine = Some(engine);
+                let dir = std::env::temp_dir().join(format!(
+                    "doppio-world-{}-{}",
+                    std::process::id(),
+                    self.temp_roots.len()
+                ));
+                let _ = std::fs::remove_dir_all(&dir);
+                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                let path = super::super::worldgen::write_world_fixture(&dir)?;
+                app.asset_root_override = Some(dir.clone());
+                self.temp_roots.push(dir);
+                app.open_recipe_file(&path);
+                app.show_world_pane();
+            }
             "texture" => {
                 app.show_texgen_pane();
                 if let Some(name) = &init.preset {
@@ -379,7 +398,7 @@ impl Driver {
             }
             other => {
                 return Err(format!(
-                "unknown fixture `{other}` (empty, entities, material, texture, scene3d, nature, water, terrain)"
+                "unknown fixture `{other}` (empty, entities, material, texture, scene3d, nature, water, terrain, world)"
             ))
             }
         }
@@ -444,6 +463,10 @@ impl Driver {
                         .collect(),
                 })
                 .collect();
+        }
+        // The `world` fixture is a project of its own: its folder is the asset root unless the script names one.
+        if self.asset_root.is_none() && fixture == "world" {
+            self.asset_root = app.asset_root_override.clone();
         }
         app.asset_root_override = self.asset_root.clone();
         if let Some(size) = init.size {
