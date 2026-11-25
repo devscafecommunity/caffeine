@@ -78,6 +78,45 @@ private:
     std::unordered_map<u64, std::vector<u32>> m_cells;
 };
 
+/// The region a request builds, normalised the way `scatterTerrain` does it.
+void normaliseRegion(const WorldBuildRequest& request, f32 (&out)[4]) {
+    const Terrain::TerrainFrame& frame = request.frame;
+    f32 x0 = request.x0, z0 = request.z0, x1 = request.x1, z1 = request.z1;
+    if (x1 <= x0 || z1 <= z0) {
+        x0 = 0.0f;
+        z0 = 0.0f;
+        x1 = frame.sizeX;
+        z1 = frame.sizeZ;
+    }
+    out[0] = std::max(x0, 0.0f);
+    out[1] = std::max(z0, 0.0f);
+    out[2] = std::min(x1, frame.sizeX);
+    out[3] = std::min(z1, frame.sizeZ);
+}
+
+/// Hash of the baked terrain: its frame, heights and stored masks.
+u64 terrainHash(const WorldBuildRequest& request) {
+    const Terrain::TerrainFrame& frame = request.frame;
+    u64 h = Core::hashCombine(floatBits(frame.sizeX), floatBits(frame.sizeZ));
+    h = Core::hashCombine(h, floatBits(frame.maxHeight));
+    if (frame.heightmap) {
+        h = Core::hashCombine(h, frame.heightmap->resolutionX());
+        h = Core::hashCombine(h, frame.heightmap->resolutionZ());
+        const std::vector<f32>& heights = frame.heightmap->heights();
+        h = Core::hashCombine(h, bytesHash(std::string_view(reinterpret_cast<const char*>(heights.data()),
+                                                            heights.size() * sizeof(f32))));
+    }
+    if (request.masks) {
+        for (const Terrain::TerrainMasks::Stored& m : request.masks->stored()) {
+            h = Core::hashCombine(h, bytesHash(m.name));
+            h = Core::hashCombine(h, (static_cast<u64>(m.resolutionX) << 32) | m.resolutionZ);
+            h = Core::hashCombine(h, bytesHash(std::string_view(reinterpret_cast<const char*>(m.data.data()),
+                                                                m.data.size())));
+        }
+    }
+    return h;
+}
+
 /// Step 1: every reference, checked against the project. Appends one error per problem.
 void resolveRefs(const WorldBuildRequest& request, std::vector<std::string>& errors, u64& key) {
     const WorldComposition& c = *request.composition;
@@ -128,6 +167,7 @@ WorldPart build(const WorldBuildRequest& request) {
     u64 key = Core::hashCombine(composition.seed, request.generatorVersion);
     key = Core::hashCombine(key, bytesHash(composition.toText()));
     resolveRefs(request, part.errors, key);
+    key = Core::hashCombine(key, terrainHash(request));
 
     const bool baked = request.frame.heightmap && !request.frame.heightmap->empty();
     if (!baked) {
@@ -168,20 +208,13 @@ WorldPart build(const WorldBuildRequest& request) {
     }
     if (!part.errors.empty()) return part;
 
-    // Region, normalised the way `scatterTerrain` does it, so the cache key names what is really built.
-    f32 x0 = request.x0, z0 = request.z0, x1 = request.x1, z1 = request.z1;
-    if (x1 <= x0 || z1 <= z0) {
-        x0 = 0.0f;
-        z0 = 0.0f;
-        x1 = frame.sizeX;
-        z1 = frame.sizeZ;
-    }
-    x0 = std::max(x0, 0.0f);
-    z0 = std::max(z0, 0.0f);
-    x1 = std::min(x1, frame.sizeX);
-    z1 = std::min(z1, frame.sizeZ);
-    for (const f32 edge : {x0, z0, x1, z1}) key = Core::hashCombine(key, floatBits(edge));
+    // The region, normalised, so the cache key names what is really built.
+    normaliseRegion(request, part.region);
+    const f32 x0 = part.region[0], z0 = part.region[1], x1 = part.region[2], z1 = part.region[3];
+    for (const f32 edge : part.region) key = Core::hashCombine(key, floatBits(edge));
+    key = Core::hashCombine(key, request.maxInstances);
     part.cacheKey = key;
+    part.generatorVersion = request.generatorVersion;
 
     // Step 5: every class in one scatter, so priority and exclusion work across classes. Crowding needs the
     // neighbours just outside the region too, so the scatter then reads a margin of three radii around it.
@@ -305,6 +338,7 @@ WorldPart build(const WorldBuildRequest& request) {
         out.id = cls.id;
         out.salt = classSalt(cls.id);
         out.ref = cls.ref;
+        out.variants = cls.variants;
         out.unique = cls.unique;
         auto found = grouped.find(out.salt);
         if (found != grouped.end()) {
@@ -352,6 +386,21 @@ WorldPart build(const WorldBuildRequest& request) {
     part.materials = composition.materials;
     part.ok = true;
     return part;
+}
+
+u64 cacheKeyOf(const WorldBuildRequest& request) {
+    if (!request.composition || !request.frame.heightmap || request.frame.heightmap->empty()) return 0;
+    const WorldComposition& composition = *request.composition;
+    std::vector<std::string> errors;
+    u64 key = Core::hashCombine(composition.seed, request.generatorVersion);
+    key = Core::hashCombine(key, bytesHash(composition.toText()));
+    resolveRefs(request, errors, key);
+    if (!errors.empty()) return 0;
+    key = Core::hashCombine(key, terrainHash(request));
+    f32 region[4];
+    normaliseRegion(request, region);
+    for (const f32 edge : region) key = Core::hashCombine(key, floatBits(edge));
+    return Core::hashCombine(key, request.maxInstances);
 }
 
 u64 instanceHash(const WorldPart& part) {

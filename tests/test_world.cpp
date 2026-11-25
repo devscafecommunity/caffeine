@@ -5,6 +5,9 @@
 #include "../src/caffeine/terrain/TerrainMasks.hpp"
 #include "../src/caffeine/world/WorldBuild.hpp"
 #include "../src/caffeine/world/WorldComposition.hpp"
+#include "../src/caffeine/world/WorldInstanceFile.hpp"
+
+#include <filesystem>
 
 #include <algorithm>
 #include <cmath>
@@ -467,4 +470,79 @@ TEST_CASE("World: adapt maps the ground context onto each instance", "[world][ad
     REQUIRE(reparsed.classes[1].adapt.size() == 4);
     CHECK(reparsed.classes[1].adapt[0].amount == 0.5f);
     CHECK(reparsed.classes[1].adapt[1].amount < 0.0f);
+}
+
+TEST_CASE("World: the .cinst bake round-trips, byte for byte, chunk by chunk", "[world][cinst]") {
+    const Valley valley;
+    const WorldPart part = build(valley.request());
+    REQUIRE(part.ok);
+    const InstanceFile file = bakeInstances(part, 64.0f);
+    size_t count = 0;
+    for (const auto& cls : part.classes) count += cls.instances.size();
+    CHECK(file.instanceCount() == count);
+    CHECK(file.classes.size() == 3);
+    CHECK(file.classes[1].variants == 8);
+    CHECK(file.chunks.size() == 16);  // 256 m in 64 m chunks
+    for (const InstanceChunk& chunk : file.chunks) {
+        for (const InstanceRecord& r : chunk.instances) {
+            CHECK(static_cast<i32>(std::floor(r.position[0] / 64.0f)) == chunk.chunkX);
+            CHECK(static_cast<i32>(std::floor(r.position[2] / 64.0f)) == chunk.chunkZ);
+        }
+    }
+
+    const std::vector<u8> bytes = encodeInstanceFile(file);
+    CHECK(bytes == encodeInstanceFile(bakeInstances(build(valley.request()), 64.0f)));
+    InstanceFile decoded;
+    std::string error;
+    REQUIRE(decodeInstanceFile(bytes, decoded, &error));
+    CHECK(encodeInstanceFile(decoded) == bytes);
+    CHECK(decoded.cacheKey == part.cacheKey);
+    CHECK(decoded.instanceHash == instanceHash(part));
+    CHECK(decoded.classes[0].id == "boulder");
+
+    std::vector<u8> cut(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(bytes.size() / 2));
+    CHECK_FALSE(decodeInstanceFile(cut, decoded, &error));
+    std::vector<u8> newer = bytes;
+    newer[8] = 99;
+    CHECK_FALSE(decodeInstanceFile(newer, decoded, &error));
+    CHECK(error.find("newer") != std::string::npos);
+}
+
+TEST_CASE("World: the bake cache answers the same request and nothing else", "[world][cinst]") {
+    Valley valley;
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("caffeine-world-cache-" + std::to_string(classSalt(__FILE__)));
+    std::filesystem::remove_all(dir);
+    const WorldCache cache(dir);
+
+    const WorldPart part = build(valley.request());
+    CHECK(cacheKeyOf(valley.request()) == part.cacheKey);
+
+    bool hit = true;
+    WorldPart built;
+    const auto first = cache.buildOrLoad(valley.request(), &built, &hit);
+    REQUIRE(first);
+    CHECK_FALSE(hit);
+    CHECK(built.ok);
+    CHECK(std::filesystem::exists(cache.pathOf(part.cacheKey)));
+
+    const auto second = cache.buildOrLoad(valley.request(), nullptr, &hit);
+    REQUIRE(second);
+    CHECK(hit);
+    CHECK(encodeInstanceFile(*second) == encodeInstanceFile(*first));
+
+    // A different region, budget, terrain or composition is a different key.
+    WorldBuildRequest region = valley.request();
+    region.x1 = 100.0f;
+    region.z1 = 100.0f;
+    CHECK(cacheKeyOf(region) != part.cacheKey);
+    WorldBuildRequest budget = valley.request();
+    budget.maxInstances = 10;
+    CHECK(cacheKeyOf(budget) != part.cacheKey);
+    valley.map.setNormalized(3, 3, 0.9f);
+    CHECK(cacheKeyOf(valley.request()) != part.cacheKey);
+    valley.map.setNormalized(3, 3, valley.map.sampleNormalized(4, 3));
+    valley.composition.seed = 99;
+    CHECK(cacheKeyOf(valley.request()) != part.cacheKey);
+    std::filesystem::remove_all(dir);
 }

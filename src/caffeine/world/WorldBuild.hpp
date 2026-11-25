@@ -76,6 +76,8 @@ struct WorldClassInstances {
     /// `classSalt(id)`: the `classId` of every instance below.
     u32 salt = 0;
     std::string ref;
+    /// Size of the class's variant pool.
+    u32 variants = 1;
     /// Hero class: bake one model per instance (seeded by `Instance::seed`) instead of using the variant pool.
     bool unique = false;
     std::vector<Scatter::Instance> instances;
@@ -96,11 +98,19 @@ struct WorldPart {
     /// Instances in the region after the edits (exact unless `truncated`).
     u32 total = 0;
     bool truncated = false;
-    /// Key of this build in a cache: seed, region, algorithm version, the composition and every recipe it used.
+    /// Key of this build in a cache: seed, region, algorithm version, the composition, every recipe it used and the
+    /// baked terrain (heights and masks), so a sculpted terrain never reuses a stale bake.
     u64 cacheKey = 0;
+    /// The region actually built (normalised: inside the terrain) and the algorithm version.
+    f32 region[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    u32 generatorVersion = 0;
 };
 
 WorldPart build(const WorldBuildRequest& request);
+
+/// The `cacheKey` a build of `request` would have, without building: what a cache looks up first. 0 when the
+/// request would not build because of a reference or a missing terrain (other problems still give a key).
+u64 cacheKeyOf(const WorldBuildRequest& request);
 
 /// Hash of the instance lists (class, cell, variant, position to the millimetre, scale, seed): the golden value tests pin.
 u64 instanceHash(const WorldPart& part);

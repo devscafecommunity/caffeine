@@ -4,6 +4,7 @@
 //! UI decides what to do with it (entities for a small world, an instance bake for a large one).
 
 use std::ffi::{c_char, c_void, CStr, CString};
+use std::path::Path;
 
 use libloading::Library;
 
@@ -227,6 +228,11 @@ type WaterBodyFn =
 type BytesFn = unsafe extern "C" fn(*const c_void, *mut u8) -> i32;
 type HeightsFn = unsafe extern "C" fn(*const c_void, *mut f32) -> i32;
 type CheckFn = unsafe extern "C" fn(*const c_char, *mut c_char, u32) -> i32;
+type WriteCinstFn = unsafe extern "C" fn(*const c_void, *const c_char, f32) -> i32;
+type ReadCinstFn = unsafe extern "C" fn(*const c_char, *mut *mut c_void, *mut c_char, u32) -> i32;
+type CacheKeyFn = unsafe extern "C" fn(*const RawDesc, *mut u64) -> i32;
+type BuildCachedFn =
+    unsafe extern "C" fn(*const RawDesc, *const c_char, *mut *mut c_void, *mut i32) -> i32;
 
 #[derive(Clone, Copy)]
 pub(crate) struct WorldFunctions {
@@ -240,6 +246,10 @@ pub(crate) struct WorldFunctions {
     water_distance: BytesFn,
     heights: HeightsFn,
     check: CheckFn,
+    write_cinst: WriteCinstFn,
+    read_cinst: ReadCinstFn,
+    cache_key: CacheKeyFn,
+    build_cached: BuildCachedFn,
 }
 
 impl WorldFunctions {
@@ -257,6 +267,10 @@ impl WorldFunctions {
                 water_distance: load_symbol(library, b"caffeine_world_water_distance\0")?,
                 heights: load_symbol(library, b"caffeine_world_heights\0")?,
                 check: load_symbol(library, b"caffeine_world_check\0")?,
+                write_cinst: load_symbol(library, b"caffeine_world_write_cinst\0")?,
+                read_cinst: load_symbol(library, b"caffeine_world_read_cinst\0")?,
+                cache_key: load_symbol(library, b"caffeine_world_cache_key\0")?,
+                build_cached: load_symbol(library, b"caffeine_world_build_cached\0")?,
             })
         }
     }
@@ -274,75 +288,93 @@ impl Engine {
     /// Builds a composition. `Err` only for a desc the engine refuses outright (a NUL in a string, mismatched
     /// sizes, an engine without v28); a composition that does not build is `Ok` with `ok == false` and its errors.
     pub fn world_build(&self, desc: &WorldBuildDesc) -> Result<WorldBuild, String> {
+        self.world_build_baked(desc, None, 0.0)
+    }
+
+    /// `world_build`, then, when it built and `bake` is set, writes the instance bake (`.cinst`) there in chunks of
+    /// `chunk_size` metres (0: 64).
+    pub fn world_build_baked(
+        &self,
+        desc: &WorldBuildDesc,
+        bake: Option<&Path>,
+        chunk_size: f32,
+    ) -> Result<WorldBuild, String> {
         let f = self.functions.world.ok_or_else(|| NEEDS_V28.to_owned())?;
-        let cells = desc.resolution[0] as usize * desc.resolution[1] as usize;
-        if desc.heights.len() != cells {
-            return Err(format!(
-                "{} heights for a {}x{} grid",
-                desc.heights.len(),
-                desc.resolution[0],
-                desc.resolution[1]
-            ));
-        }
-        let nul = |_| "a string contains a NUL".to_owned();
-        let graph = CString::new(desc.graph.as_str()).map_err(nul)?;
-        let recipe_names = desc
-            .recipes
-            .iter()
-            .flatten()
-            .map(|r| CString::new(r.reference.as_str()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(nul)?;
-        let recipes: Vec<RawRecipe> = desc
-            .recipes
-            .iter()
-            .flatten()
-            .zip(&recipe_names)
-            .map(|(r, name)| RawRecipe {
-                reference: name.as_ptr(),
-                kind: r.kind as u32,
-                generator_version: r.generator_version,
-                content_hash: r.content_hash,
-            })
-            .collect();
-        let mask_names = desc
-            .masks
-            .iter()
-            .map(|m| CString::new(m.name.as_str()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(nul)?;
-        let mut masks = Vec::with_capacity(desc.masks.len());
-        for (mask, name) in desc.masks.iter().zip(&mask_names) {
-            if mask.data.len() != mask.resolution[0] as usize * mask.resolution[1] as usize {
-                return Err(format!("the mask `{}` has the wrong size", mask.name));
+        let bake = bake
+            .map(|p| CString::new(p.to_string_lossy().as_bytes()))
+            .transpose()
+            .map_err(|_| "the bake path contains a NUL".to_owned())?;
+        with_raw_desc(desc, |raw| {
+            let mut handle: *mut c_void = std::ptr::null_mut();
+            if unsafe { (f.build)(raw, &mut handle) } != 0 || handle.is_null() {
+                return Err("the engine refused the world description".to_owned());
             }
-            masks.push(RawMask {
-                name: name.as_ptr(),
-                resolution_x: mask.resolution[0],
-                resolution_z: mask.resolution[1],
-                data: mask.data.as_ptr(),
-            });
-        }
-        let raw = RawDesc {
-            graph_text: graph.as_ptr(),
-            generator_version: desc.generator_version,
-            recipes: recipes.as_ptr(),
-            recipe_count: recipes.len() as u32,
-            check_refs: i32::from(desc.recipes.is_some()),
-            heights: desc.heights.as_ptr(),
-            resolution_x: desc.resolution[0],
-            resolution_z: desc.resolution[1],
-            size_x: desc.size[0],
-            size_z: desc.size[1],
-            max_height: desc.max_height,
-            masks: masks.as_ptr(),
-            mask_count: masks.len() as u32,
-            region: desc.region.unwrap_or([0.0; 4]),
-            max_instances: desc.max_instances,
-        };
+            let mut out = unsafe { read_world(&f, handle) };
+            if let (Some(path), true) = (&bake, out.ok) {
+                if unsafe { (f.write_cinst)(handle, path.as_ptr(), chunk_size) } != 0 {
+                    out.errors
+                        .push(format!("cannot write the bake {}", path.to_string_lossy()));
+                }
+            }
+            unsafe { (f.free)(handle) };
+            Ok(out)
+        })?
+    }
+
+    /// `world_build` through the persistent bake cache in `cache_dir`. The flag says whether the cache answered (a
+    /// cached world has classes and instances, no water and no carved heights).
+    pub fn world_build_cached(
+        &self,
+        desc: &WorldBuildDesc,
+        cache_dir: &Path,
+    ) -> Result<(WorldBuild, bool), String> {
+        let f = self.functions.world.ok_or_else(|| NEEDS_V28.to_owned())?;
+        let dir = CString::new(cache_dir.to_string_lossy().as_bytes())
+            .map_err(|_| "the cache path contains a NUL".to_owned())?;
+        with_raw_desc(desc, |raw| {
+            let mut handle: *mut c_void = std::ptr::null_mut();
+            let mut hit = 0i32;
+            if unsafe { (f.build_cached)(raw, dir.as_ptr(), &mut handle, &mut hit) } != 0
+                || handle.is_null()
+            {
+                return Err("the engine refused the world description".to_owned());
+            }
+            let out = unsafe { read_world(&f, handle) };
+            unsafe { (f.free)(handle) };
+            Ok((out, hit != 0))
+        })?
+    }
+
+    /// The cache key a build of `desc` would have (0 when a reference or the terrain is missing).
+    pub fn world_cache_key(&self, desc: &WorldBuildDesc) -> Result<u64, String> {
+        let f = self.functions.world.ok_or_else(|| NEEDS_V28.to_owned())?;
+        with_raw_desc(desc, |raw| {
+            let mut key = 0u64;
+            if unsafe { (f.cache_key)(raw, &mut key) } != 0 {
+                return Err("the engine refused the world description".to_owned());
+            }
+            Ok(key)
+        })?
+    }
+
+    /// Opens an instance bake (`.cinst`) as a world: classes and instances.
+    pub fn world_read_cinst(&self, path: &Path) -> Result<WorldBuild, String> {
+        let f = self.functions.world.ok_or_else(|| NEEDS_V28.to_owned())?;
+        let path = CString::new(path.to_string_lossy().as_bytes())
+            .map_err(|_| "the path contains a NUL".to_owned())?;
         let mut handle: *mut c_void = std::ptr::null_mut();
-        if unsafe { (f.build)(&raw, &mut handle) } != 0 || handle.is_null() {
-            return Err("the engine refused the world description".to_owned());
+        let mut error = vec![0 as c_char; 512];
+        if unsafe {
+            (f.read_cinst)(
+                path.as_ptr(),
+                &mut handle,
+                error.as_mut_ptr(),
+                error.len() as u32,
+            )
+        } != 0
+            || handle.is_null()
+        {
+            return Err(text(&error));
         }
         let out = unsafe { read_world(&f, handle) };
         unsafe { (f.free)(handle) };
@@ -359,6 +391,76 @@ impl Engine {
         }
         Err(text(&error))
     }
+}
+
+/// Lays `desc` out as the C struct (with the buffers it points into) for the duration of `body`.
+fn with_raw_desc<R>(desc: &WorldBuildDesc, body: impl FnOnce(&RawDesc) -> R) -> Result<R, String> {
+    let cells = desc.resolution[0] as usize * desc.resolution[1] as usize;
+    if desc.heights.len() != cells {
+        return Err(format!(
+            "{} heights for a {}x{} grid",
+            desc.heights.len(),
+            desc.resolution[0],
+            desc.resolution[1]
+        ));
+    }
+    let nul = |_| "a string contains a NUL".to_owned();
+    let graph = CString::new(desc.graph.as_str()).map_err(nul)?;
+    let recipe_names = desc
+        .recipes
+        .iter()
+        .flatten()
+        .map(|r| CString::new(r.reference.as_str()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(nul)?;
+    let recipes: Vec<RawRecipe> = desc
+        .recipes
+        .iter()
+        .flatten()
+        .zip(&recipe_names)
+        .map(|(r, name)| RawRecipe {
+            reference: name.as_ptr(),
+            kind: r.kind as u32,
+            generator_version: r.generator_version,
+            content_hash: r.content_hash,
+        })
+        .collect();
+    let mask_names = desc
+        .masks
+        .iter()
+        .map(|m| CString::new(m.name.as_str()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(nul)?;
+    let mut masks = Vec::with_capacity(desc.masks.len());
+    for (mask, name) in desc.masks.iter().zip(&mask_names) {
+        if mask.data.len() != mask.resolution[0] as usize * mask.resolution[1] as usize {
+            return Err(format!("the mask `{}` has the wrong size", mask.name));
+        }
+        masks.push(RawMask {
+            name: name.as_ptr(),
+            resolution_x: mask.resolution[0],
+            resolution_z: mask.resolution[1],
+            data: mask.data.as_ptr(),
+        });
+    }
+    let raw = RawDesc {
+        graph_text: graph.as_ptr(),
+        generator_version: desc.generator_version,
+        recipes: recipes.as_ptr(),
+        recipe_count: recipes.len() as u32,
+        check_refs: i32::from(desc.recipes.is_some()),
+        heights: desc.heights.as_ptr(),
+        resolution_x: desc.resolution[0],
+        resolution_z: desc.resolution[1],
+        size_x: desc.size[0],
+        size_z: desc.size[1],
+        max_height: desc.max_height,
+        masks: masks.as_ptr(),
+        mask_count: masks.len() as u32,
+        region: desc.region.unwrap_or([0.0; 4]),
+        max_instances: desc.max_instances,
+    };
+    Ok(body(&raw))
 }
 
 /// Copies everything out of a world handle.
@@ -560,6 +662,25 @@ mod tests {
         assert!(!failed.ok);
         assert!(failed.errors[0].contains("Tree.generator.nature"));
         assert!(failed.instances.is_empty());
+
+        // The bake and the cache.
+        let dir = std::env::temp_dir().join(format!("doppio-world-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let bake = dir.join("bowl.cinst");
+        let baked = engine.world_build_baked(&desc, Some(&bake), 32.0).unwrap();
+        assert!(baked.ok && bake.exists());
+        let read = engine.world_read_cinst(&bake).unwrap();
+        assert_eq!(read.instances.len(), world.instances.len());
+        assert_eq!(read.cache_key, world.cache_key);
+        assert!(engine.world_read_cinst(&dir.join("none.cinst")).is_err());
+        assert_eq!(engine.world_cache_key(&desc).unwrap(), world.cache_key);
+        let cache = dir.join("cache");
+        let (first, hit) = engine.world_build_cached(&desc, &cache).unwrap();
+        assert!(first.ok && !hit);
+        let (second, hit) = engine.world_build_cached(&desc, &cache).unwrap();
+        assert!(hit);
+        assert_eq!(second.instance_hash, world.instance_hash);
+        let _ = std::fs::remove_dir_all(&dir);
 
         assert!(engine.world_check(&desc.graph).is_ok());
         assert!(engine

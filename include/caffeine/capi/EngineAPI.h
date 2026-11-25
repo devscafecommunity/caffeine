@@ -1326,6 +1326,27 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_world_water_distance(const CaffeineWor
 /** The (possibly carved) normalised heights, resolution_x * resolution_z floats. */
 CAFFEINE_CAPI_API CaffeineResult caffeine_world_heights(const CaffeineWorld* world, float* out);
 /**
+ * The instance bake (`.cinst`, see src/caffeine/world/WorldInstanceFile.hpp): a world's instances in chunks of
+ * `chunk_size` metres (<= 0: 64), for a renderer or a streamer. ERROR when the world did not build or the file cannot
+ * be written.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_write_cinst(const CaffeineWorld* world, const char* path,
+                                                            float chunk_size);
+/** Opens a `.cinst` as a world handle (classes and instances; no water, no heights). INVALID_ARGUMENT with the reason
+ * in `error` for a file that does not read. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_read_cinst(const char* path, CaffeineWorld** out_world, char* error,
+                                                           uint32_t error_size);
+/** The cache key a build of `desc` would have, without building (0 when a reference or the terrain is missing). */
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_cache_key(const CaffeineWorldBuildDesc* desc, uint64_t* out_key);
+/**
+ * caffeine_world_build through a persistent bake cache in `cache_dir` (`<key>.cinst` files): a hit opens the stored
+ * bake (`*out_hit` = 1; no water or heights in the handle), a miss builds, stores a successful bake and returns the
+ * build. Same results as caffeine_world_build for classes and instances.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_build_cached(const CaffeineWorldBuildDesc* desc, const char* cache_dir,
+                                                             CaffeineWorld** out_world, int32_t* out_hit);
+
+/**
  * Parses and validates a composition's graph text without building it: OK, or INVALID_ARGUMENT with every problem,
  * one per line, in `error`.
  */

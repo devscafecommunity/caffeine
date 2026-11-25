@@ -2003,6 +2003,43 @@ TEST_CASE("C API builds a World Composer composition without a session", "[capi]
     CHECK(std::string(error).find("Tree.generator.nature") != std::string::npos);
     caffeine_world_free(world);
 
+    // The bake: written, read back as a world, and served by the cache on the second build.
+    recipes[3].kind = CAFFEINE_RECIPE_NATURE;
+    const std::string dir = (std::filesystem::temp_directory_path() / "caffeine-capi-world").string();
+    std::filesystem::remove_all(dir);
+    REQUIRE(caffeine_world_build(&desc, &world) == CAFFEINE_OK);
+    caffeine_world_info(world, &info);
+    REQUIRE(info.ok == 1);
+    const std::string bake = dir + "/valley.cinst";
+    CHECK(caffeine_world_write_cinst(world, bake.c_str(), 32.0f) == CAFFEINE_OK);
+    CaffeineWorld* read = nullptr;
+    REQUIRE(caffeine_world_read_cinst(bake.c_str(), &read, error, sizeof(error)) == CAFFEINE_OK);
+    CaffeineWorldInfo readInfo{};
+    caffeine_world_info(read, &readInfo);
+    CHECK(readInfo.ok == 1);
+    CHECK(readInfo.instance_count == info.instance_count);
+    CHECK(readInfo.cache_key == info.cache_key);
+    caffeine_world_free(read);
+    CHECK(caffeine_world_read_cinst((dir + "/missing.cinst").c_str(), &read, error, sizeof(error)) ==
+          CAFFEINE_INVALID_ARGUMENT);
+
+    uint64_t key = 0;
+    REQUIRE(caffeine_world_cache_key(&desc, &key) == CAFFEINE_OK);
+    CHECK(key == info.cache_key);
+    int32_t hit = -1;
+    CaffeineWorld* cached = nullptr;
+    REQUIRE(caffeine_world_build_cached(&desc, dir.c_str(), &cached, &hit) == CAFFEINE_OK);
+    CHECK(hit == 0);
+    caffeine_world_free(cached);
+    REQUIRE(caffeine_world_build_cached(&desc, dir.c_str(), &cached, &hit) == CAFFEINE_OK);
+    CHECK(hit == 1);
+    CaffeineWorldInfo cachedInfo{};
+    caffeine_world_info(cached, &cachedInfo);
+    CHECK(cachedInfo.instance_hash == info.instance_hash);
+    caffeine_world_free(cached);
+    caffeine_world_free(world);
+    std::filesystem::remove_all(dir);
+
     CHECK(caffeine_world_build(nullptr, &world) == CAFFEINE_INVALID_ARGUMENT);
     CHECK(caffeine_world_check(graph, error, sizeof(error)) == CAFFEINE_OK);
     CHECK(caffeine_world_check("class oak\n", error, sizeof(error)) == CAFFEINE_INVALID_ARGUMENT);
