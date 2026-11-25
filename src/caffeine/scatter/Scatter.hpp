@@ -62,6 +62,10 @@ struct Instance {
     Vec3 tint{1.0f, 1.0f, 1.0f};
     /// Seed for per-instance variation (wind phase, a recipe seed).
     u64 seed = 0;
+    /// The grid cell of the class that produced the instance: with `classId`, its stable identity (the key of the
+    /// World Composer's edit layer).
+    i32 cellX = 0;
+    i32 cellZ = 0;
 };
 
 /// Instances owned by the chunk `[chunkX, chunkX+1) x [chunkZ, chunkZ+1)` of side `chunkSize`,

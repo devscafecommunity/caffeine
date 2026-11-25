@@ -115,6 +115,8 @@ std::vector<Instance> scatterChunk(u64 worldSeed, i32 chunkX, i32 chunkZ, f32 ch
         const u64 seed = classSeed(worldSeed, cls);
         Instance instance;
         instance.classId = cls.id;
+        instance.cellX = c.cellX;
+        instance.cellZ = c.cellZ;
         instance.seed = Core::deriveSeed(seed, kSaltInstance, c.cellX, c.cellZ);
         instance.scale = static_cast<f32>(Core::toRange(
             Core::deriveSeed(seed, kSaltScale, c.cellX, c.cellZ), cls.minScale, cls.maxScale));
