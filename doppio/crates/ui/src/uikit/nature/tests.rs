@@ -1292,3 +1292,81 @@ fn the_oak_has_a_round_crown_of_many_main_limbs_and_other_trees_are_unchanged() 
     let lifted = grow(&GrowParams { lift: 0.8, ..base });
     assert!(mean_tip(&lifted) > mean_tip(&plain));
 }
+
+fn first_displace(graph: &NatureGraph) -> NodeId {
+    graph
+        .nodes
+        .iter()
+        .find(|n| n.op == "noise_displace")
+        .expect("a noise displace node")
+        .id
+}
+
+#[test]
+fn exposed_parameters_round_trip_through_text_and_old_graphs_are_unchanged() {
+    let mut graph = preset("Low-poly Rock").graph();
+    let plain = graph.to_text();
+    assert!(!plain.contains("expose"), "nothing exposed, no lines");
+    assert_eq!(NatureGraph::from_text(&plain).unwrap(), graph);
+    assert!(NatureGraph::from_text(&plain)
+        .unwrap()
+        .exposed_parameters()
+        .is_empty());
+
+    let displace = first_displace(&graph);
+    graph
+        .expose("rough", displace, "amount", Some((0.1, 1.25)))
+        .unwrap();
+    graph.expose("freq", displace, "frequency", None).unwrap();
+    let text = to_text("Rock", &graph, Quality::Balanced);
+    assert!(
+        text.contains(&format!("expose rough {displace}.amount 0.1 1.25\n")),
+        "{text}"
+    );
+    assert!(text.contains(&format!("expose freq {displace}.frequency\n")));
+    let (_, back, _) = from_text(&text).expect("parses");
+    assert_eq!(back, graph);
+    assert_eq!(back.to_text(), graph.to_text());
+    let exposed = back.exposed_parameters();
+    assert_eq!(exposed.len(), 2);
+    assert_eq!(exposed[0].name, "rough");
+    assert_eq!(exposed[0].node, displace);
+    assert_eq!(exposed[0].param, "amount");
+    assert_eq!((exposed[0].min, exposed[0].max), (0.1, 1.25));
+    assert_eq!(exposed[0].default, graph.get(displace, "amount").unwrap());
+    // Without a range the parameter's own range applies.
+    assert_eq!((exposed[1].min, exposed[1].max), (0.2, 12.0));
+
+    // An exposure whose node is gone is dropped, the graph still loads.
+    let stale = format!("{}expose ghost 9999.amount\n", graph.to_text());
+    let loaded = NatureGraph::from_text(&stale).expect("still loads");
+    assert_eq!(loaded.exposed_parameters().len(), 2);
+    // Removing the node removes its exposures.
+    graph.remove(displace);
+    assert!(graph.exposed_parameters().is_empty());
+}
+
+#[test]
+fn set_exposed_clamps_to_the_range_and_refuses_unknown_names() {
+    let mut graph = preset("Low-poly Rock").graph();
+    let displace = first_displace(&graph);
+    graph
+        .expose("rough", displace, "amount", Some((0.1, 1.0)))
+        .unwrap();
+    graph.set_exposed("rough", 0.5).unwrap();
+    assert_eq!(graph.get(displace, "amount"), Some(0.5));
+    graph.set_exposed("rough", 7.0).unwrap();
+    assert_eq!(graph.get(displace, "amount"), Some(1.0));
+    graph.set_exposed("rough", -3.0).unwrap();
+    assert_eq!(graph.get(displace, "amount"), Some(0.1));
+    assert!(graph.set_exposed("nope", 0.5).unwrap_err().contains("nope"));
+    assert!(graph.set_exposed("rough", f32::NAN).is_err());
+    // Bad names, missing parameters and inverted ranges are refused.
+    assert!(graph.expose("two words", displace, "amount", None).is_err());
+    assert!(graph.expose("x", displace, "missing", None).is_err());
+    assert!(graph
+        .expose("x", displace, "amount", Some((1.0, 0.0)))
+        .is_err());
+    assert!(graph.unexpose("rough"));
+    assert!(graph.set_exposed("rough", 0.5).is_err());
+}
