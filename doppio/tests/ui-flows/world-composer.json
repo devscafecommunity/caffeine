@@ -1,28 +1,150 @@
 {
   "name": "World Composer: compose a world from recipes, edit its rules, reseed and build it",
-  "description": "Opens the World fixture (a hills terrain, two rock recipes and World/Valley.generator.world). Adds a recipe from the Library as a new class and undoes it, reseeds, edits a class's rules and builds the world into the scene: the status says how many instances per class were placed and whether the cache answered.",
+  "description": "Opens the World fixture (a hills terrain, two rock recipes and World/Valley.generator.world). Adds a recipe from the Library as a new class and undoes it, reseeds, edits a class's rules and builds the world into the scene: the status says how many instances per class were placed and whether the cache answered. A Library recipe can also be dragged onto the Composition, and the edit layer has a Remove brush for the Viewport.",
   "fixture": "world",
-  "size": [1600, 900],
+  "size": [
+    1600,
+    900
+  ],
   "steps": [
-    { "action": "expect", "exists": "id:editor.pane.world" },
-    { "action": "expect", "exists": "id:world.toolbar.build" },
-    { "action": "expect", "exists": "id:world.composition.class_row.0" },
-    { "action": "expect", "exists": "id:world.composition.class_row.1" },
-    { "action": "expect", "exists": "id:world.library.item.0" },
-    { "action": "click", "target": "id:world.library.item.0", "label": "add the Rock recipe again as a class" },
-    { "action": "expect", "exists": { "text": "Added class rock_2" } },
-    { "action": "click", "target": "id:world.toolbar.undo", "label": "undo the new class" },
-    { "action": "expect", "exists": "id:world.composition.class_row.1" },
-    { "action": "click", "target": "id:world.rules.reseed", "label": "derive a new seed" },
-    { "action": "expect", "exists": { "text": "Reseeded" } },
-    { "action": "click", "target": "id:world.composition.class_row.1", "label": "select the stone class" },
-    { "action": "expect", "exists": "id:world.rules.class.density" },
-    { "action": "click", "target": "id:world.rules.add_term", "label": "give it a where term" },
-    { "action": "expect", "exists": "id:world.rules.term.0.rise0" },
-    { "action": "expect", "exists": { "text": "The composition is valid" } },
-    { "action": "click", "target": "id:world.toolbar.build", "label": "build the world" },
-    { "action": "expect", "exists": { "text": "Built World Valley" } },
-    { "action": "expect", "exists": { "text": "cache miss" } },
-    { "action": "screenshot", "name": "world-composer-built" }
+    {
+      "action": "expect",
+      "exists": "id:editor.pane.world"
+    },
+    {
+      "action": "expect",
+      "exists": "id:world.toolbar.build"
+    },
+    {
+      "action": "expect",
+      "exists": "id:world.composition.class_row.0"
+    },
+    {
+      "action": "expect",
+      "exists": "id:world.composition.class_row.1"
+    },
+    {
+      "action": "expect",
+      "exists": "id:world.library.item.0"
+    },
+    {
+      "action": "click",
+      "target": "id:world.library.item.0",
+      "label": "add the Rock recipe again as a class"
+    },
+    {
+      "action": "expect",
+      "exists": {
+        "text": "Added class rock_2"
+      }
+    },
+    {
+      "action": "click",
+      "target": "id:world.toolbar.undo",
+      "label": "undo the new class"
+    },
+    {
+      "action": "expect",
+      "exists": "id:world.composition.class_row.1"
+    },
+    {
+      "action": "click",
+      "target": "id:world.rules.reseed",
+      "label": "derive a new seed"
+    },
+    {
+      "action": "expect",
+      "exists": {
+        "text": "Reseeded"
+      }
+    },
+    {
+      "action": "click",
+      "target": "id:world.composition.class_row.1",
+      "label": "select the stone class"
+    },
+    {
+      "action": "expect",
+      "exists": "id:world.rules.class.density"
+    },
+    {
+      "action": "click",
+      "target": "id:world.rules.add_term",
+      "label": "give it a where term"
+    },
+    {
+      "action": "expect",
+      "exists": "id:world.rules.term.0.rise0"
+    },
+    {
+      "action": "expect",
+      "exists": {
+        "text": "The composition is valid"
+      }
+    },
+    {
+      "action": "expect",
+      "exists": "id:world.composition.drop"
+    },
+    {
+      "action": "drag",
+      "from": "id:world.library.item.1",
+      "to": "id:world.composition.drop",
+      "label": "drag the Stone recipe onto the Composition"
+    },
+    {
+      "action": "expect",
+      "exists": {
+        "text": "Added class stone_2"
+      }
+    },
+    {
+      "action": "click",
+      "target": "id:world.toolbar.undo",
+      "label": "undo the dropped class"
+    },
+    {
+      "action": "scroll",
+      "target": "id:world.rules.class.base",
+      "dy": -10,
+      "label": "scroll the Rules down to the edit layer"
+    },
+    {
+      "action": "click",
+      "target": "id:world.rules.brush",
+      "label": "turn the Remove brush on"
+    },
+    {
+      "action": "expect",
+      "exists": {
+        "text": "Remove brush on"
+      }
+    },
+    {
+      "action": "click",
+      "target": "id:world.rules.brush",
+      "label": "and off again"
+    },
+    {
+      "action": "click",
+      "target": "id:world.toolbar.build",
+      "label": "build the world"
+    },
+    {
+      "action": "expect",
+      "exists": {
+        "text": "Built World Valley"
+      }
+    },
+    {
+      "action": "expect",
+      "exists": {
+        "text": "cache miss"
+      }
+    },
+    {
+      "action": "screenshot",
+      "name": "world-composer-built"
+    }
   ]
 }

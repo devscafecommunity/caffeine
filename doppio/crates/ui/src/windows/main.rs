@@ -7405,6 +7405,7 @@ impl App {
                 self.finish_tab_drag();
                 self.finish_hierarchy_drag();
                 self.asset_drag = None;
+                self.worldgen.drag = None;
             }
             Message::TogglePrefabPalette => {
                 self.prefab_open = !self.prefab_open;
@@ -8048,6 +8049,12 @@ impl App {
                     last: None,
                     distance: 0.0,
                 });
+                // The World tab's Remove brush: a press is the first dab of a stroke.
+                if button == mouse::Button::Left && self.worldgen.brush {
+                    if let Some(center) = self.terrain_cursor.cursor.as_ref().map(|c| c.center) {
+                        self.world_brush_dab(center);
+                    }
+                }
             }
             Message::ViewportReleased(button) => {
                 if button == mouse::Button::Left
@@ -8055,6 +8062,9 @@ impl App {
                     && self.texture_set_painting
                 {
                     self.finish_texture_set_stroke();
+                }
+                if button == mouse::Button::Left && self.worldgen.brush {
+                    self.finish_world_stroke();
                 }
                 if let Some(drag) = self.viewport_drag.take() {
                     if button == mouse::Button::Right && drag.distance < 4.0 {
@@ -8065,6 +8075,21 @@ impl App {
             Message::ViewportMoved(point) => {
                 self.viewport_hovered = true;
                 self.update_terrain_cursor(point);
+                // The World tab's Remove brush paints instead of orbiting.
+                let left_drag = self
+                    .viewport_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.button == mouse::Button::Left);
+                if left_drag && self.worldgen.brush {
+                    if let Some(cursor) = self.terrain_cursor_at(point) {
+                        self.world_brush_dab(cursor.center);
+                    }
+                    if let Some(drag) = self.viewport_drag.as_mut() {
+                        drag.distance += 1.0;
+                        drag.last = Some(point);
+                    }
+                    return;
+                }
                 let paint_drag = self.texture_set_paint_mode
                     && self
                         .viewport_drag

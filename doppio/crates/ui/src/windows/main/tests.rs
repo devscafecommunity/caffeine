@@ -16665,3 +16665,307 @@ fn a_world_that_does_not_check_builds_nothing() {
     assert_eq!(harness.app().entities.len(), before);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// The World fixture with water: `Water/Lake.generator.water` (the Calm Lake preset), a carving river and a lake.
+fn world_fixture_with_water(harness: &mut Harness, label: &str) -> std::path::PathBuf {
+    use crate::uikit::recipe::{self, Kind, Recipe};
+    let root = world_fixture(harness, label);
+    let preset = crate::uikit::water::presets()
+        .into_iter()
+        .find(|p| p.name == "Calm Lake")
+        .expect("Calm Lake preset");
+    let text = crate::uikit::water::to_text("Lake", &preset.graph());
+    recipe::write(
+        &root
+            .join("Water")
+            .join(recipe::file_name("Lake", Kind::Water)),
+        &Recipe::new(Kind::Water, "Lake", "", text),
+    )
+    .expect("water recipe");
+    let mut text = harness.app().worldgen.comp.to_text();
+    text.push_str("water Water/Lake.generator.water follow flow min 0.6 carve 2\n");
+    text.push_str("water Water/Lake.generator.water fill basins level 0.7\n");
+    let comp = crate::uikit::world::Composition::parse(&text).expect("composition");
+    harness.app.worldgen.load(comp);
+    root
+}
+
+fn world_child(app: &App, suffix: &str) -> Option<u32> {
+    let holder = app.entities.iter().find(|e| e.name == "World Valley")?.id;
+    app.entities
+        .iter()
+        .find(|e| e.parent == Some(holder) && e.name.ends_with(suffix))
+        .map(|e| e.id)
+}
+
+#[test]
+fn a_large_world_writes_an_instance_bake_and_a_world_instances_entity() {
+    use crate::uikit::panels::world_composer::Edit;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if !has_world_engine(&harness) {
+        return;
+    }
+    let root = world_fixture(&mut harness, "world-large");
+    // Lower the entity threshold so the fixture counts as a large world.
+    harness.app.worldgen.small_world = 10;
+    harness.dispatch(Message::WorldGen(Edit::Build));
+    let status = harness.app().worldgen.status.clone().unwrap_or_default();
+    assert!(
+        status.contains("instance bake World/valley.cinst"),
+        "{status}"
+    );
+    let cinst = root.join("World/valley.cinst");
+    let models = root.join("World/valley.models");
+    assert!(cinst.is_file() && models.is_file());
+    // The bake reads back with every instance of the build.
+    let built = harness
+        .app()
+        .worldgen
+        .last_build
+        .as_ref()
+        .unwrap()
+        .instances
+        .len();
+    assert!(built > 10);
+    let read = harness
+        .app()
+        .engine
+        .as_ref()
+        .unwrap()
+        .world_read_cinst(&cinst)
+        .expect("the bake reads back");
+    assert_eq!(read.instances.len(), built);
+    // Models: `<class> <variant> <mesh> [cutout on]`, every mesh a file of the project, both classes covered.
+    let text = std::fs::read_to_string(&models).unwrap();
+    let mut classes = std::collections::BTreeSet::new();
+    for line in text
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+    {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let class: usize = words[0].parse().expect("class index");
+        assert!(class < 2, "{line}");
+        let mesh = if words[1] == "cell" {
+            words[2].parse::<i32>().expect("cell x");
+            words[3].parse::<i32>().expect("cell z");
+            words[4]
+        } else {
+            words[1].parse::<u32>().expect("variant");
+            words[2]
+        };
+        assert!(
+            mesh.ends_with(".obj") && root.join(mesh).is_file(),
+            "{line}"
+        );
+        let rest = &words[if words[1] == "cell" { 5 } else { 3 }..];
+        assert!(rest.is_empty() || rest == ["cutout", "on"], "{line}");
+        classes.insert(class);
+    }
+    assert_eq!(classes.len(), 2);
+    // One entity draws it all: the holder's World Instances component points at the bake and the models.
+    let app = harness.app();
+    let holder = app
+        .entities
+        .iter()
+        .find(|e| e.name == "World Valley")
+        .unwrap()
+        .id;
+    let engine = app.engine.as_ref().unwrap();
+    let types = engine.component_types();
+    let data = engine
+        .entity_component_data(holder)
+        .into_iter()
+        .find(|d| d.info.name == "World Instances")
+        .expect("World Instances component");
+    let kind = types.iter().find(|k| k.id == data.info.type_id).unwrap();
+    let field = |name: &str| {
+        kind.fields
+            .iter()
+            .position(|f| f.name == name)
+            .map(|i| data.values[i].clone())
+    };
+    assert_eq!(
+        field("Bake"),
+        Some(doppio_engine::FieldValue::String(
+            "World/valley.cinst".to_owned()
+        ))
+    );
+    assert_eq!(
+        field("Models"),
+        Some(doppio_engine::FieldValue::String(
+            "World/valley.models".to_owned()
+        ))
+    );
+    // No per-instance entities: only the terrain under the holder.
+    assert_eq!(
+        app.entities
+            .iter()
+            .filter(|e| e.parent == Some(holder))
+            .count(),
+        1
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_world_with_water_carves_on_a_cache_hit_and_places_its_lakes() {
+    use crate::uikit::panels::world_composer::Edit;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if !has_world_engine(&harness) {
+        return;
+    }
+    let root = world_fixture_with_water(&mut harness, "world-water");
+    let sample = |app: &App| -> Vec<f32> {
+        let ground = world_child(app, "terrain").expect("terrain child");
+        let engine = app.engine.as_ref().unwrap();
+        (0..129 * 129)
+            .map(|i| {
+                let (x, z) = ((i % 129) as f32, (i / 129) as f32);
+                engine.terrain_height(ground, x, z).unwrap_or(f32::NAN)
+            })
+            .collect()
+    };
+    harness.dispatch(Message::WorldGen(Edit::Build));
+    let status = harness.app().worldgen.status.clone().unwrap_or_default();
+    assert!(status.contains("cache miss"), "{status}");
+    assert!(status.contains("1 river carved"), "{status}");
+    let first = sample(harness.app());
+    // The recipe's own ground: the river lowered some of it.
+    let recipe =
+        worldgen::bake_terrain(&root.join("Terrain/Hills.generator.terrain"), None).unwrap();
+    let carved = (0..129 * 129)
+        .filter(|&i| {
+            let (x, z) = ((i % 129) as f32, (i / 129) as f32);
+            let step = 128.0 / 128.0;
+            let index = (z / step) as usize * 129 + (x / step) as usize;
+            recipe.heights[index] * recipe.max_height - first[i] > 0.5
+        })
+        .count();
+    assert!(carved > 0, "the river carved nothing");
+    // The lakes are water entities under the holder, at their surface.
+    let lakes: Vec<u32> = {
+        let app = harness.app();
+        let holder = app
+            .entities
+            .iter()
+            .find(|e| e.name == "World Valley")
+            .unwrap()
+            .id;
+        app.entities
+            .iter()
+            .filter(|e| e.parent == Some(holder) && e.name.contains(" lake "))
+            .map(|e| e.id)
+            .collect()
+    };
+    assert!(!lakes.is_empty(), "{status}");
+    assert!(status.contains("lake"), "{status}");
+    {
+        let engine = harness.app().engine.as_ref().unwrap();
+        let water = engine.water(lakes[0]).expect("a water surface");
+        assert!(water.size[0] > 0.0 && water.size[1] > 0.0);
+        let at = engine.position(lakes[0]).unwrap();
+        assert!(at[1] >= 0.0 && at[1] <= 12.0, "{at:?}");
+    }
+
+    // The same build from the cache: the ground is carved the same way and the lakes are back.
+    harness.dispatch(Message::WorldGen(Edit::Build));
+    let status = harness.app().worldgen.status.clone().unwrap_or_default();
+    assert!(status.contains("cache hit"), "{status}");
+    assert_eq!(sample(harness.app()), first);
+    assert!(status.contains("lake"), "{status}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_remove_brush_takes_a_stroke_in_the_viewport_as_one_step() {
+    use crate::uikit::panels::world_composer::Edit;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if !has_world_engine(&harness) {
+        return;
+    }
+    let root = world_fixture(&mut harness, "world-brush");
+    harness.dispatch(Message::WorldGen(Edit::Build));
+    let last = harness.app().worldgen.last_build.clone().expect("built");
+    let built = last.instances.len();
+    harness.dispatch(Message::WorldGen(Edit::SetBrush(true)));
+    assert!(harness.app().terrain_cursor.active);
+    harness.dispatch(Message::WorldGen(Edit::SetBrushRadius(10.0)));
+    assert_eq!(harness.app().terrain_cursor.radius_m, 10.0);
+    // A stroke: press, two dabs on the terrain (world space), release.
+    let world = |p: [f32; 3]| {
+        [
+            last.corner[0] + p[0],
+            last.corner[1] + p[1],
+            last.corner[2] + p[2],
+        ]
+    };
+    harness.dispatch(Message::ViewportPressed(mouse::Button::Left));
+    harness.app.world_brush_dab(world([32.0, 0.0, 32.0]));
+    harness.app.world_brush_dab(world([96.0, 0.0, 96.0]));
+    assert!(
+        harness.app().worldgen.comp.overrides.is_empty(),
+        "nothing before release"
+    );
+    let expected = harness.app().worldgen.stroke.len();
+    assert!(expected > 0);
+    harness.dispatch(Message::ViewportReleased(mouse::Button::Left));
+    assert_eq!(harness.app().worldgen.comp.overrides.len(), expected);
+    let status = harness.app().worldgen.status.clone().unwrap_or_default();
+    assert!(status.contains("under the brush"), "{status}");
+    let now = harness
+        .app()
+        .worldgen
+        .last_build
+        .as_ref()
+        .unwrap()
+        .instances
+        .len();
+    assert_eq!(now, built - expected);
+    // One undo step for the whole stroke.
+    harness.dispatch(Message::WorldGen(Edit::Undo));
+    assert!(harness.app().worldgen.comp.overrides.is_empty());
+    // The agent's circle is the same stroke.
+    harness.dispatch(Message::WorldGen(Edit::RemoveInCircle {
+        center: [64.0, 64.0],
+        radius: 20.0,
+    }));
+    assert!(!harness.app().worldgen.comp.overrides.is_empty());
+    harness.dispatch(Message::WorldGen(Edit::SetBrush(false)));
+    assert!(!harness.app().terrain_cursor.active);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_library_recipe_drags_onto_the_composition() {
+    let mut harness = Harness::empty();
+    let root = world_fixture(&mut harness, "world-drag");
+    let stone = harness
+        .app()
+        .worldgen
+        .library
+        .iter()
+        .position(|item| item.path == "Nature/Stone.generator.nature")
+        .unwrap();
+    harness.drag_to(id::world_library_item(stone), id::WORLD_DROP);
+    let comp = &harness.app().worldgen.comp;
+    assert_eq!(comp.classes.len(), 3);
+    assert_eq!(comp.classes[2].id, "stone_2");
+    assert!(harness.app().worldgen.drag.is_none());
+    // Pressing one row and releasing on another is a cancelled drag, not a click.
+    let rock = harness
+        .app()
+        .worldgen
+        .library
+        .iter()
+        .position(|item| item.path == "Nature/Rock.generator.nature")
+        .unwrap();
+    harness.drag_to(id::world_library_item(rock), id::world_library_item(stone));
+    assert_eq!(harness.app().worldgen.comp.classes.len(), 3);
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -175,6 +175,7 @@ pub fn run() -> iced::Result {
                     "preview": w.preview.as_ref().map(|counts| counts.iter().map(|(id, n)| json!({"class": id, "count": n})).collect::<Vec<_>>()),
                     "last_build_instances": w.last_build.as_ref().map(|b| b.instances.len()),
                     "status": w.status,
+                    "brush": { "active": w.brush, "radius": w.brush_radius },
                     "library": w.library.iter().map(|item| item.path.clone()).collect::<Vec<_>>(),
                 }))
             },
@@ -1281,6 +1282,31 @@ pub fn run() -> iced::Result {
                     number("x1")?,
                     number("z1")?,
                 ])))
+            },
+        )
+        .action(
+            "world_remove_in_circle",
+            "One stroke of the Remove instances brush: removes every instance of the last build within a circle (override remove lines, one undo step) and rebuilds. args: { \"x\": number, \"z\": number (metres from the terrain's corner), \"radius\": number (metres) }",
+            |args| {
+                let number = |key: &str| -> Result<f32, String> {
+                    optional_f32(args, key)?.ok_or_else(|| format!("missing \"{key}\""))
+                };
+                Ok(Message::WorldGen(world_composer::Edit::RemoveInCircle {
+                    center: [number("x")?, number("z")?],
+                    radius: number("radius")?,
+                }))
+            },
+        )
+        .action(
+            "world_brush",
+            "Turns the Viewport's Remove instances brush on or off (left-drag over the built world then removes what grows under the ring, one undo step per stroke). args: { \"active\"?: boolean (default true), \"radius\"?: number (metres; sets the radius instead when given alone with active omitted) }",
+            |args| {
+                if let (None, Some(radius)) = (args.get("active"), optional_f32(args, "radius")?) {
+                    return Ok(Message::WorldGen(world_composer::Edit::SetBrushRadius(radius)));
+                }
+                Ok(Message::WorldGen(world_composer::Edit::SetBrush(
+                    args.get("active").and_then(Value::as_bool).unwrap_or(true),
+                )))
             },
         )
         .action(

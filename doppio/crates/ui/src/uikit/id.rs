@@ -426,6 +426,9 @@ pub const WORLD_ADD_PIN: UiId = UiId::fixed("world.rules.add_pin");
 pub const WORLD_ADD_MOVE: UiId = UiId::fixed("world.rules.add_move");
 pub const WORLD_REMOVE_IN_REGION: UiId = UiId::fixed("world.rules.remove_in_region");
 pub const WORLD_STATUS: UiId = UiId::fixed("world.status");
+pub const WORLD_DROP: UiId = UiId::fixed("world.composition.drop");
+pub const WORLD_BRUSH: UiId = UiId::fixed("world.rules.brush");
+pub const WORLD_BRUSH_RADIUS: UiId = UiId::fixed("world.rules.brush_radius");
 pub const PANE_TERRAIN_GENERATOR: UiId = UiId::fixed("editor.pane.terrain_generator");
 pub const PANE_TAB_TERRAIN_GENERATOR: UiId = UiId::fixed("editor.pane.tab.terrain_generator");
 pub const SHOW_TERRAIN_GENERATOR: UiId = UiId::fixed("editor.menu.view.terrain_generator");
@@ -2085,13 +2088,28 @@ pub const CATALOG: &[UiMeta] = &[
         kind: "button",
     },
     UiMeta {
+        id: WORLD_DROP,
+        description: "Drop target of the Composition: release a recipe dragged from the Library here to add it.",
+        kind: "tree_row",
+    },
+    UiMeta {
+        id: WORLD_BRUSH,
+        description: "The Viewport's Remove instances brush: dragging over the built world removes what grows under the ring (override remove lines, one undo step per stroke) and rebuilds.",
+        kind: "chip",
+    },
+    UiMeta {
+        id: WORLD_BRUSH_RADIUS,
+        description: "Radius of the Remove instances brush, in metres.",
+        kind: "slider",
+    },
+    UiMeta {
         id: WORLD_STATUS,
         description: "Status of the composition: the engine's problems, or what the last build or save did.",
         kind: "status",
     },
     UiMeta {
         id: UiId::fixed("world.library.item"),
-        description: "A recipe of the World tab's Library; click to add it to the composition. Rows use the .N suffix.",
+        description: "A recipe of the World tab's Library; click it, or drag it onto the Composition, to add it. Rows use the .N suffix.",
         kind: "list_row",
     },
     UiMeta {

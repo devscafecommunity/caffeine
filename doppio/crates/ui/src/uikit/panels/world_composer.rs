@@ -9,8 +9,10 @@
 //! The panel is a pure view: `windows/main/worldgen.rs` owns the composition and handles every `Edit`.
 
 use crate::uikit::components::{
-    button, checkbox, dropdown, list_row, scroll, slider, status, text_field,
+    button, checkbox, dropdown, list_row, scroll, slider, status, text_field, toggle_chip,
+    tree_view,
 };
+use crate::uikit::icons::Icon;
 use crate::uikit::id;
 use crate::uikit::recipe::Kind;
 use crate::uikit::theme;
@@ -230,6 +232,19 @@ pub enum Edit {
     SetRegion(usize, f32),
     /// Appends `override remove` for every instance of the last build inside the region, then rebuilds.
     RemoveIn([f32; 4]),
+    /// Removes every instance of the last build within `radius` metres of `center` (metres from the terrain's
+    /// corner), one undo step, then rebuilds: one stroke of the brush (the agent's `world_remove_in_circle`).
+    RemoveInCircle {
+        center: [f32; 2],
+        radius: f32,
+    },
+    /// The viewport's Remove instances brush on or off.
+    SetBrush(bool),
+    SetBrushRadius(f32),
+    /// A Library recipe was pressed: dragging it onto the Composition adds it.
+    DragStart(String),
+    /// The pointer was released over the Composition's drop row.
+    Drop,
     AddOverride(usize, OverrideKind),
     RemoveOverride(usize),
     SetOverride(usize, OverrideField, f32),
@@ -260,6 +275,10 @@ pub struct View<'a> {
     pub preview_note: &'a str,
     pub problems: &'a [String],
     pub status: Option<&'a str>,
+    pub brush: bool,
+    pub brush_radius: f32,
+    /// A Library recipe is being dragged.
+    pub dragging: bool,
 }
 
 fn heading<'a, Message: 'a>(label: &'a str) -> Element<'a, Message> {
@@ -272,6 +291,16 @@ fn card<'a, Message: 'a>(content: impl Into<Element<'a, Message>>) -> Element<'a
         .padding(4)
         .style(theme::surface)
         .into()
+}
+
+fn kind_icon(kind: Kind) -> Icon {
+    match kind {
+        Kind::Terrain | Kind::World => Icon::Terrain,
+        Kind::Nature => Icon::Nature,
+        Kind::Water => Icon::Water,
+        Kind::Material => Icon::Material,
+        Kind::Texture => Icon::Texture,
+    }
 }
 
 fn kind_label(kind: Kind) -> &'static str {
@@ -419,6 +448,7 @@ fn library<'a, Message: Clone + 'a>(
         }
         any = true;
         column = column.push(heading(kind_label(kind)));
+        let mut rows = Vec::new();
         for (index, item) in items {
             let name = item
                 .path
@@ -429,15 +459,28 @@ fn library<'a, Message: Clone + 'a>(
                 .next()
                 .unwrap_or(&item.path)
                 .to_owned();
-            column = column.push(list_row::view(
-                id::world_library_item(index),
-                format!("+ {name}"),
-                false,
-                emit(Edit::Add(item.path.clone())),
-                emit(Edit::Noop),
-                emit(Edit::Add(item.path.clone())),
-            ));
+            rows.push(tree_view::Item {
+                id: id::world_library_item(index),
+                label: format!("+ {name}"),
+                icon: kind_icon(kind),
+                depth: 0,
+                has_children: false,
+                expanded: false,
+                selected: false,
+                hovered: false,
+                drop_target: false,
+                trailing: None,
+                extra: None,
+                on_toggle: emit(Edit::Noop),
+                // Press starts a drag; releasing on the same row is a click (add), on the Composition a drop.
+                on_press: emit(Edit::DragStart(item.path.clone())),
+                on_release: emit(Edit::Add(item.path.clone())),
+                on_enter: emit(Edit::Noop),
+                on_exit: emit(Edit::Noop),
+                on_context: emit(Edit::Add(item.path.clone())),
+            });
         }
+        column = column.push(tree_view::view(rows));
     }
     if !any {
         column = column.push(
@@ -447,7 +490,7 @@ fn library<'a, Message: Clone + 'a>(
         );
     }
     column = column.push(
-        text("Click a recipe to add it: a terrain becomes the ground, a nature recipe a class, water a river, a material a binding.")
+        text("Click a recipe, or drag it onto the Composition, to add it: a terrain becomes the ground, a nature recipe a class, water a river, a material a binding.")
             .size(8)
             .color(theme::TEXT_MUTED),
     );
@@ -460,6 +503,31 @@ fn composition<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     let comp = view.comp;
     let mut column = Column::new().spacing(5);
+
+    // Where a dragged Library recipe is dropped.
+    column = column.push(tree_view::view(vec![tree_view::Item {
+        id: id::WORLD_DROP,
+        label: if view.dragging {
+            "Release here to add the recipe".to_owned()
+        } else {
+            "Drag a recipe from the Library here".to_owned()
+        },
+        icon: Icon::Folder,
+        depth: 0,
+        has_children: false,
+        expanded: false,
+        selected: false,
+        hovered: false,
+        drop_target: view.dragging,
+        trailing: None,
+        extra: None,
+        on_toggle: emit(Edit::Noop),
+        on_press: emit(Edit::Noop),
+        on_release: emit(Edit::Drop),
+        on_enter: emit(Edit::Noop),
+        on_exit: emit(Edit::Noop),
+        on_context: emit(Edit::Noop),
+    }]));
 
     // Terrain.
     let mut terrain = Column::new().spacing(3);
@@ -865,6 +933,28 @@ fn rules<'a, Message: Clone + 'a>(
             move |value| emit(Edit::SetRegion(axis, value)),
         ));
     }
+    edits = edits.push(toggle_chip::view(
+        id::WORLD_BRUSH,
+        if view.brush {
+            "Remove brush: on (drag in the Viewport)"
+        } else {
+            "Remove brush: off"
+        },
+        view.brush,
+        theme::DANGER,
+        emit(Edit::SetBrush(!view.brush)),
+    ));
+    edits = edits.push(slider::property_step(
+        id::WORLD_BRUSH_RADIUS,
+        "Brush radius (m)",
+        0.5..=50.0,
+        view.brush_radius,
+        0.5,
+        {
+            let emit = emit.clone();
+            move |value| emit(Edit::SetBrushRadius(value))
+        },
+    ));
     edits = edits.push(button::block(
         id::WORLD_REMOVE_IN_REGION,
         "Remove in region",

@@ -49,6 +49,8 @@ pub(super) struct BakedTerrain {
 pub(super) struct LastBuild {
     /// (class id, cell, position in metres from the terrain's corner).
     pub instances: Vec<(String, [i32; 2], [f32; 3])>,
+    /// Where the `World` entity stood (the terrain's corner), in world space.
+    pub corner: [f32; 3],
 }
 
 type TerrainJob = (u64, Receiver<Result<BakedTerrain, String>>);
@@ -75,6 +77,16 @@ pub(super) struct WorldGen {
     /// Baked terrains by (content hash of the recipe file, resolution).
     terrains: HashMap<(u64, usize), Arc<BakedTerrain>>,
     pub last_build: Option<LastBuild>,
+    /// Up to this many instances a build becomes entities (`SMALL_WORLD`; tests lower it).
+    pub small_world: usize,
+    /// The viewport's Remove instances brush is on.
+    pub brush: bool,
+    /// Its radius in metres.
+    pub brush_radius: f32,
+    /// Instances the stroke in progress went over (class id, cell); applied on release.
+    pub stroke: Vec<(String, [i32; 2])>,
+    /// A Library recipe being dragged onto the Composition.
+    pub drag: Option<String>,
     /// The terrain's size in metres, once known (the region sliders' range).
     pub size: [f32; 2],
 }
@@ -102,6 +114,11 @@ impl WorldGen {
             preview_job: None,
             terrains: HashMap::new(),
             last_build: None,
+            small_world: SMALL_WORLD,
+            brush: false,
+            brush_radius: 6.0,
+            stroke: Vec::new(),
+            drag: None,
             size: [256.0, 256.0],
         }
     }
@@ -178,6 +195,9 @@ impl WorldGen {
             preview_note: &self.preview_note,
             problems: &self.problems,
             status: self.status.as_deref(),
+            brush: self.brush,
+            brush_radius: self.brush_radius,
+            dragging: self.drag.is_some(),
         }
     }
 
@@ -524,7 +544,30 @@ impl App {
             }
             Edit::SetName(name) => w.name = name,
             Edit::SetSearch(search) => w.search = search,
-            Edit::Add(path) => self.add_to_world(&path, None),
+            Edit::Add(path) => {
+                // A release on another Library row than the one pressed is a cancelled drag, not a click.
+                if w.drag.take().is_none_or(|pressed| pressed == path) {
+                    self.add_to_world(&path, None);
+                }
+            }
+            Edit::DragStart(path) => w.drag = Some(path),
+            Edit::Drop => {
+                if let Some(path) = w.drag.take() {
+                    self.add_to_world(&path, None);
+                }
+            }
+            Edit::SetBrush(on) => {
+                let radius = w.brush_radius;
+                self.set_world_brush(on, radius);
+            }
+            Edit::SetBrushRadius(radius) => {
+                let on = w.brush;
+                w.brush_radius = radius.clamp(0.5, 200.0);
+                if on {
+                    self.set_terrain_brush_cursor(true, radius.clamp(0.5, 200.0));
+                }
+            }
+            Edit::RemoveInCircle { center, radius } => self.remove_world_in_circle(center, radius),
             Edit::AddClass { reference, id } => self.add_to_world(&reference, id),
             Edit::SelectClass(index) => {
                 if index < w.comp.classes.len() {
@@ -1079,7 +1122,30 @@ impl App {
         if !build.ok {
             return Err(build.errors.join("; "));
         }
-        let small = build.instances.len() <= SMALL_WORLD;
+        // A cached build has the instances but not the water layer: when the composition has water, the engine
+        // builds it once more (uncached) for the carved ground, the water bodies and the `water_distance` mask.
+        let water_layer = if hit && !comp.water.is_empty() {
+            let full = self
+                .engine
+                .as_ref()
+                .ok_or("the engine is not available")?
+                .world_build(&desc)?;
+            if !full.ok {
+                return Err(full.errors.join("; "));
+            }
+            Some(full)
+        } else {
+            None
+        };
+        let layer = water_layer.as_ref().unwrap_or(&build);
+        let lakes: Vec<LakeSpec> = layer
+            .water
+            .iter()
+            .filter(|body| body.lake)
+            .filter_map(|body| lake_spec(&root, body, terrain.res, size))
+            .collect();
+        let rivers = layer.water.iter().filter(|body| !body.lake).count();
+        let small = build.instances.len() <= self.worldgen.small_world;
         let nature_cache = cache.join("nature");
         let (models, baked) = bake_models(&root, &build, &nature_cache)?;
         let slug = {
@@ -1146,8 +1212,8 @@ impl App {
             .set_position(holder, corner)
             .map_err(|e| format!("position: {e:?}"))?;
         // The ground: the terrain recipe (carved by the rivers when the engine carved it), centred on its entity.
-        let heights = if build.carved && build.heights.len() == terrain.heights.len() {
-            build.heights.clone()
+        let heights = if layer.carved && layer.heights.len() == terrain.heights.len() {
+            layer.heights.clone()
         } else {
             terrain.heights.clone()
         };
@@ -1170,17 +1236,25 @@ impl App {
                     for (mask, data) in &terrain.masks {
                         let _ = engine.set_terrain_mask(ground, mask, [res, res], data);
                     }
-                    if build.water_distance.len() == terrain.heights.len() {
+                    if layer.water_distance.len() == terrain.heights.len() {
                         let _ = engine.set_terrain_mask(
                             ground,
                             "water_distance",
                             [res, res],
-                            &build.water_distance,
+                            &layer.water_distance,
                         );
                     }
                 }
             }
             Err(error) => problems.push(format!("terrain: {error:?}")),
+        }
+        // The lakes: one water surface per body, at its surface height, over its bounding box.
+        let mut lakes_placed = 0;
+        for (number, lake) in lakes.iter().enumerate() {
+            match place_lake(engine, holder, &format!("{name} lake {}", number + 1), lake) {
+                Ok(()) => lakes_placed += 1,
+                Err(error) => problems.push(format!("lake {}: {error}", number + 1)),
+            }
         }
 
         let mut placed: BTreeMap<String, u32> = BTreeMap::new();
@@ -1228,6 +1302,7 @@ impl App {
             self.worldgen.region = [0.0, 0.0, size[0], size[1]];
         }
         self.worldgen.last_build = Some(LastBuild {
+            corner,
             instances: build
                 .classes
                 .iter()
@@ -1260,11 +1335,16 @@ impl App {
                 if baked == 1 { "" } else { "s" }
             ));
         }
-        if !build.water.is_empty() {
+        if lakes_placed > 0 {
             summary.push_str(&format!(
-                "; {} water bod{} (not placed yet)",
-                build.water.len(),
-                if build.water.len() == 1 { "y" } else { "ies" }
+                "; {lakes_placed} lake{} placed",
+                if lakes_placed == 1 { "" } else { "s" }
+            ));
+        }
+        if rivers > 0 {
+            summary.push_str(&format!(
+                "; {rivers} river{} carved into the terrain but not drawn as water (no river surface yet)",
+                if rivers == 1 { "" } else { "s" }
             ));
         }
         if !problems.is_empty() {
@@ -1284,14 +1364,82 @@ impl App {
         };
         let (x0, x1) = (region[0].min(region[2]), region[0].max(region[2]));
         let (z0, z1) = (region[1].min(region[3]), region[1].max(region[3]));
-        let mut added = 0;
         let inside: Vec<(String, [i32; 2])> = last
             .instances
             .iter()
             .filter(|(_, _, p)| p[0] >= x0 && p[0] <= x1 && p[2] >= z0 && p[2] <= z1)
             .map(|(class, cell, _)| (class.clone(), *cell))
             .collect();
-        for (class, cell) in inside {
+        self.remove_world_instances(inside, "in the region");
+    }
+
+    /// Instances of the last build within `radius` metres of `center` (metres from the terrain's corner).
+    fn world_instances_in_circle(&self, center: [f32; 2], radius: f32) -> Vec<(String, [i32; 2])> {
+        let Some(last) = &self.worldgen.last_build else {
+            return Vec::new();
+        };
+        last.instances
+            .iter()
+            .filter(|(_, _, p)| {
+                let (dx, dz) = (p[0] - center[0], p[2] - center[1]);
+                dx * dx + dz * dz <= radius * radius
+            })
+            .map(|(class, cell, _)| (class.clone(), *cell))
+            .collect()
+    }
+
+    /// One stroke of the Remove instances brush, or the agent's circle: every instance of the last build within
+    /// `radius` of `center`.
+    pub(super) fn remove_world_in_circle(&mut self, center: [f32; 2], radius: f32) {
+        if self.worldgen.last_build.is_none() {
+            self.worldgen.status = Some(
+                "Build the world first: the brush removes instances of the last build".to_owned(),
+            );
+            return;
+        }
+        let inside = self.world_instances_in_circle(center, radius);
+        self.remove_world_instances(inside, "under the brush");
+    }
+
+    /// The brush went over `world` (a point on the terrain, world space): remember what is under it.
+    pub(super) fn world_brush_dab(&mut self, world: [f32; 3]) {
+        let Some(corner) = self.worldgen.last_build.as_ref().map(|b| b.corner) else {
+            return;
+        };
+        let center = [world[0] - corner[0], world[2] - corner[2]];
+        for hit in self.world_instances_in_circle(center, self.worldgen.brush_radius) {
+            if !self.worldgen.stroke.contains(&hit) {
+                self.worldgen.stroke.push(hit);
+            }
+        }
+    }
+
+    /// The end of a brush stroke: everything it went over is removed as one undo step, then the world rebuilds.
+    pub(super) fn finish_world_stroke(&mut self) {
+        let stroke = std::mem::take(&mut self.worldgen.stroke);
+        if !stroke.is_empty() {
+            self.remove_world_instances(stroke, "under the brush");
+        }
+    }
+
+    /// Turns the viewport's Remove instances brush on or off; its ring is the terrain brush cursor.
+    pub(super) fn set_world_brush(&mut self, on: bool, radius: f32) {
+        self.worldgen.brush = on;
+        self.worldgen.brush_radius = radius.clamp(0.5, 200.0);
+        self.worldgen.stroke.clear();
+        self.set_terrain_brush_cursor(on, self.worldgen.brush_radius);
+        self.worldgen.status = Some(if on {
+            "Remove brush on: drag over the world in the Viewport to remove what grows there"
+                .to_owned()
+        } else {
+            "Remove brush off".to_owned()
+        });
+    }
+
+    /// Writes `override remove` for `cells` (one undo step in the tab), then rebuilds the world.
+    fn remove_world_instances(&mut self, cells: Vec<(String, [i32; 2])>, place: &str) {
+        let mut added = 0;
+        for (class, cell) in cells {
             let exists =
                 self.worldgen.comp.overrides.iter().any(|o| {
                     o.class == class && o.cell == cell && matches!(o.op, OverrideOp::Remove)
@@ -1306,8 +1454,7 @@ impl App {
             }
         }
         if added == 0 {
-            self.worldgen.status =
-                Some("No instance of the last build is in that region".to_owned());
+            self.worldgen.status = Some(format!("No instance of the last build is {place}"));
             return;
         }
         self.worldgen.push(None);
@@ -1315,7 +1462,7 @@ impl App {
         self.build_world();
         let built = self.worldgen.status.clone().unwrap_or_default();
         self.worldgen.status = Some(format!(
-            "Removed {added} instance{} in the region. {built}",
+            "Removed {added} instance{} {place}. {built}",
             if added == 1 { "" } else { "s" }
         ));
     }
@@ -1406,6 +1553,88 @@ class stone ref Nature/Stone.generator.nature variants 2 priority 20 cell 16 rad
     world.generator_version = 2;
     recipe::write(&path, &world)?;
     Ok(path)
+}
+
+/// A lake of a build, ready to place: the water of its recipe over the body's bounding box.
+pub(super) struct LakeSpec {
+    pub water: doppio_engine::Water,
+    pub material: Option<String>,
+    /// Centre of the bounding box and the surface height, metres from the terrain's corner.
+    pub center: [f32; 3],
+}
+
+/// The water entity of a lake body: the body's recipe evaluated (its waves and look), sized to the body's bounding
+/// box (plus a vertex of margin) and set at its mean surface height. `None` for an empty body or a recipe that
+/// does not evaluate.
+fn lake_spec(
+    root: &Path,
+    body: &doppio_engine::WorldWaterBody,
+    res: usize,
+    size: [f32; 2],
+) -> Option<LakeSpec> {
+    let res = res.max(2);
+    let (mut x0, mut x1, mut z0, mut z1) = (usize::MAX, 0, usize::MAX, 0);
+    let (mut sum, mut count) = (0.0f64, 0usize);
+    for (index, covered) in body.coverage.iter().enumerate() {
+        if *covered == 0 {
+            continue;
+        }
+        let (x, z) = (index % res, index / res);
+        x0 = x0.min(x);
+        x1 = x1.max(x);
+        z0 = z0.min(z);
+        z1 = z1.max(z);
+        sum += f64::from(body.surface.get(index).copied().unwrap_or(0.0));
+        count += 1;
+    }
+    if count == 0 {
+        return None;
+    }
+    let step = [size[0] / (res - 1) as f32, size[1] / (res - 1) as f32];
+    let recipe = recipe::read(&root.join(&body.reference)).ok()?;
+    let (_, graph) = crate::uikit::water::from_text(&recipe.graph)?;
+    let (mut water, _) = graph.build_report().ok()?;
+    water.size = [
+        ((x1 - x0) as f32 + 2.0) * step[0],
+        ((z1 - z0) as f32 + 2.0) * step[1],
+    ];
+    water.level = 0.0;
+    Some(LakeSpec {
+        water,
+        material: graph.look_asset(),
+        center: [
+            (x0 + x1) as f32 * 0.5 * step[0],
+            (sum / count as f64) as f32,
+            (z0 + z1) as f32 * 0.5 * step[1],
+        ],
+    })
+}
+
+/// A lake under the world holder, as the Water Generator places water: an engine water surface plus its material.
+fn place_lake(
+    engine: &mut doppio_engine::Engine,
+    holder: u32,
+    name: &str,
+    lake: &LakeSpec,
+) -> Result<(), String> {
+    let id = engine
+        .create_entity(name)
+        .map_err(|e| format!("create: {e:?}"))?;
+    engine
+        .set_entity_parent(id, Some(holder))
+        .map_err(|e| format!("parent: {e:?}"))?;
+    engine
+        .set_position(id, lake.center)
+        .map_err(|e| format!("position: {e:?}"))?;
+    engine
+        .set_water(id, &lake.water)
+        .map_err(|e| format!("water ({e:?}): the engine library needs C ABI v7"))?;
+    if let Some(material) = &lake.material {
+        engine
+            .apply_material(id, material)
+            .map_err(|e| format!("material: {e:?}"))?;
+    }
+    Ok(())
 }
 
 /// Destroys an entity and everything under it, children first.
