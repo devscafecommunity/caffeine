@@ -30,6 +30,7 @@ pub mod terrain;
 pub mod texture_graph;
 pub mod texture_set;
 pub mod theme;
+pub mod vegetation_recipe;
 pub mod water;
 
 /// A UI-side view of an engine entity. The engine crate owns the real data;

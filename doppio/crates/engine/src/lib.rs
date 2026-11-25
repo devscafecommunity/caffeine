@@ -1194,6 +1194,7 @@ pub const VEG_SPECIES_MAX: usize = 256;
 /// The variants and rules a species shows through the C ABI (more are kept by the engine).
 pub const VEG_VARIANTS_MAX: usize = 8;
 pub const VEG_RULES_MAX: usize = 4;
+pub const VEG_ADAPT_MAX: usize = 4;
 
 /// What a vegetation stroke does (C ABI 30).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1241,6 +1242,24 @@ pub struct VegRule {
     pub fall0: f32,
 }
 
+/// What a mask changes about a plant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VegAdaptTarget {
+    /// Multiplies the scale by the mix of `at0[0]` (mask 0) and `at1[0]` (mask 1).
+    Scale = 0,
+    /// Multiplies the tint's channels by the mix of the three numbers.
+    Tint = 1,
+}
+
+/// How the ground changes a plant: a wet place greener and bigger, a steep one smaller.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VegAdapt {
+    pub mask: String,
+    pub target: VegAdaptTarget,
+    pub at0: [f32; 3],
+    pub at1: [f32; 3],
+}
+
 /// One species of a terrain's vegetation palette.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VegSpecies {
@@ -1250,7 +1269,11 @@ pub struct VegSpecies {
     /// Project paths of the baked variants.
     pub meshes: Vec<String>,
     pub material: String,
+    /// A `.mat` per sub-mesh of the variants (a tree's bark and its leaves), in sub-mesh order.
+    pub slot_materials: Vec<String>,
     pub recipe: String,
+    /// The content hash of the recipe the variants were baked from (0 when not from a recipe).
+    pub recipe_hash: u64,
     pub density_per_ha: f32,
     pub radius_m: f32,
     pub priority: i32,
@@ -1264,6 +1287,7 @@ pub struct VegSpecies {
     pub procedural: bool,
     pub visible: bool,
     pub rules: Vec<VegRule>,
+    pub adapt: Vec<VegAdapt>,
     /// Manual instances of the species (read only).
     pub manual_instances: u32,
 }
@@ -1275,7 +1299,9 @@ impl Default for VegSpecies {
             name: "Species".to_owned(),
             meshes: Vec::new(),
             material: String::new(),
+            slot_materials: Vec::new(),
             recipe: String::new(),
+            recipe_hash: 0,
             density_per_ha: 200.0,
             radius_m: 1.0,
             priority: 0,
@@ -1289,6 +1315,7 @@ impl Default for VegSpecies {
             procedural: true,
             visible: true,
             rules: Vec::new(),
+            adapt: Vec::new(),
             manual_instances: 0,
         }
     }
@@ -1343,6 +1370,15 @@ struct RawVegRule {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+struct RawVegAdapt {
+    mask: [c_char; 32],
+    target: i32,
+    at0: [f32; 3],
+    at1: [f32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 struct RawVegSpecies {
     uid: u32,
     name: [c_char; 64],
@@ -1350,6 +1386,11 @@ struct RawVegSpecies {
     meshes: [[c_char; 256]; VEG_VARIANTS_MAX],
     material: [c_char; 256],
     recipe: [c_char; 256],
+    recipe_hash: u64,
+    slot_material_count: u32,
+    slot_materials: [[c_char; 256]; VEG_VARIANTS_MAX],
+    adapt_count: u32,
+    adapt: [RawVegAdapt; VEG_ADAPT_MAX],
     density_per_ha: f32,
     radius_m: f32,
     priority: i32,
@@ -1383,6 +1424,18 @@ impl RawVegSpecies {
         }
         fill_c_chars(&mut raw.material, &species.material);
         fill_c_chars(&mut raw.recipe, &species.recipe);
+        raw.recipe_hash = species.recipe_hash;
+        raw.slot_material_count = species.slot_materials.len().min(VEG_VARIANTS_MAX) as u32;
+        for (slot, material) in raw.slot_materials.iter_mut().zip(&species.slot_materials) {
+            fill_c_chars(slot, material);
+        }
+        raw.adapt_count = species.adapt.len().min(VEG_ADAPT_MAX) as u32;
+        for (slot, adapt) in raw.adapt.iter_mut().zip(&species.adapt) {
+            fill_c_chars(&mut slot.mask, &adapt.mask);
+            slot.target = adapt.target as i32;
+            slot.at0 = adapt.at0;
+            slot.at1 = adapt.at1;
+        }
         raw.density_per_ha = species.density_per_ha;
         raw.radius_m = species.radius_m;
         raw.priority = species.priority;
@@ -1415,7 +1468,26 @@ impl RawVegSpecies {
                 .map(c_char_array)
                 .collect(),
             material: c_char_array(&self.material),
+            slot_materials: self.slot_materials
+                [..(self.slot_material_count as usize).min(VEG_VARIANTS_MAX)]
+                .iter()
+                .map(c_char_array)
+                .collect(),
             recipe: c_char_array(&self.recipe),
+            recipe_hash: self.recipe_hash,
+            adapt: self.adapt[..(self.adapt_count as usize).min(VEG_ADAPT_MAX)]
+                .iter()
+                .map(|adapt| VegAdapt {
+                    mask: c_char_array(&adapt.mask),
+                    target: if adapt.target == 0 {
+                        VegAdaptTarget::Scale
+                    } else {
+                        VegAdaptTarget::Tint
+                    },
+                    at0: adapt.at0,
+                    at1: adapt.at1,
+                })
+                .collect(),
             density_per_ha: self.density_per_ha,
             radius_m: self.radius_m,
             priority: self.priority,
@@ -5615,6 +5687,180 @@ mod tests {
         hidden[0].visible = false;
         engine.veg_species_apply(entity, &hidden, 0).unwrap();
         assert!(green(&mut engine) < before / 10);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A unit cube standing on y = 0 whose bottom half and top half are two OBJ groups (two sub-meshes).
+    fn write_two_slot_cube(path: &std::path::Path) {
+        let mut text = String::new();
+        let corners = [
+            [-0.5, 0.0, -0.5],
+            [0.5, 0.0, -0.5],
+            [0.5, 1.0, -0.5],
+            [-0.5, 1.0, -0.5],
+            [-0.5, 0.0, 0.5],
+            [0.5, 0.0, 0.5],
+            [0.5, 1.0, 0.5],
+            [-0.5, 1.0, 0.5],
+        ];
+        for c in corners {
+            text.push_str(&format!("v {} {} {}\n", c[0], c[1], c[2]));
+        }
+        for n in ["0 0 -1", "0 0 1", "-1 0 0", "1 0 0", "0 -1 0", "0 1 0"] {
+            text.push_str(&format!("vn {n}\n"));
+        }
+        text.push_str("vt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\n");
+        // The sides in one group, the top in another: seen from above, the top is one colour and the sides the other.
+        for (group, faces) in [
+            (
+                "sides",
+                vec![
+                    ([1, 4, 3, 2], 1),
+                    ([5, 6, 7, 8], 2),
+                    ([1, 5, 8, 4], 3),
+                    ([2, 3, 7, 6], 4),
+                    ([1, 2, 6, 5], 5),
+                ],
+            ),
+            ("top", vec![([4, 8, 7, 3], 6)]),
+        ] {
+            text.push_str(&format!("usemtl {group}\n"));
+            for (quad, normal) in faces {
+                for tri in [[0, 1, 2], [0, 2, 3]] {
+                    text.push('f');
+                    for k in tri {
+                        text.push_str(&format!(" {}/{}/{}", quad[k], k + 1, normal));
+                    }
+                    text.push('\n');
+                }
+            }
+        }
+        std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn each_sub_mesh_of_a_species_has_its_own_material_and_the_ground_adapts_the_plants() {
+        let _guard = test_lock();
+        let Some(mut engine) = Engine::load_default() else {
+            return;
+        };
+        if !engine.has_terrain_vegetation() {
+            return; // a libcaffeine-capi from before C ABI 31
+        }
+        let root = std::env::temp_dir().join(format!("doppio-veg-slots-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let cube = root.join("cube.obj");
+        write_two_slot_cube(&cube);
+        let material = |name: &str, albedo: [f32; 4]| {
+            let path = root.join(name);
+            engine
+                .save_material(
+                    &path.to_string_lossy(),
+                    &Material {
+                        albedo,
+                        roughness: 0.9,
+                        ..Material::default()
+                    },
+                )
+                .unwrap();
+            path.to_string_lossy().into_owned()
+        };
+        let sides = material("sides.mat", [1.0, 0.0, 0.0, 1.0]);
+        let top = material("top.mat", [0.0, 0.0, 1.0, 1.0]);
+
+        let sun = engine.create_entity("Sun").expect("sun");
+        for name in ["Light", "Directional Light"] {
+            let type_id = engine
+                .component_types()
+                .iter()
+                .find(|kind| kind.name == name)
+                .unwrap_or_else(|| panic!("a {name} component"))
+                .id;
+            engine.add_component(sun, type_id).expect("light component");
+        }
+        engine.set_rotation(sun, [-60.0, 30.0, 0.0]).unwrap();
+        let entity = engine.create_entity("Ground").expect("entity");
+        engine
+            .set_terrain(
+                entity,
+                &Terrain {
+                    resolution: [129, 129],
+                    size: [256.0, 256.0],
+                    max_height: 80.0,
+                    ..Terrain::default()
+                },
+                &vec![0.3; 129 * 129],
+                None,
+            )
+            .expect("terrain");
+        engine
+            .terrain_vegetation_enable(entity, true)
+            .expect("vegetation on");
+        let species = VegSpecies {
+            name: "Cube".to_owned(),
+            meshes: vec![cube.to_string_lossy().into_owned()],
+            slot_materials: vec![sides, top],
+            density_per_ha: 250.0,
+            radius_m: 3.0,
+            min_scale: 4.0,
+            max_scale: 4.5,
+            max_distance_m: 400.0,
+            ..VegSpecies::default()
+        };
+        engine
+            .veg_species_apply(entity, &[species], 0)
+            .expect("a species");
+        let read = engine.veg_species_list(entity);
+        assert_eq!(read[0].slot_materials.len(), 2);
+        engine
+            .set_camera(Camera {
+                yaw: 0.0,
+                pitch: 0.9,
+                distance: 90.0,
+                focus: [0.0, 4.0, 0.0],
+            })
+            .unwrap();
+        let count = |engine: &mut Engine| {
+            let (mut red, mut blue) = (0usize, 0usize);
+            for _ in 0..16 {
+                let pixels = engine.render(320, 240).expect("a frame");
+                red = 0;
+                blue = 0;
+                for px in pixels.as_chunks::<4>().0 {
+                    let (r, g, b) = (i32::from(px[0]), i32::from(px[1]), i32::from(px[2]));
+                    if r > 60 && r > 2 * g && r > 2 * b {
+                        red += 1;
+                    }
+                    if b > 60 && b > 2 * r && b > 2 * g {
+                        blue += 1;
+                    }
+                }
+            }
+            (red, blue)
+        };
+        let (red, blue) = count(&mut engine);
+        assert!(red > 200, "{red} pixels of the sides' material");
+        assert!(blue > 100, "{blue} pixels of the top's material");
+
+        // The ground adapts the plants: on flat ground the slope mask is 0, and a species that shrinks to a fifth there is
+        // mostly gone from the picture. (Slope is a mask of the engine; no mask file is needed.)
+        let mut small = read.clone();
+        small[0].adapt = vec![VegAdapt {
+            mask: "slope".to_owned(),
+            target: VegAdaptTarget::Scale,
+            at0: [0.2, 0.0, 0.0],
+            at1: [1.0, 0.0, 0.0],
+        }];
+        engine.veg_species_apply(entity, &small, 0).unwrap();
+        let (shrunk_red, shrunk_blue) = count(&mut engine);
+        assert!(
+            shrunk_red < red / 3,
+            "{shrunk_red} sides pixels left of {red}"
+        );
+        assert!(
+            shrunk_blue < blue / 3,
+            "{shrunk_blue} top pixels left of {blue}"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 }

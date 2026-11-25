@@ -4645,6 +4645,18 @@ void vegSpeciesToC(const Caffeine::Terrain::VegetationSpecies& s, uint32_t manua
     for (uint32_t i = 0; i < out.mesh_count; ++i) copyText(out.meshes[i], sizeof(out.meshes[i]), s.meshes[i].c_str());
     copyText(out.material, sizeof(out.material), s.material.c_str());
     copyText(out.recipe, sizeof(out.recipe), s.recipe.c_str());
+    out.recipe_hash = s.recipeHash;
+    out.slot_material_count = static_cast<uint32_t>(std::min<size_t>(s.slotMaterials.size(), CAFFEINE_VEG_VARIANTS_MAX));
+    for (uint32_t i = 0; i < out.slot_material_count; ++i) copyText(out.slot_materials[i], sizeof(out.slot_materials[i]), s.slotMaterials[i].c_str());
+    out.adapt_count = static_cast<uint32_t>(std::min<size_t>(s.adapt.size(), CAFFEINE_VEG_ADAPT_MAX));
+    for (uint32_t i = 0; i < out.adapt_count; ++i) {
+        copyText(out.adapt[i].mask, sizeof(out.adapt[i].mask), s.adapt[i].mask.c_str());
+        out.adapt[i].target = s.adapt[i].target;
+        for (int c = 0; c < 3; ++c) {
+            out.adapt[i].at0[c] = s.adapt[i].at0[c];
+            out.adapt[i].at1[c] = s.adapt[i].at1[c];
+        }
+    }
     out.density_per_ha = s.densityPerHa;
     out.radius_m = s.radius;
     out.priority = s.priority;
@@ -4679,7 +4691,25 @@ Caffeine::Terrain::VegetationSpecies vegSpeciesFromC(const CaffeineVegSpecies& i
         s.meshes.insert(s.meshes.end(), existing->meshes.begin() + CAFFEINE_VEG_VARIANTS_MAX, existing->meshes.end());
     }
     s.material = in.material;
+    for (uint32_t i = 0; i < std::min<uint32_t>(in.slot_material_count, CAFFEINE_VEG_VARIANTS_MAX); ++i) s.slotMaterials.push_back(in.slot_materials[i]);
+    if (existing && existing->slotMaterials.size() > CAFFEINE_VEG_VARIANTS_MAX && in.slot_material_count >= CAFFEINE_VEG_VARIANTS_MAX) {
+        s.slotMaterials.insert(s.slotMaterials.end(), existing->slotMaterials.begin() + CAFFEINE_VEG_VARIANTS_MAX, existing->slotMaterials.end());
+    }
     s.recipe = in.recipe;
+    s.recipeHash = in.recipe_hash;
+    for (uint32_t i = 0; i < std::min<uint32_t>(in.adapt_count, CAFFEINE_VEG_ADAPT_MAX); ++i) {
+        Caffeine::Terrain::VegetationAdapt a;
+        a.mask = in.adapt[i].mask;
+        a.target = static_cast<Caffeine::u8>(in.adapt[i].target != 0 ? 1 : 0);
+        for (int c = 0; c < 3; ++c) {
+            a.at0[c] = in.adapt[i].at0[c];
+            a.at1[c] = in.adapt[i].at1[c];
+        }
+        s.adapt.push_back(a);
+    }
+    if (existing && existing->adapt.size() > CAFFEINE_VEG_ADAPT_MAX && in.adapt_count >= CAFFEINE_VEG_ADAPT_MAX) {
+        s.adapt.insert(s.adapt.end(), existing->adapt.begin() + CAFFEINE_VEG_ADAPT_MAX, existing->adapt.end());
+    }
     s.densityPerHa = in.density_per_ha;
     s.radius = in.radius_m;
     s.priority = in.priority;

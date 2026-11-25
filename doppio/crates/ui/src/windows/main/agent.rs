@@ -412,6 +412,52 @@ pub fn run() -> iced::Result {
             },
         )
         .action(
+            "terrain_vegetation_bake_recipe",
+            "Bakes the selected species' variants from its recipe now (set it with terrain_vegetation_edit_species `recipe`): other seeds of the same .generator.nature, one OBJ each with the parts as sub-meshes and a material per part. One undo step; every plant of the species follows. The editor also bakes by itself when the recipe file changes. args: { \"variants\"?: number (1 to 8) }",
+            |args| {
+                Ok(Message::TerrainVegetationBakeRecipe {
+                    variants: args.get("variants").and_then(Value::as_u64).map(|count| count as u32),
+                })
+            },
+        )
+        .action(
+            "terrain_vegetation_sync_recipes",
+            "Bakes again every species whose recipe file changed since it was baked. args: {}",
+            |_| Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::SyncRecipes)),
+        )
+        .action(
+            "terrain_vegetation_adapt",
+            "Adds an adaptation to the selected species: a mask makes plants bigger or smaller (`target` \"scale\": at0 and at1 are numbers, the scale at mask 0 and at mask 1) or changes their colour (`target` \"tint\": at0 and at1 are [r, g, b] multipliers). One undo step. args: { \"mask\": string, \"target\"?: \"scale\" | \"tint\" (default scale), \"at0\": number | [r, g, b], \"at1\": number | [r, g, b] }, or { \"remove\": number } to drop one by index",
+            |args| {
+                if let Some(index) = args.get("remove").and_then(Value::as_u64) {
+                    return Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::RemoveAdapt(index as usize)));
+                }
+                let tint = optional_str(args, "target")?.is_some_and(|t| t.eq_ignore_ascii_case("tint"));
+                let triple = |key: &str| -> Result<[f32; 3], String> {
+                    match args.get(key) {
+                        Some(Value::Number(n)) => {
+                            let v = n.as_f64().unwrap_or(1.0) as f32;
+                            Ok([v, v, v])
+                        }
+                        Some(Value::Array(a)) => {
+                            let v: Vec<f32> = a.iter().filter_map(Value::as_f64).map(|x| x as f32).collect();
+                            match v.as_slice() {
+                                [r, g, b] => Ok([*r, *g, *b]),
+                                _ => Err(format!("\"{key}\" is a number or [r, g, b]")),
+                            }
+                        }
+                        _ => Err(format!("missing \"{key}\"")),
+                    }
+                };
+                Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::AddAdaptWith {
+                    mask: required_str(args, "mask")?.to_owned(),
+                    tint,
+                    at0: triple("at0")?,
+                    at1: triple("at1")?,
+                }))
+            },
+        )
+        .action(
             "terrain_vegetation_remove_species",
             "Removes the selected species and its manual instances. One undo step. args: {}",
             |_| Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::RemoveSpecies)),
@@ -3430,6 +3476,14 @@ fn terrain_vegetation_species_edit(
             .as_bool()
             .map(Edit::Visible)
             .ok_or_else(|| "\"visible\" takes a bool".to_owned()),
+        "recipe" => value
+            .as_str()
+            .map(|v| Edit::Recipe(v.to_owned()))
+            .ok_or_else(|| "\"recipe\" takes a project path of a .generator.nature".to_owned()),
+        "recipevariants" => value
+            .as_u64()
+            .map(|v| Edit::RecipeVariants(v as u32))
+            .ok_or_else(|| "\"recipe_variants\" takes a number".to_owned()),
         "addvariant" => value
             .as_str()
             .map(|v| Edit::AddVariant(v.to_owned()))
@@ -3505,6 +3559,52 @@ fn terrain_vegetation_brush_edit(
     }
 }
 
+/// One species of the vegetation query (kept apart so `json!` does not recurse too deep).
+fn vegetation_species_json(index: usize, s: &doppio_engine::VegSpecies) -> Value {
+    let mut out = serde_json::Map::new();
+    out.insert("index".to_owned(), json!(index));
+    out.insert("uid".to_owned(), json!(s.uid));
+    out.insert("name".to_owned(), json!(s.name));
+    out.insert("meshes".to_owned(), json!(s.meshes));
+    out.insert("material".to_owned(), json!(s.material));
+    out.insert("slot_materials".to_owned(), json!(s.slot_materials));
+    out.insert("recipe".to_owned(), json!(s.recipe));
+    out.insert("recipe_hash".to_owned(), json!(s.recipe_hash.to_string()));
+    out.insert("density_per_ha".to_owned(), json!(s.density_per_ha));
+    out.insert("radius_m".to_owned(), json!(s.radius_m));
+    out.insert("priority".to_owned(), json!(s.priority));
+    out.insert("min_scale".to_owned(), json!(s.min_scale));
+    out.insert("max_scale".to_owned(), json!(s.max_scale));
+    out.insert("tilt".to_owned(), json!(s.tilt));
+    out.insert("sink_m".to_owned(), json!(s.sink_m));
+    out.insert("tint".to_owned(), json!(s.tint));
+    out.insert("tint_jitter".to_owned(), json!(s.tint_jitter));
+    out.insert("max_distance_m".to_owned(), json!(s.max_distance_m));
+    out.insert("procedural".to_owned(), json!(s.procedural));
+    out.insert("visible".to_owned(), json!(s.visible));
+    out.insert("manual_instances".to_owned(), json!(s.manual_instances));
+    let rules: Vec<Value> = s
+        .rules
+        .iter()
+        .map(|r| json!({"mask": r.mask, "from": r.rise0, "full_from": r.rise1, "full_to": r.fall1, "to": r.fall0}))
+        .collect();
+    out.insert("rules".to_owned(), json!(rules));
+    let adapt: Vec<Value> = s
+        .adapt
+        .iter()
+        .map(|a| {
+            json!({
+                "mask": a.mask,
+                "target": if matches!(a.target, doppio_engine::VegAdaptTarget::Tint) { "tint" } else { "scale" },
+                "at0": a.at0,
+                "at1": a.at1,
+            })
+        })
+        .collect();
+    out.insert("adapt".to_owned(), json!(adapt));
+    Value::Object(out)
+}
+
 fn terrain_vegetation_json(app: &App) -> Value {
     let veg = &app.terrain_vegetation;
     let info = veg.info.unwrap_or_default();
@@ -3518,29 +3618,9 @@ fn terrain_vegetation_json(app: &App) -> Value {
         "seed": info.seed.to_string(),
         "gpu_bytes": info.gpu_bytes,
         "selected": veg.selected,
-        "species": veg.species.iter().enumerate().map(|(i, s)| json!({
-            "index": i,
-            "uid": s.uid,
-            "name": s.name,
-            "meshes": s.meshes,
-            "material": s.material,
-            "density_per_ha": s.density_per_ha,
-            "radius_m": s.radius_m,
-            "priority": s.priority,
-            "min_scale": s.min_scale,
-            "max_scale": s.max_scale,
-            "tilt": s.tilt,
-            "sink_m": s.sink_m,
-            "tint": s.tint,
-            "tint_jitter": s.tint_jitter,
-            "max_distance_m": s.max_distance_m,
-            "procedural": s.procedural,
-            "visible": s.visible,
-            "manual_instances": s.manual_instances,
-            "rules": s.rules.iter().map(|r| json!({
-                "mask": r.mask, "from": r.rise0, "full_from": r.rise1, "full_to": r.fall1, "to": r.fall0,
-            })).collect::<Vec<_>>(),
-        })).collect::<Vec<_>>(),
+        "masks": veg.masks,
+        "recipe_variants": veg.recipe_variants,
+        "species": veg.species.iter().enumerate().map(|(i, s)| vegetation_species_json(i, s)).collect::<Vec<_>>(),
         "brush": {
             "tool": veg.tool.label(),
             "radius": veg.radius,

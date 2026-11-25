@@ -492,6 +492,9 @@ VegetationField TerrainCache::vegetationField(ECS::Entity entity, const ECS::Ter
         return Vec3(n.x / length, n.y / length, n.z / length);
     };
     const TerrainFrame frame{&entry->heightmap, sizeX, sizeZ, maxHeight};
+    field.mask = [entry, frame, sizeX, sizeZ](const std::string& mask, f32 x, f32 z, f32& value) {
+        return entry->masks.sample(frame, mask, x + sizeX * 0.5f, z + sizeZ * 0.5f, value);
+    };
     field.density = [entry, frame, sizeX, sizeZ](u32 index, f32 x, f32 z) {
         if (!entry->hasVegetation || index >= entry->vegetation.species().size()) return 1.0f;
         f32 weight = 1.0f;

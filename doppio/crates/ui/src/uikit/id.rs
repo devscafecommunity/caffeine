@@ -405,6 +405,11 @@ pub const TV_SEED: UiId = UiId::fixed("terrain_vegetation.source.seed");
 pub const TV_RESEED: UiId = UiId::fixed("terrain_vegetation.source.reseed");
 pub const TV_BAKE: UiId = UiId::fixed("terrain_vegetation.source.bake");
 pub const TV_REDERIVE: UiId = UiId::fixed("terrain_vegetation.source.rederive");
+pub const TV_RECIPE: UiId = UiId::fixed("terrain_vegetation.species.recipe");
+pub const TV_RECIPE_VARIANTS: UiId = UiId::fixed("terrain_vegetation.species.recipe_variants");
+pub const TV_RECIPE_BAKE: UiId = UiId::fixed("terrain_vegetation.species.recipe_bake");
+pub const TV_ADAPT_SCALE_ADD: UiId = UiId::fixed("terrain_vegetation.species.adapt_scale_add");
+pub const TV_ADAPT_TINT_ADD: UiId = UiId::fixed("terrain_vegetation.species.adapt_tint_add");
 pub const PANE_PERFORMANCE: UiId = UiId::fixed("editor.pane.performance");
 pub const PANE_TAB_PERFORMANCE: UiId = UiId::fixed("editor.pane.tab.performance");
 pub const SHOW_PERFORMANCE: UiId = UiId::fixed("editor.menu.view.performance");
@@ -1005,6 +1010,11 @@ pub fn terrain_vegetation_variant(index: usize, field: &str) -> UiId {
 /// A widget of the `index`-th rule of the selected species (`rise0`, `rise1`, `fall1`, `fall0`, `remove`).
 pub fn terrain_vegetation_rule(index: usize, field: &str) -> UiId {
     UiId::dynamic(format!("terrain_vegetation.species.rule.{index}.{field}"))
+}
+
+/// A widget of the `index`-th adaptation of the selected species (`s0`, `s1`, `r0`, `g0`, `b0`, `r1`, `g1`, `b1`, `remove`).
+pub fn terrain_vegetation_adapt(index: usize, field: &str) -> UiId {
+    UiId::dynamic(format!("terrain_vegetation.species.adapt.{index}.{field}"))
 }
 
 /// One card in the asset manager grid.
@@ -2080,6 +2090,36 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: UiId::fixed("terrain_vegetation.species.rule"),
         description: "Terrain Vegetation: A rule of the selected species (mask, four sliders, remove); widgets use the .N.field suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: TV_RECIPE,
+        description: "Terrain Vegetation: A .generator.nature recipe the species' variants are baked from; empty uses the meshes as they are.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: TV_RECIPE_VARIANTS,
+        description: "Terrain Vegetation: How many variants (1 to 8) to bake from the recipe: other seeds of the same recipe.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_RECIPE_BAKE,
+        description: "Terrain Vegetation: Bakes the variants from the recipe now. The editor also bakes again by itself when the recipe file changes, and every plant of the species follows.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TV_ADAPT_SCALE_ADD,
+        description: "Terrain Vegetation: Adds an adaptation: a mask (slope, height, curvature or a stored one such as wetness) makes the plants bigger or smaller.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TV_ADAPT_TINT_ADD,
+        description: "Terrain Vegetation: Adds an adaptation: a mask makes the plants' colour shift (wet is greener).",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: UiId::fixed("terrain_vegetation.species.adapt"),
+        description: "Terrain Vegetation: An adaptation of the selected species (mask, the value at mask 0 and at mask 1, remove); widgets use the .N.field suffix.",
         kind: "list_row",
     },
     UiMeta {

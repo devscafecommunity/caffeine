@@ -76,6 +76,9 @@ struct VegetationField {
     std::function<Vec3(f32 x, f32 z)> normal;   ///< unit
     /// 0..1: how well the species at palette index `species` suits the point (its rules). Null: everywhere.
     std::function<f32(u32 species, f32 x, f32 z)> density;
+    /// The value 0..1 of a mask (slope, height, curvature or a stored one) at a point; false when there is no such mask. Null:
+    /// there are no masks, and adaptation does nothing.
+    std::function<bool(const std::string& mask, f32 x, f32 z, f32& value)> mask;
     /// Half the terrain's size in metres: nothing stands beyond it. 0 means unbounded.
     f32 halfX = 0.0f, halfZ = 0.0f;
 };

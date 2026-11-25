@@ -11,7 +11,7 @@ use crate::uikit::components::{
 };
 use crate::uikit::id::{self, UiId};
 use crate::uikit::theme::{self, ChipTone};
-use doppio_engine::{VegInfo, VegSpecies, VegTool};
+use doppio_engine::{VegAdaptTarget, VegInfo, VegSpecies, VegTool};
 use iced::widget::{column, container, row, text};
 use iced::{Element, Length};
 use std::rc::Rc;
@@ -205,6 +205,34 @@ pub enum Edit {
     Number(SpeciesNumber, f32),
     Procedural(bool),
     Visible(bool),
+    /// The recipe the species' variants are baked from (a project path); setting it bakes at once.
+    Recipe(String),
+    /// How many variants (1 to 8) a bake makes.
+    RecipeVariants(u32),
+    /// Bakes the selected species' recipe now.
+    BakeRecipe,
+    /// Bakes again every species whose recipe file changed since it was baked.
+    SyncRecipes,
+    /// Adds an adaptation by a mask: scale (`tint` false) or colour.
+    AddAdapt {
+        mask: String,
+        tint: bool,
+    },
+    /// Adds an adaptation with its two ends set (the agent action; the panel adds one that changes nothing).
+    AddAdaptWith {
+        mask: String,
+        tint: bool,
+        at0: [f32; 3],
+        at1: [f32; 3],
+    },
+    RemoveAdapt(usize),
+    /// A number of an adaptation: `at1` false is the value at mask 0, true at mask 1; `channel` 0 is the scale or red.
+    AdaptValue {
+        index: usize,
+        at1: bool,
+        channel: usize,
+        value: f32,
+    },
     AddRule(String),
     RemoveRule(usize),
     Rule(usize, RuleCorner, f32),
@@ -238,6 +266,9 @@ pub struct View<'a> {
     pub respect_rules: bool,
     pub shared_shape: bool,
     pub seed: u64,
+    /// The terrain's masks (slope, height, curvature and the stored ones), for the adaptations.
+    pub masks: &'a [String],
+    pub recipe_variants: u32,
     pub status: Option<&'a str>,
 }
 
@@ -444,6 +475,43 @@ pub fn view<'a, Message: Clone + 'a>(
                 move |v| number_emit(Edit::Number(number, v)),
             ));
         }
+        // The recipe the variants come from.
+        let recipe_emit = emit.clone();
+        let variants_emit = emit.clone();
+        let bake_emit = emit.clone();
+        body = body.push(text_field::property(
+            id::TV_RECIPE,
+            "Recipe",
+            &species.recipe,
+            move |t| recipe_emit(Edit::Recipe(t)),
+        ));
+        if !species.recipe.is_empty() {
+            body = body.push(slider::property_step(
+                id::TV_RECIPE_VARIANTS,
+                "Variants",
+                1.0..=8.0,
+                view.recipe_variants as f32,
+                1.0,
+                move |v| variants_emit(Edit::RecipeVariants(v.round() as u32)),
+            ));
+            body = body.push(button::compact(
+                id::TV_RECIPE_BAKE,
+                "Bake from recipe",
+                bake_emit(Edit::BakeRecipe),
+            ));
+            body = body.push(
+                text(if species.recipe_hash == 0 {
+                    "Not baked yet.".to_owned()
+                } else {
+                    format!(
+                        "Baked from the recipe; {} sub-mesh materials.",
+                        species.slot_materials.len()
+                    )
+                })
+                .size(9)
+                .color(theme::TEXT_MUTED),
+            );
+        }
         body = body.push(checkbox::property(
             id::TV_PROCEDURAL,
             "Grows by itself (density, rules and the seed)",
@@ -518,6 +586,108 @@ pub fn view<'a, Message: Clone + 'a>(
             rules = rules.push(block);
         }
         content = content.push(card("Where it grows", rules.into()));
+
+        // How the ground changes it.
+        let scale_add_emit = emit.clone();
+        let tint_add_emit = emit.clone();
+        let mask_options: Vec<String> = if view.masks.is_empty() {
+            RULE_MASKS.iter().map(|m| (*m).to_owned()).collect()
+        } else {
+            view.masks.to_vec()
+        };
+        let mut adapt = column![
+            dropdown::property(
+                id::TV_ADAPT_SCALE_ADD,
+                "Size by",
+                mask_options.clone(),
+                None,
+                move |picked: String| {
+                    scale_add_emit(Edit::AddAdapt {
+                        mask: picked,
+                        tint: false,
+                    })
+                }
+            ),
+            dropdown::property(
+                id::TV_ADAPT_TINT_ADD,
+                "Colour by",
+                mask_options,
+                None,
+                move |picked: String| {
+                    tint_add_emit(Edit::AddAdapt {
+                        mask: picked,
+                        tint: true,
+                    })
+                }
+            ),
+        ]
+        .spacing(4);
+        if species.adapt.is_empty() {
+            adapt = adapt.push(
+                text("The ground can change a plant: wetter is bigger and greener, steeper is smaller, higher is stunted. Pick a mask to add one.")
+                    .size(9)
+                    .color(theme::TEXT_MUTED),
+            );
+        }
+        for (index, term) in species.adapt.iter().enumerate() {
+            let remove_adapt_emit = emit.clone();
+            let is_tint = matches!(term.target, VegAdaptTarget::Tint);
+            let mut block = column![row![
+                text(format!(
+                    "{} {} (0..1)",
+                    if is_tint { "colour by" } else { "size by" },
+                    term.mask
+                ))
+                .size(10)
+                .color(theme::TEXT),
+                iced::widget::space::horizontal(),
+                button::compact(
+                    id::terrain_vegetation_adapt(index, "remove"),
+                    "Remove",
+                    remove_adapt_emit(Edit::RemoveAdapt(index))
+                ),
+            ]
+            .align_y(iced::Alignment::Center)]
+            .spacing(3);
+            let channels: &[(&str, usize)] = if is_tint {
+                &[("red", 0), ("green", 1), ("blue", 2)]
+            } else {
+                &[("size", 0)]
+            };
+            for (at1, label) in [(false, "At 0"), (true, "At 1")] {
+                for (name, channel) in channels {
+                    let value_emit = emit.clone();
+                    let (channel, at_index) = (*channel, index);
+                    let current = if at1 {
+                        term.at1[channel]
+                    } else {
+                        term.at0[channel]
+                    };
+                    let key = format!(
+                        "{}{}",
+                        if is_tint { &name[..1] } else { "s" },
+                        u8::from(at1)
+                    );
+                    block = block.push(slider::property_step(
+                        id::terrain_vegetation_adapt(index, &key),
+                        format!("{label} {name}"),
+                        if is_tint { 0.0..=2.0 } else { 0.05..=4.0 },
+                        current,
+                        0.01,
+                        move |v| {
+                            value_emit(Edit::AdaptValue {
+                                index: at_index,
+                                at1,
+                                channel,
+                                value: v,
+                            })
+                        },
+                    ));
+                }
+            }
+            adapt = adapt.push(block);
+        }
+        content = content.push(card("How the ground changes it", adapt.into()));
     }
 
     // The brush.

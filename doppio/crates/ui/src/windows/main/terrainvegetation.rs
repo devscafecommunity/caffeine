@@ -8,9 +8,14 @@
 //! painting (`terraineditor.rs`). Every change arrives as an [`Edit`] message, so an agent can do what the mouse can.
 
 use super::{App, LogLevel, PaneKind};
+use crate::uikit::asset_folders;
 use crate::uikit::panels::terrain_paint::BrushAmount;
 use crate::uikit::panels::terrain_vegetation::{Edit, RULE_MASKS};
-use doppio_engine::{BrushPreset, VegBrush, VegInfo, VegRule, VegSpecies, VegTool};
+use crate::uikit::vegetation_recipe;
+use doppio_engine::{
+    BrushPreset, VegAdapt, VegAdaptTarget, VegBrush, VegInfo, VegRule, VegSpecies, VegTool,
+};
+use std::time::{Duration, Instant};
 
 /// The most rules the panel (and the C ABI's struct) shows on one species.
 const MAX_RULES: usize = doppio_engine::VEG_RULES_MAX;
@@ -32,6 +37,11 @@ pub(super) struct State {
     pub respect_rules: bool,
     pub shared_shape: bool,
     pub seed: u64,
+    /// The terrain's masks, for the adaptations.
+    pub masks: Vec<String>,
+    /// How many variants a bake from a recipe makes.
+    pub recipe_variants: u32,
+    last_recipe_check: Option<Instant>,
     /// The seed was typed or dragged and not applied yet: reading the engine must not put the old one back.
     seed_edited: bool,
     pub status: Option<String>,
@@ -58,6 +68,9 @@ impl Default for State {
             respect_rules: true,
             shared_shape: false,
             seed: 1,
+            masks: Vec::new(),
+            recipe_variants: 4,
+            last_recipe_check: None,
             seed_edited: false,
             status: None,
             merge: None,
@@ -81,6 +94,10 @@ impl App {
                 .map(|e| e.name.clone())
         });
         state.info = entity.and_then(|id| engine.terrain_vegetation(id));
+        state.masks = entity
+            .and_then(|id| engine.terrain_masks(id).ok())
+            .map(|masks| masks.into_iter().map(|m| m.name).collect())
+            .unwrap_or_default();
         state.species = match (entity, state.info) {
             (Some(id), Some(info)) if info.enabled => engine.veg_species_list(id),
             _ => Vec::new(),
@@ -373,6 +390,108 @@ impl App {
             Edit::Visible(on) => {
                 self.edit_selected_species("Edit species", "visible", |s| s.visible = on)
             }
+            Edit::Recipe(path) => {
+                self.edit_selected_species("Set species recipe", "recipe", |s| {
+                    s.recipe = path;
+                    s.recipe_hash = 0;
+                });
+                // A recipe that is there is baked at once.
+                self.sync_vegetation_recipes(true);
+            }
+            Edit::RecipeVariants(count) => {
+                self.terrain_vegetation.recipe_variants =
+                    count.clamp(1, vegetation_recipe::MAX_VARIANTS);
+            }
+            Edit::BakeRecipe => {
+                let index = self.terrain_vegetation.selected;
+                let count = self.terrain_vegetation.recipe_variants;
+                match self.bake_species_recipe(index, Some(count)) {
+                    Ok(message) => {
+                        self.log(LogLevel::Action, message.clone());
+                        self.terrain_vegetation.status = Some(message);
+                    }
+                    Err(error) => {
+                        self.log(LogLevel::Error, format!("Recipe: {error}"));
+                        self.terrain_vegetation.status = Some(format!("Recipe: {error}"));
+                    }
+                }
+            }
+            Edit::SyncRecipes => self.sync_vegetation_recipes(true),
+            Edit::AddAdapt { mask, tint } => {
+                self.edit_selected_species("Add species adaptation", "adapt", |s| {
+                    if s.adapt.len() < doppio_engine::VEG_ADAPT_MAX {
+                        // Starts as no change at either end; the sliders do the rest.
+                        s.adapt.push(VegAdapt {
+                            mask,
+                            target: if tint {
+                                VegAdaptTarget::Tint
+                            } else {
+                                VegAdaptTarget::Scale
+                            },
+                            at0: [1.0; 3],
+                            at1: [1.0; 3],
+                        });
+                    }
+                });
+            }
+            Edit::AddAdaptWith {
+                mask,
+                tint,
+                at0,
+                at1,
+            } => {
+                self.edit_selected_species("Add species adaptation", "adapt", |s| {
+                    if s.adapt.len() < doppio_engine::VEG_ADAPT_MAX {
+                        s.adapt.push(VegAdapt {
+                            mask,
+                            target: if tint {
+                                VegAdaptTarget::Tint
+                            } else {
+                                VegAdaptTarget::Scale
+                            },
+                            at0,
+                            at1,
+                        });
+                    }
+                });
+            }
+            Edit::RemoveAdapt(index) => {
+                self.edit_selected_species("Remove species adaptation", "adapt", |s| {
+                    if index < s.adapt.len() {
+                        s.adapt.remove(index);
+                    }
+                });
+            }
+            Edit::AdaptValue {
+                index,
+                at1,
+                channel,
+                value,
+            } => {
+                self.edit_selected_species(
+                    "Edit species adaptation",
+                    &format!("adapt{index}.{}{channel}", u8::from(at1)),
+                    |s| {
+                        if let Some(term) = s.adapt.get_mut(index) {
+                            let slot = if at1 { &mut term.at1 } else { &mut term.at0 };
+                            if channel < 3 {
+                                let max = if matches!(term.target, VegAdaptTarget::Scale) {
+                                    4.0
+                                } else {
+                                    2.0
+                                };
+                                slot[channel] = value.clamp(0.05, max).max(
+                                    if matches!(term.target, VegAdaptTarget::Scale) {
+                                        0.05
+                                    } else {
+                                        0.0
+                                    },
+                                );
+                            }
+                        }
+                    },
+                );
+            }
             Edit::AddRule(mask) => {
                 if !RULE_MASKS.contains(&mask.as_str()) {
                     self.terrain_vegetation.status = Some(format!(
@@ -522,6 +641,131 @@ impl App {
                     }
                 }
                 self.refresh_vegetation_state();
+            }
+        }
+    }
+
+    /// The recipe file of a species: relative to the assets root, or absolute.
+    fn species_recipe_path(&self, recipe: &str) -> Option<std::path::PathBuf> {
+        if recipe.trim().is_empty() {
+            return None;
+        }
+        let path = std::path::PathBuf::from(recipe.trim());
+        if path.is_absolute() {
+            return Some(path);
+        }
+        Some(self.asset_root_dir()?.join(path))
+    }
+
+    /// Bakes the variants of species `index` from its recipe (`count` of them, or as many as it has) and points the species
+    /// at them, as one undo step. Every plant of the species follows. Returns what happened, for the status line.
+    pub(super) fn bake_species_recipe(
+        &mut self,
+        index: usize,
+        count: Option<u32>,
+    ) -> Result<String, String> {
+        let species = self
+            .terrain_vegetation
+            .species
+            .get(index)
+            .cloned()
+            .ok_or("select a species first")?;
+        let recipe_path = self
+            .species_recipe_path(&species.recipe)
+            .ok_or("the species has no recipe")?;
+        if !recipe_path.is_file() {
+            return Err(format!("{} does not exist", recipe_path.display()));
+        }
+        let root = self
+            .asset_root_dir()
+            .ok_or("open a project first: variants are baked into its assets folder")?;
+        let cache = asset_folders::resolve(&root, asset_folders::AssetFolder::NatureModels)
+            .join("Vegetation");
+        let count = count.unwrap_or_else(|| (species.meshes.len() as u32).max(1));
+        let baked = vegetation_recipe::bake_species(&recipe_path, species.uid, count, &cache)?;
+        let project_path = |absolute: &std::path::Path| {
+            let relative = asset_folders::relative(&root, absolute.parent().unwrap_or(absolute));
+            let file = absolute
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let relative = if relative.is_empty() {
+                file
+            } else {
+                format!("{relative}/{file}")
+            };
+            self.engine
+                .as_ref()
+                .and_then(|engine| engine.asset_project_path(&relative).ok())
+                .filter(|path| !path.is_empty())
+                .unwrap_or(relative)
+        };
+        let meshes: Vec<String> = baked.meshes.iter().map(|m| project_path(m)).collect();
+        let materials = self.nature_part_materials(&baked.model, &baked.parts);
+        let mut species_list = self.terrain_vegetation.species.clone();
+        let target = species_list.get_mut(index).ok_or("the species is gone")?;
+        let unchanged = target.meshes == meshes
+            && target.slot_materials == materials
+            && target.recipe_hash == baked.hash;
+        target.meshes = meshes;
+        target.slot_materials = materials;
+        target.recipe_hash = baked.hash;
+        let name = target.name.clone();
+        if unchanged {
+            return Ok(format!("{name} is up to date with its recipe"));
+        }
+        if !self.apply_species(&species_list, "Bake species from recipe", None) {
+            return Err(self
+                .terrain_vegetation
+                .status
+                .clone()
+                .unwrap_or_else(|| "the species could not be changed".to_owned()));
+        }
+        Ok(format!(
+            "Baked {} variant{} of {name} from its recipe",
+            baked.meshes.len(),
+            if baked.meshes.len() == 1 { "" } else { "s" }
+        ))
+    }
+
+    /// Bakes again every species whose recipe file changed since it was baked. With `force` it looks now; otherwise it
+    /// looks at most every two seconds (it runs on the viewport's tick while the vegetation tab is the one in use).
+    pub(super) fn sync_vegetation_recipes(&mut self, force: bool) {
+        if !self.terrain_vegetation.info.is_some_and(|i| i.enabled) {
+            return;
+        }
+        if !force
+            && self
+                .terrain_vegetation
+                .last_recipe_check
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(2))
+        {
+            return;
+        }
+        self.terrain_vegetation.last_recipe_check = Some(Instant::now());
+        let stale: Vec<usize> = (0..self.terrain_vegetation.species.len())
+            .filter(|index| {
+                let species = &self.terrain_vegetation.species[*index];
+                self.species_recipe_path(&species.recipe)
+                    .filter(|path| path.is_file())
+                    .and_then(|path| vegetation_recipe::recipe_hash(&path).ok())
+                    .is_some_and(|hash| hash != species.recipe_hash)
+            })
+            .collect();
+        for index in stale {
+            let count = self.terrain_vegetation.recipe_variants;
+            let had = self.terrain_vegetation.species[index].meshes.len() as u32;
+            // A species that already has variants keeps how many; a new recipe bakes the panel's number.
+            let wanted = if had > 1 { had } else { count };
+            match self.bake_species_recipe(index, Some(wanted)) {
+                Ok(message) => {
+                    self.log(LogLevel::Action, message.clone());
+                    self.terrain_vegetation.status = Some(message);
+                }
+                Err(error) => {
+                    self.log(LogLevel::Error, format!("Recipe: {error}"));
+                    self.terrain_vegetation.status = Some(format!("Recipe: {error}"));
+                }
             }
         }
     }

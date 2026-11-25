@@ -970,6 +970,37 @@ impl App {
         })
     }
 
+    /// The materials of a baked model's parts (the sub-meshes of a vegetation species), as project paths in part order;
+    /// a part whose material cannot be made gets an empty path and the reason is logged.
+    pub(super) fn nature_part_materials(
+        &mut self,
+        model: &nature::mesh::NatureModel,
+        parts: &[usize],
+    ) -> Vec<String> {
+        parts
+            .iter()
+            .map(|index| {
+                let Some(part) = model.parts.get(*index) else {
+                    return String::new();
+                };
+                let made = match &part.surface {
+                    Some(spec) => self.ensure_surface_material(part, spec),
+                    None => self.ensure_nature_material(
+                        &part.material,
+                        Foliage::for_spec(&part.name, &part.material),
+                    ),
+                };
+                made.unwrap_or_else(|error| {
+                    self.log(
+                        LogLevel::Error,
+                        format!("Material of {}: {error}", part.name),
+                    );
+                    String::new()
+                })
+            })
+            .collect()
+    }
+
     fn ensure_nature_material(
         &mut self,
         spec: &MaterialSpec,

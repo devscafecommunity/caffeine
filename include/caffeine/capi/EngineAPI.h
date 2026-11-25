@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define CAFFEINE_CAPI_VERSION 30
+#define CAFFEINE_CAPI_VERSION 31
 #define CAFFEINE_ENTITY_NONE UINT32_MAX
 
 typedef struct CaffeineSession CaffeineSession;
@@ -1276,11 +1276,20 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_layer_at(const Caffein
 #define CAFFEINE_VEG_SPECIES_MAX 256
 #define CAFFEINE_VEG_VARIANTS_MAX 8
 #define CAFFEINE_VEG_RULES_MAX 4
+#define CAFFEINE_VEG_ADAPT_MAX 4
 
 typedef struct CaffeineVegRule {
     char mask[32];               /* slope, height, curvature or a stored mask */
     float rise0, rise1, fall1, fall0;  /* the species grows where the mask is inside this trapezoid (0..1) */
 } CaffeineVegRule;
+
+/** How the ground changes a plant (v31): a mask scales it (target 0: `at0[0]` at mask 0, `at1[0]` at mask 1) or tints it (target 1: colours). */
+typedef struct CaffeineVegAdapt {
+    char mask[32];
+    int32_t target;              /* 0 scale, 1 tint */
+    float at0[3];
+    float at1[3];
+} CaffeineVegAdapt;
 
 typedef struct CaffeineVegSpecies {
     uint32_t uid;                /* stable; 0 on a species to be added */
@@ -1289,6 +1298,11 @@ typedef struct CaffeineVegSpecies {
     char meshes[CAFFEINE_VEG_VARIANTS_MAX][256];
     char material[256];
     char recipe[256];
+    uint64_t recipe_hash;        /* content hash of the recipe the variants were baked from (0 when not from a recipe) */
+    uint32_t slot_material_count;/* a .mat per sub-mesh of the variants, at most CAFFEINE_VEG_VARIANTS_MAX */
+    char slot_materials[CAFFEINE_VEG_VARIANTS_MAX][256];
+    uint32_t adapt_count;        /* at most CAFFEINE_VEG_ADAPT_MAX */
+    CaffeineVegAdapt adapt[CAFFEINE_VEG_ADAPT_MAX];
     float density_per_ha;
     float radius_m;
     int32_t priority;

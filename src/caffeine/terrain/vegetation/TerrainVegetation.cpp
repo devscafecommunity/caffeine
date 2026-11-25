@@ -253,6 +253,19 @@ u64 TerrainVegetation::proceduralId(u32 uid, f32 x, f32 z) {
 
 VegetationResolved TerrainVegetation::place(const VegetationSpecies& species, u32 index, u64 id, u8 variant, bool manual, f32 x, f32 z,
                                             f32 scale, f32 yaw, const f32* tint, const VegetationField& field) const {
+    // The ground changes the plant: its masks scale and tint it (wet is bigger and greener, steep is smaller).
+    f32 adaptedTint[3] = {tint[0], tint[1], tint[2]};
+    for (const VegetationAdapt& a : species.adapt) {
+        f32 value = 0.0f;
+        if (!field.mask || !field.mask(a.mask, x, z, value)) continue;
+        value = std::clamp(value, 0.0f, 1.0f);
+        if (a.target == 0) {
+            scale = std::clamp(scale * (a.at0[0] + (a.at1[0] - a.at0[0]) * value), 0.05f, 50.0f);
+        } else {
+            for (int c = 0; c < 3; ++c) adaptedTint[c] *= a.at0[c] + (a.at1[c] - a.at0[c]) * value;
+        }
+    }
+    tint = adaptedTint;
     VegetationResolved r;
     r.id = id;
     r.species = index;

@@ -3333,55 +3333,62 @@ void GpuSceneRenderer::appendVegetationDraws(ECS::World& world, const Vec3& came
             const std::string& meshPath = species.meshes[batch.variant % species.meshes.size()];
             Assets::Mesh3D* mesh = Assets::MeshCache::getInstance().getMesh(meshPath, projectRoot);
             if (!mesh || mesh->vertices.empty() || !ensureMeshUploaded(mesh) || !mesh->vertexBuffer || !mesh->indexBuffer) continue;
-            MeshDraw draw;
-            draw.entity = entity;
-            draw.mesh = mesh;
-            // A batch of one is a plain mesh at its own matrix; more are one instanced draw from the chunk's buffer.
-            draw.worldMatrix = batch.count == 1 ? batch.first : Mat4::identity();
-            if (batch.count > 1) {
-                draw.batchCount = batch.count;
-                draw.batchBuffer = batch.buffer;
-                draw.batchByteOffset = 0;
-            }
-            draw.castShadows = false;  // shadows from instanced vegetation are not drawn yet
-            draw.receiveShadows = true;
-            draw.meshPath = Assets::MeshCache::getInstance().getResolvedPath().empty() ? meshPath : Assets::MeshCache::getInstance().getResolvedPath();
-            draw.modTint = Vec3(species.tint[0], species.tint[1], species.tint[2]);
-            draw.viewerDistance = batch.distance;
-            if (!mesh->materials.empty()) {
-                u8 mode = 0;
-                f32 cutoff = 0.5f;
-                for (const Assets::MeshSurfaceMaterial& material : mesh->materials) {
-                    if (material.alphaMode > mode) mode = material.alphaMode;
-                    if (material.alphaMode != 0) cutoff = material.alphaCutoff;
+            // One draw per sub-mesh: a tree's bark and its leaves have their own materials (`slotMaterials`, in sub-mesh order).
+            const usize slots = std::max<usize>(mesh->subMeshes.size(), 1);
+            for (usize slot = 0; slot < slots; ++slot) {
+                const std::string& materialPath =
+                    slot < species.slotMaterials.size() && !species.slotMaterials[slot].empty() ? species.slotMaterials[slot] : species.material;
+                MeshDraw draw;
+                draw.entity = entity;
+                draw.mesh = mesh;
+                draw.onlySubMesh = mesh->subMeshes.size() > 1 ? static_cast<i32>(slot) : -1;
+                // A batch of one is a plain mesh at its own matrix; more are one instanced draw from the chunk's buffer.
+                draw.worldMatrix = batch.count == 1 ? batch.first : Mat4::identity();
+                if (batch.count > 1) {
+                    draw.batchCount = batch.count;
+                    draw.batchBuffer = batch.buffer;
+                    draw.batchByteOffset = 0;
                 }
-                draw.alphaMode = mode;
-                draw.alphaCutoff = cutoff;
-            }
-            if (!species.material.empty()) {
-                const Assets::MaterialSurface surface = Assets::MaterialCache::instance().resolve(species.material, projectRoot);
-                if (surface.valid) {
-                    draw.hasAuthoredMaterial = true;
-                    const Vec3 albedo = srgbToLinear(Vec3(surface.albedo.x, surface.albedo.y, surface.albedo.z));
-                    draw.albedo = Vec4(albedo.x, albedo.y, albedo.z, std::clamp(surface.albedo.w, 0.0f, 1.0f));
-                    draw.metallic = std::clamp(surface.metallic, 0.0f, 1.0f);
-                    draw.roughness = std::clamp(surface.roughness, 0.02f, 1.0f);
-                    draw.reflectance = std::clamp(surface.reflectance, 0.0f, 1.0f);
-                    draw.customTexturePath = surface.albedoMap;
-                    draw.customNormalPath = surface.normalMap;
-                    draw.ormMapPath = surface.ormMap;
-                    draw.uvTiling = surface.uvTiling;
-                    draw.uvOffset = surface.uvOffset;
-                    draw.alphaMode = static_cast<u8>(surface.alphaMode);
-                    draw.alphaCutoff = surface.alphaCutoff;
-                    draw.windStrength = surface.windStrength;
-                    draw.windSpeed = surface.windSpeed;
-                    draw.windFlutter = surface.windFlutter;
-                    draw.translucency = surface.translucency;
-                    if (draw.alphaMode == 0 && draw.albedo.w < 1.0f) draw.albedo.w = 1.0f;
+                draw.castShadows = false;  // shadows from instanced vegetation are not drawn yet
+                draw.receiveShadows = true;
+                draw.meshPath = Assets::MeshCache::getInstance().getResolvedPath().empty() ? meshPath : Assets::MeshCache::getInstance().getResolvedPath();
+                draw.modTint = Vec3(species.tint[0], species.tint[1], species.tint[2]);
+                draw.viewerDistance = batch.distance;
+                if (!mesh->materials.empty()) {
+                    u8 mode = 0;
+                    f32 cutoff = 0.5f;
+                    for (const Assets::MeshSurfaceMaterial& material : mesh->materials) {
+                        if (material.alphaMode > mode) mode = material.alphaMode;
+                        if (material.alphaMode != 0) cutoff = material.alphaCutoff;
+                    }
+                    draw.alphaMode = mode;
+                    draw.alphaCutoff = cutoff;
                 }
+                if (!materialPath.empty()) {
+                    const Assets::MaterialSurface surface = Assets::MaterialCache::instance().resolve(materialPath, projectRoot);
+                    if (surface.valid) {
+                        draw.hasAuthoredMaterial = true;
+                        const Vec3 albedo = srgbToLinear(Vec3(surface.albedo.x, surface.albedo.y, surface.albedo.z));
+                        draw.albedo = Vec4(albedo.x, albedo.y, albedo.z, std::clamp(surface.albedo.w, 0.0f, 1.0f));
+                        draw.metallic = std::clamp(surface.metallic, 0.0f, 1.0f);
+                        draw.roughness = std::clamp(surface.roughness, 0.02f, 1.0f);
+                        draw.reflectance = std::clamp(surface.reflectance, 0.0f, 1.0f);
+                        draw.customTexturePath = surface.albedoMap;
+                        draw.customNormalPath = surface.normalMap;
+                        draw.ormMapPath = surface.ormMap;
+                        draw.uvTiling = surface.uvTiling;
+                        draw.uvOffset = surface.uvOffset;
+                        draw.alphaMode = static_cast<u8>(surface.alphaMode);
+                        draw.alphaCutoff = surface.alphaCutoff;
+                        draw.windStrength = surface.windStrength;
+                        draw.windSpeed = surface.windSpeed;
+                        draw.windFlutter = surface.windFlutter;
+                        draw.translucency = surface.translucency;
+                        if (draw.alphaMode == 0 && draw.albedo.w < 1.0f) draw.albedo.w = 1.0f;
+                    }
+                }
+                draws.push_back(draw);
             }
-            draws.push_back(draw);
         }
     });
 }

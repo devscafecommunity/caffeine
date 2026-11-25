@@ -74,6 +74,19 @@ TEST_CASE("Vegetation species - the text round trips and reports bad lines", "[t
     slope.mask = "slope";
     slope.rise0 = 0.0f; slope.rise1 = 0.0f; slope.fall1 = 0.3f; slope.fall0 = 0.4f;
     pine.rules = {slope};
+    pine.slotMaterials = {"Materials/bark.mat", "Materials/needles.mat"};
+    pine.recipeHash = 0xDEADBEEFCAFEull;
+    VegetationAdapt shrink;
+    shrink.mask = "slope";
+    shrink.target = 0;
+    shrink.at0[0] = 1.2f;
+    shrink.at1[0] = 0.5f;
+    VegetationAdapt green;
+    green.mask = "wetness";
+    green.target = 1;
+    green.at0[0] = 1.0f; green.at0[1] = 0.8f; green.at0[2] = 0.7f;
+    green.at1[0] = 0.8f; green.at1[1] = 1.2f; green.at1[2] = 0.9f;
+    pine.adapt = {shrink, green};
     VegetationSpecies rock;
     rock.uid = 9;
     rock.name = "Boulder with spaces";
@@ -95,6 +108,10 @@ TEST_CASE("Vegetation species - the text round trips and reports bad lines", "[t
     REQUIRE_FALSE(vegetationSpeciesFromText("mesh x.obj\n", keep, &error));
     REQUIRE_FALSE(vegetationSpeciesFromText("species A\n  rule slope 0.5 0.1 0.2 0.3\n", keep, &error));
     REQUIRE_FALSE(vegetationSpeciesFromText("species A\n  uid 3\nspecies B\n  uid 3\n", keep, &error));
+    REQUIRE_FALSE(vegetationSpeciesFromText("species A\n  adapt scale slope 1\n", keep, &error));
+    REQUIRE(error.find("line 2") != std::string::npos);
+    REQUIRE_FALSE(vegetationSpeciesFromText("species A\n  adapt scale slope 0 1\n", keep, &error));  // a scale must be positive
+    REQUIRE_FALSE(vegetationSpeciesFromText("species A\n  adapt paint slope 1 1\n", keep, &error));
     // A species without a uid takes a free one; an unknown key is skipped.
     REQUIRE(vegetationSpeciesFromText("species A\n  uid 5\n  future_key 1\nspecies B\n", keep, &error));
     REQUIRE(keep[1].uid == 6);
@@ -736,4 +753,83 @@ TEST_CASE("Vegetation - nothing stands off the terrain", "[terrain][vegetation]"
         REQUIRE(std::fabs(r.x) <= 64.0f);
         REQUIRE(std::fabs(r.z) <= 32.0f);
     }
+}
+
+
+TEST_CASE("Vegetation - the ground changes a plant: a mask scales and tints it, and a changed mask re-adapts", "[terrain][vegetation]") {
+    TerrainVegetation veg;
+    VegetationSpecies fern = tree("Fern", 600.0f, 1.0f, 1);
+    fern.minScale = fern.maxScale = 1.0f;  // so the only variation is the ground's
+    fern.tintJitter = 0.0f;
+    VegetationAdapt size;
+    size.mask = "wetness";
+    size.target = 0;
+    size.at0[0] = 0.5f;  // dry: half size
+    size.at1[0] = 2.0f;  // wet: twice
+    VegetationAdapt colour;
+    colour.mask = "wetness";
+    colour.target = 1;
+    colour.at0[0] = 1.0f; colour.at0[1] = 0.5f; colour.at0[2] = 1.0f;
+    colour.at1[0] = 1.0f; colour.at1[1] = 1.5f; colour.at1[2] = 1.0f;  // wet: greener
+    fern.adapt = {size, colour};
+    veg.addSpecies(fern);
+
+    // Wetness grows from west (0) to east (1) across the 256 m terrain.
+    auto wetness = [](f32 x) { return std::clamp((x + 128.0f) / 256.0f, 0.0f, 1.0f); };
+    VegetationField field = flatField();
+    field.mask = [&](const std::string& name, f32 x, f32, f32& value) {
+        if (name != "wetness") return false;
+        value = wetness(x);
+        return true;
+    };
+    const auto all = resolveAll(veg, field);
+    REQUIRE(all.size() > 500);
+    for (const VegetationResolved& r : all) {
+        const f32 w = wetness(r.x);
+        REQUIRE(r.scale == Approx(0.5f + 1.5f * w).margin(1e-4f));
+        REQUIRE(r.tint[1] == Approx(0.5f + 1.0f * w).margin(1e-4f));
+        REQUIRE(r.tint[0] == Approx(1.0f).margin(1e-4f));
+    }
+    // The same plants, bigger in the east than in the west: the ids and the spots do not depend on the ground's masks.
+    VegetationField dry = flatField();
+    dry.mask = [](const std::string&, f32, f32, f32& value) {
+        value = 0.0f;
+        return true;
+    };
+    const auto parched = resolveAll(veg, dry);
+    REQUIRE(idsOf(parched) == idsOf(all));
+    for (const VegetationResolved& r : parched) REQUIRE(r.scale == Approx(0.5f).margin(1e-4f));
+
+    // A mask that does not exist, or no masks at all, adapt nothing.
+    REQUIRE(resolveAll(veg, flatField()).front().scale == Approx(1.0f));
+    VegetationField other = flatField();
+    other.mask = [](const std::string&, f32, f32, f32&) { return false; };
+    REQUIRE(resolveAll(veg, other).front().scale == Approx(1.0f));
+
+    // The sink follows the adapted size.
+    VegetationSpecies sunk = veg.species()[0];
+    sunk.sinkM = 0.2f;
+    veg.setSpecies(0, sunk);
+    for (const VegetationResolved& r : resolveAll(veg, field)) REQUIRE(r.y == Approx(-0.2f * r.scale).margin(1e-4f));
+}
+
+TEST_CASE("Vegetation - a species keeps its slot materials and recipe hash through the file", "[terrain][vegetation]") {
+    TerrainVegetation veg;
+    VegetationSpecies oak = tree("Oak", 100.0f, 3.0f, 2);
+    oak.slotMaterials = {"Materials/bark.mat", "Materials/leaf.mat"};
+    oak.recipe = "Nature/Oak.generator.nature";
+    oak.recipeHash = 0x0123456789ABCDEFull;
+    VegetationAdapt a;
+    a.mask = "wetness";
+    a.at1[0] = 1.5f;
+    oak.adapt = {a};
+    veg.addSpecies(oak);
+    const std::vector<u8> bytes = veg.toBytes();
+    TerrainVegetation back;
+    std::string error;
+    REQUIRE(TerrainVegetation::fromBytes(bytes.data(), bytes.size(), back, &error));
+    REQUIRE(back.species()[0] == veg.species()[0]);
+    REQUIRE(back.species()[0].recipeHash == 0x0123456789ABCDEFull);
+    REQUIRE(back.species()[0].slotMaterials.size() == 2);
+    REQUIRE(back.species()[0].adapt.size() == 1);
 }

@@ -684,6 +684,11 @@ enum Message {
     /// An edit of the Terrain Vegetation panel (species, brush, procedural source, the tool's switch).
     TerrainVegetation(crate::uikit::panels::terrain_vegetation::Edit),
     ShowTerrainVegetation,
+    /// Bakes the selected species' recipe (the `terrain_vegetation_bake_recipe` agent action).
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    TerrainVegetationBakeRecipe {
+        variants: Option<u32>,
+    },
     /// One whole vegetation stroke along world-space points, metres (the `terrain_vegetation_stroke` agent action).
     #[cfg_attr(not(feature = "agent"), allow(dead_code))]
     TerrainVegetationStroke {
@@ -7767,6 +7772,15 @@ impl App {
             Message::ShowTerrainPaint => self.show_terrain_paint_pane(),
             Message::TerrainVegetation(edit) => self.edit_terrain_vegetation(edit),
             Message::ShowTerrainVegetation => self.show_terrain_vegetation_pane(),
+            Message::TerrainVegetationBakeRecipe { variants } => {
+                self.refresh_vegetation_state();
+                if let Some(count) = variants {
+                    self.terrain_vegetation.recipe_variants = count.clamp(1, 8);
+                }
+                self.edit_terrain_vegetation(
+                    crate::uikit::panels::terrain_vegetation::Edit::BakeRecipe,
+                );
+            }
             Message::TerrainVegetationStroke { terrain, points } => {
                 if let Err(error) = self.vegetation_stroke_along(terrain, &points) {
                     self.log(LogLevel::Error, format!("Terrain vegetation: {error}"));
@@ -8078,6 +8092,10 @@ impl App {
             }
             Message::ViewportTick => {
                 self.poll_pack_job();
+                // A recipe edited in the Nature Generator reaches the plants that use it.
+                if self.terrain_vegetation.info.is_some_and(|i| i.enabled) {
+                    self.sync_vegetation_recipes(false);
+                }
                 let dt = self
                     .viewport_last_tick
                     .map_or(1.0 / 60.0, |last| last.elapsed().as_secs_f32())
@@ -9830,6 +9848,8 @@ impl App {
                         respect_rules: self.terrain_vegetation.respect_rules,
                         shared_shape: self.terrain_vegetation.shared_shape,
                         seed: self.terrain_vegetation.seed,
+                        masks: &self.terrain_vegetation.masks,
+                        recipe_variants: self.terrain_vegetation.recipe_variants,
                         status: self.terrain_vegetation.status.as_deref(),
                     },
                     Message::TerrainVegetation,

@@ -23,8 +23,14 @@ std::string num(f32 value) {
 
 }  // namespace
 
+bool VegetationAdapt::operator==(const VegetationAdapt& o) const {
+    return mask == o.mask && target == o.target && at0[0] == o.at0[0] && at0[1] == o.at0[1] && at0[2] == o.at0[2] && at1[0] == o.at1[0] &&
+           at1[1] == o.at1[1] && at1[2] == o.at1[2];
+}
+
 bool VegetationSpecies::operator==(const VegetationSpecies& other) const {
     if (uid != other.uid || name != other.name || meshes != other.meshes || material != other.material || recipe != other.recipe ||
+        slotMaterials != other.slotMaterials || recipeHash != other.recipeHash || adapt.size() != other.adapt.size() ||
         densityPerHa != other.densityPerHa || radius != other.radius || priority != other.priority || minScale != other.minScale ||
         maxScale != other.maxScale || tilt != other.tilt || sinkM != other.sinkM || tintJitter != other.tintJitter ||
         tint[0] != other.tint[0] || tint[1] != other.tint[1] || tint[2] != other.tint[2] || maxDistance != other.maxDistance ||
@@ -34,6 +40,9 @@ bool VegetationSpecies::operator==(const VegetationSpecies& other) const {
     for (usize i = 0; i < rules.size(); ++i) {
         const BiomeTerm &a = rules[i], &b = other.rules[i];
         if (a.mask != b.mask || a.rise0 != b.rise0 || a.rise1 != b.rise1 || a.fall1 != b.fall1 || a.fall0 != b.fall0) return false;
+    }
+    for (usize i = 0; i < adapt.size(); ++i) {
+        if (!(adapt[i] == other.adapt[i])) return false;
     }
     return true;
 }
@@ -46,7 +55,9 @@ std::string vegetationSpeciesToText(const std::vector<VegetationSpecies>& list) 
         out << "  uid " << s.uid << "\n";
         for (const std::string& mesh : s.meshes) out << "  mesh " << mesh << "\n";
         if (!s.material.empty()) out << "  material " << s.material << "\n";
+        for (const std::string& slot : s.slotMaterials) out << "  slot_material " << slot << "\n";
         if (!s.recipe.empty()) out << "  recipe " << s.recipe << "\n";
+        if (s.recipeHash != 0) out << "  recipe_hash " << s.recipeHash << "\n";
         out << "  density " << num(s.densityPerHa) << "\n";
         out << "  radius " << num(s.radius) << "\n";
         out << "  priority " << s.priority << "\n";
@@ -58,6 +69,14 @@ std::string vegetationSpeciesToText(const std::vector<VegetationSpecies>& list) 
         out << "  distance " << num(s.maxDistance) << "\n";
         out << "  procedural " << (s.procedural ? 1 : 0) << "\n";
         out << "  visible " << (s.visible ? 1 : 0) << "\n";
+        for (const VegetationAdapt& a : s.adapt) {
+            if (a.target == 0) {
+                out << "  adapt scale " << a.mask << " " << num(a.at0[0]) << " " << num(a.at1[0]) << "\n";
+            } else {
+                out << "  adapt tint " << a.mask << " " << num(a.at0[0]) << " " << num(a.at0[1]) << " " << num(a.at0[2]) << " " << num(a.at1[0])
+                    << " " << num(a.at1[1]) << " " << num(a.at1[2]) << "\n";
+            }
+        }
         for (const BiomeTerm& t : s.rules) {
             out << "  rule " << t.mask << " " << num(t.rise0) << " " << num(t.rise1) << " " << num(t.fall1) << " " << num(t.fall0) << "\n";
         }
@@ -106,6 +125,28 @@ bool vegetationSpeciesFromText(const std::string& text, std::vector<VegetationSp
             s.meshes.push_back(rest);
         } else if (key == "material") {
             s.material = rest;
+        } else if (key == "slot_material") {
+            if (rest.empty()) return fail("`slot_material` needs a project path");
+            s.slotMaterials.push_back(rest);
+        } else if (key == "recipe_hash") {
+            if (!(words >> s.recipeHash)) return fail("`recipe_hash` needs a number");
+        } else if (key == "adapt") {
+            std::string kind;
+            VegetationAdapt a;
+            if (!(words >> kind >> a.mask)) return fail("`adapt` is `scale <mask> <at 0> <at 1>` or `tint <mask> r g b r g b`");
+            if (kind == "scale") {
+                if (!(words >> a.at0[0] >> a.at1[0])) return fail("`adapt scale` needs two numbers: the scale at mask 0 and at mask 1");
+                a.target = 0;
+                if (a.at0[0] <= 0.0f || a.at1[0] <= 0.0f) return fail("an adapt scale must be positive");
+            } else if (kind == "tint") {
+                if (!(words >> a.at0[0] >> a.at0[1] >> a.at0[2] >> a.at1[0] >> a.at1[1] >> a.at1[2])) {
+                    return fail("`adapt tint` needs six numbers: the colour at mask 0 and at mask 1");
+                }
+                a.target = 1;
+            } else {
+                return fail("`adapt` is for `scale` or `tint`");
+            }
+            s.adapt.push_back(a);
         } else if (key == "recipe") {
             s.recipe = rest;
         } else if (key == "density") {

@@ -17913,4 +17913,240 @@ mod terrain_vegetation {
             "grown plants are erased by overrides, not deleted"
         );
     }
+
+    // ---- phase 4: species from recipes and adaptation to the ground
+
+    fn recipe_in(root: &std::path::Path, preset: &str) -> String {
+        use crate::uikit::{nature, recipe};
+        std::fs::create_dir_all(root.join("Models")).unwrap();
+        let chosen = nature::presets()
+            .into_iter()
+            .find(|p| p.name == preset)
+            .or_else(|| nature::presets().into_iter().next())
+            .expect("a nature preset");
+        let graph = chosen.graph();
+        let text = nature::to_text(chosen.name, &graph, chosen.quality);
+        let path = root
+            .join("Models")
+            .join(recipe::file_name("Plant", recipe::Kind::Nature));
+        recipe::write(
+            &path,
+            &recipe::Recipe::new(recipe::Kind::Nature, "Plant", "", text),
+        )
+        .unwrap();
+        "Models/Plant.generator.nature".to_owned()
+    }
+
+    fn project(harness: &mut Harness, name: &str) -> std::path::PathBuf {
+        let root = test_temp_root(name);
+        std::fs::create_dir_all(&root).unwrap();
+        harness.app.asset_root_override = Some(root.clone());
+        root
+    }
+
+    #[test]
+    fn a_species_baked_from_a_recipe_follows_the_recipe_when_it_changes() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        let root = project(&mut harness, "veg-recipe");
+        harness.dispatch(Message::ShowTerrainVegetation);
+        harness.dispatch(Message::TerrainVegetation(Edit::Enable(true)));
+        harness.dispatch(Message::TerrainVegetation(Edit::AddSpeciesWith {
+            name: "Plant".to_owned(),
+            meshes: vec!["Meshes/pine.obj".to_owned()],
+            tint: [1.0; 3],
+            density_per_ha: 300.0,
+            radius_m: 2.0,
+        }));
+        harness.dispatch(Message::TerrainVegetation(Edit::Select(0)));
+        let ids = |harness: &Harness| -> Vec<u64> {
+            let mut list: Vec<u64> = harness
+                .app()
+                .engine
+                .as_ref()
+                .unwrap()
+                .veg_instances(id, 0.0, 0.0, 400.0, 5000)
+                .unwrap()
+                .0
+                .iter()
+                .map(|i| i.id)
+                .collect();
+            list.sort_unstable();
+            list
+        };
+        let before = ids(&harness);
+        assert!(!before.is_empty());
+
+        let recipe = recipe_in(&root, "Low-poly Rock");
+        let steps = harness.app().history.len();
+        harness.dispatch(Message::TerrainVegetation(Edit::Recipe(recipe.clone())));
+        let species = harness.app().terrain_vegetation.species[0].clone();
+        assert_eq!(species.recipe, recipe);
+        assert_eq!(species.meshes.len(), 4, "the panel's four variants");
+        assert!(
+            !species.slot_materials.is_empty(),
+            "a material for every part"
+        );
+        let first_hash = species.recipe_hash;
+        assert_ne!(first_hash, 0);
+        assert!(root.join("Models").is_dir());
+        assert!(
+            species.meshes.iter().all(|m| m.ends_with("_species.obj")),
+            "{:?}",
+            species.meshes
+        );
+        assert!(
+            harness.app().history.len() > steps,
+            "baking is an undoable step"
+        );
+        assert_eq!(
+            ids(&harness),
+            before,
+            "the same plants, the species' look changed"
+        );
+
+        // Edit the recipe file (another model): the editor bakes again by itself and the plants follow.
+        let _ = recipe_in(&root, "Hero Tree");
+        harness.dispatch(Message::TerrainVegetation(Edit::SyncRecipes));
+        let rebaked = harness.app().terrain_vegetation.species[0].clone();
+        assert_ne!(rebaked.recipe_hash, first_hash);
+        assert_ne!(rebaked.meshes, species.meshes, "other models, other files");
+        assert_eq!(rebaked.meshes.len(), 4, "the same number of variants");
+        assert_eq!(ids(&harness), before, "no plant was replaced");
+
+        // Nothing changed: another sync does nothing; undo puts the first bake back.
+        let steps = harness.app().history.len();
+        harness.dispatch(Message::TerrainVegetation(Edit::SyncRecipes));
+        assert_eq!(harness.app().history.len(), steps);
+        harness.dispatch(Message::Undo);
+        assert_eq!(
+            harness.app().terrain_vegetation.species[0].meshes,
+            species.meshes
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_recipe_that_is_missing_or_wrong_is_said_not_swallowed() {
+        let Some((mut harness, _)) = scene() else {
+            return;
+        };
+        let root = project(&mut harness, "veg-recipe-missing");
+        harness.dispatch(Message::ShowTerrainVegetation);
+        with_species(&mut harness);
+        harness.dispatch(Message::TerrainVegetation(Edit::Select(0)));
+        harness.dispatch(Message::TerrainVegetation(Edit::Recipe(
+            "Models/none.generator.nature".to_owned(),
+        )));
+        harness.dispatch(Message::TerrainVegetation(Edit::BakeRecipe));
+        assert!(harness
+            .app()
+            .terrain_vegetation
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("does not exist")));
+        assert_eq!(harness.app().terrain_vegetation.species[0].recipe_hash, 0);
+        assert_eq!(
+            harness.app().terrain_vegetation.species[0].meshes,
+            vec!["Meshes/pine.obj".to_owned()],
+            "the meshes are kept"
+        );
+        // A variant count is kept between 1 and 8.
+        harness.dispatch(Message::TerrainVegetation(Edit::RecipeVariants(40)));
+        assert_eq!(harness.app().terrain_vegetation.recipe_variants, 8);
+        harness.dispatch(Message::TerrainVegetation(Edit::RecipeVariants(0)));
+        assert_eq!(harness.app().terrain_vegetation.recipe_variants, 1);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_ground_adapts_a_species_and_the_edits_are_undoable() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainVegetation);
+        with_species(&mut harness);
+        harness.dispatch(Message::TerrainVegetation(Edit::Select(0)));
+        let scales = |harness: &Harness| -> Vec<f32> {
+            harness
+                .app()
+                .engine
+                .as_ref()
+                .unwrap()
+                .veg_instances(id, 0.0, 0.0, 60.0, 400)
+                .unwrap()
+                .0
+                .iter()
+                .map(|i| i.scale)
+                .collect()
+        };
+        let plain = scales(&harness);
+        assert!(!plain.is_empty());
+        assert!(
+            !harness.app().terrain_vegetation.masks.is_empty(),
+            "the terrain's masks are listed"
+        );
+        assert!(harness
+            .app()
+            .terrain_vegetation
+            .masks
+            .iter()
+            .any(|m| m == "slope"));
+
+        // Flat ground has slope 0: a species that shrinks to half at slope 0 is half as big here.
+        harness.dispatch(Message::TerrainVegetation(Edit::AddAdaptWith {
+            mask: "slope".to_owned(),
+            tint: false,
+            at0: [0.5, 0.0, 0.0],
+            at1: [1.0, 0.0, 0.0],
+        }));
+        let adapted = scales(&harness);
+        assert_eq!(adapted.len(), plain.len());
+        for (a, p) in adapted.iter().zip(&plain) {
+            assert!((a - p * 0.5).abs() < 1e-4, "{a} vs {p}");
+        }
+        assert_eq!(harness.app().terrain_vegetation.species[0].adapt.len(), 1);
+
+        // A slider moves it in one step; the value stays in range; removing it brings the size back.
+        let steps = harness.app().history.len();
+        for value in [0.6, 0.7, 0.8] {
+            harness.dispatch(Message::TerrainVegetation(Edit::AdaptValue {
+                index: 0,
+                at1: false,
+                channel: 0,
+                value,
+            }));
+        }
+        assert_eq!(
+            harness.app().history.len(),
+            steps + 1,
+            "three ticks, one step"
+        );
+        harness.dispatch(Message::TerrainVegetation(Edit::AdaptValue {
+            index: 0,
+            at1: false,
+            channel: 0,
+            value: -5.0,
+        }));
+        assert!(harness.app().terrain_vegetation.species[0].adapt[0].at0[0] >= 0.05);
+        harness.dispatch(Message::TerrainVegetation(Edit::RemoveAdapt(0)));
+        assert!(harness.app().terrain_vegetation.species[0].adapt.is_empty());
+        assert_eq!(scales(&harness), plain);
+        harness.dispatch(Message::Undo);
+        assert_eq!(harness.app().terrain_vegetation.species[0].adapt.len(), 1);
+
+        // A colour adaptation by the panel's own default changes nothing until its sliders move.
+        harness.dispatch(Message::TerrainVegetation(Edit::AddAdapt {
+            mask: "height".to_owned(),
+            tint: true,
+        }));
+        let term = harness.app().terrain_vegetation.species[0]
+            .adapt
+            .last()
+            .unwrap()
+            .clone();
+        assert_eq!(term.at0, [1.0; 3]);
+        assert_eq!(term.at1, [1.0; 3]);
+    }
 }

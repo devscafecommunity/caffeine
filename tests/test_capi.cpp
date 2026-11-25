@@ -2290,6 +2290,43 @@ TEST_CASE("C API terrain vegetation: species, procedural and painted instances, 
     CHECK(back.density_per_ha == Approx(300.0f));
     CHECK(caffeine_session_terrain_veg_species(session, entity, 2, &back) == CAFFEINE_NOT_FOUND);
 
+    // Slot materials, the recipe hash and adaptation go through the struct and come back.
+    {
+        CaffeineVegSpecies rich = list[0];
+        rich.slot_material_count = 2;
+        std::snprintf(rich.slot_materials[0], sizeof(rich.slot_materials[0]), "%s", "Materials/bark.mat");
+        std::snprintf(rich.slot_materials[1], sizeof(rich.slot_materials[1]), "%s", "Materials/needles.mat");
+        std::snprintf(rich.recipe, sizeof(rich.recipe), "%s", "Nature/Pine.generator.nature");
+        rich.recipe_hash = 0xABCDEF0123456789ull;
+        rich.adapt_count = 2;
+        std::snprintf(rich.adapt[0].mask, sizeof(rich.adapt[0].mask), "%s", "slope");
+        rich.adapt[0].target = 0;
+        rich.adapt[0].at0[0] = 1.0f;
+        rich.adapt[0].at1[0] = 0.4f;
+        std::snprintf(rich.adapt[1].mask, sizeof(rich.adapt[1].mask), "%s", "height");
+        rich.adapt[1].target = 1;
+        rich.adapt[1].at0[1] = 1.0f;
+        rich.adapt[1].at1[1] = 0.6f;
+        std::vector<CaffeineVegSpecies> richList = {rich, list[1]};
+        uint32_t richRecord = 0;
+        REQUIRE(caffeine_session_terrain_veg_species_apply(session, entity, richList.data(), 2, 0, &richRecord, error, sizeof(error)) == CAFFEINE_OK);
+        CHECK(richRecord != 0);
+        CaffeineVegSpecies readBack{};
+        REQUIRE(caffeine_session_terrain_veg_species(session, entity, 0, &readBack) == CAFFEINE_OK);
+        CHECK(readBack.slot_material_count == 2);
+        CHECK(std::string(readBack.slot_materials[1]) == "Materials/needles.mat");
+        CHECK(readBack.recipe_hash == 0xABCDEF0123456789ull);
+        CHECK(std::string(readBack.recipe) == "Nature/Pine.generator.nature");
+        CHECK(readBack.adapt_count == 2);
+        CHECK(std::string(readBack.adapt[0].mask) == "slope");
+        CHECK(readBack.adapt[0].at1[0] == Approx(0.4f));
+        CHECK(readBack.adapt[1].target == 1);
+        REQUIRE(caffeine_session_terrain_stroke_revert(session, richRecord) == CAFFEINE_OK);
+        REQUIRE(caffeine_session_terrain_veg_species(session, entity, 0, &readBack) == CAFFEINE_OK);
+        CHECK(readBack.slot_material_count == 0);
+        CHECK(readBack.adapt_count == 0);
+    }
+
     // A bad edit is refused with the reason.
     CaffeineVegSpecies bad = list[0];
     bad.min_scale = 3.0f;
