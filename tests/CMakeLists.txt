@@ -8,6 +8,7 @@ set(CAFFEINE_TEST_SOURCES
     test_hash.cpp
     test_scatter.cpp
     test_world.cpp
+    test_world_instances.cpp
     test_material_slots.cpp
     test_micromesh.cpp
     test_micromesh_gpu.cpp

@@ -12,6 +12,7 @@
 #include "ecs/MeshGeometry.hpp"
 #include "ecs/PrefabComponents.hpp"
 #include "ecs/TerrainComponents.hpp"
+#include "ecs/WorldInstancesComponents.hpp"
 #include "audio/AudioComponents.hpp"
 #include "animation/AnimationComponents.hpp"
 #include "animation/AnimationPlayer.hpp"
@@ -1296,6 +1297,20 @@ bool SceneSerializer::serializeToMemory(std::vector<u8>& out, const std::string&
     emitPodComponents<Audio::AcousticObstacle>(kTypeAcousticObstacle, entityMap);
     emitPodComponents<Audio::VolumetricAudioComponent>(kTypeVolumetricAudio, entityMap);
     {
+        // World Instances: bake path, models path, draw distance, cast shadows.
+        ECS::ComponentQuery query;
+        query.with<ECS::WorldInstancesComponent>();
+        m_world.forEach<ECS::WorldInstancesComponent>(
+            query, [&](ECS::Entity entity, ECS::WorldInstancesComponent& instances) {
+                std::vector<u8> data;
+                IO::appendString(data, instances.bakePath);
+                IO::appendString(data, instances.modelsPath);
+                IO::appendF32(data, instances.drawDistance);
+                IO::appendU8(data, instances.castShadows ? 1 : 0);
+                entityMap[entity.id()].emplace_back(kTypeWorldInstances, std::move(data));
+            });
+    }
+    {
         ECS::ComponentQuery query;
         query.with<Navigation::NavVolume>();
         m_world.forEach<Navigation::NavVolume>(query, [&](ECS::Entity entity, Navigation::NavVolume& volume) {
@@ -1927,6 +1942,20 @@ bool SceneSerializer::deserializeFromMemory(const std::vector<u8>& buffer, const
                 applyPODComponent<Audio::VolumetricAudioComponent>(
                     e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
+            case kTypeWorldInstances: {
+                const u8* cursor = entry.data.data();
+                const u8* end = cursor + entry.data.size();
+                ECS::WorldInstancesComponent instances;
+                u8 cast = 1;
+                if (!IO::readString(cursor, end, instances.bakePath) ||
+                    !IO::readString(cursor, end, instances.modelsPath) ||
+                    !IO::readF32(cursor, end, instances.drawDistance) || !IO::readU8(cursor, end, cast)) {
+                    break;
+                }
+                instances.castShadows = cast != 0;
+                m_world.add<ECS::WorldInstancesComponent>(e, std::move(instances));
+                break;
+            }
             case kTypeNaturalFluid:
                 applyPODComponent<ECS::NaturalFluidComponent>(
                     e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);

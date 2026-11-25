@@ -128,6 +128,7 @@ add_library(caffeine-core
     src/caffeine/world/WorldBuild.cpp
     src/caffeine/world/WorldWater.cpp
     src/caffeine/world/WorldInstanceFile.cpp
+    src/caffeine/world/WorldInstanceDraw.cpp
     src/caffeine/micromesh/Micromesh.cpp
     src/caffeine/procedural/ProceduralProfiles.cpp
     src/caffeine/procedural/ProceduralGenerator.cpp
