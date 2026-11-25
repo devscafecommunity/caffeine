@@ -26,8 +26,8 @@ pub use terrain::{ScatterClass, ScatterInstance, ScatterResult, Terrain, Terrain
 use water::RawWater;
 pub use water::{Water, WaterWave, MAX_WATER_WAVES};
 pub use world::{
-    WorldBuild, WorldBuildDesc, WorldClass, WorldInstance, WorldMask, WorldRecipe, WorldRecipeKind,
-    WorldWaterBody,
+    WaterSurfaceGrid, WorldBuild, WorldBuildDesc, WorldBuilder, WorldClass, WorldInstance,
+    WorldMask, WorldRecipe, WorldRecipeKind, WorldWaterBody,
 };
 
 pub const ENTITY_NONE: u32 = u32::MAX;
@@ -1287,6 +1287,7 @@ struct Functions {
     set_simulating: Option<SetSimulatingFn>,
     simulating: Option<SimulatingFn>,
     set_water: Option<SetWaterFn>,
+    set_water_surface: Option<water::SetWaterSurfaceFn>,
     set_terrain: Option<SetTerrainFn>,
     terrain_raycast: Option<TerrainRaycastFn>,
     terrain_outline: Option<TerrainOutlineFn>,
@@ -1595,6 +1596,9 @@ impl Engine {
             set_simulating: unsafe { load_symbol(library, b"caffeine_session_set_simulating\0") },
             simulating: unsafe { load_symbol(library, b"caffeine_session_simulating\0") },
             set_water: unsafe { load_symbol(library, b"caffeine_session_set_water\0") },
+            set_water_surface: unsafe {
+                load_symbol(library, b"caffeine_session_set_water_surface\0")
+            },
             get_water: unsafe { load_symbol(library, b"caffeine_session_water\0") },
             water_height: unsafe { load_symbol(library, b"caffeine_session_water_height\0") },
             phase_shift_counts: unsafe {

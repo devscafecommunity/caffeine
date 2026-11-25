@@ -769,25 +769,40 @@ pub struct ModelsFile {
 }
 
 impl ModelsFile {
-    pub fn variant(&mut self, class: usize, variant: u32, mesh: &str, cutout: bool) {
+    /// A part of variant `variant` of a pool class. `slots` is the part's materials (`a.mat;b.mat`, one per sub-mesh;
+    /// empty: none), left out when it is empty or holds whitespace the line cannot carry.
+    pub fn variant(&mut self, class: usize, variant: u32, mesh: &str, slots: &str, cutout: bool) {
         self.lines.push(format!(
             "{class} {variant} {mesh}{}",
-            if cutout { " cutout on" } else { "" }
+            Self::options(slots, cutout)
         ));
     }
 
-    pub fn cell(&mut self, class: usize, cell: [i32; 2], mesh: &str, cutout: bool) {
+    /// A part of the model baked for one instance.
+    pub fn cell(&mut self, class: usize, cell: [i32; 2], mesh: &str, slots: &str, cutout: bool) {
         self.lines.push(format!(
             "{class} cell {} {} {mesh}{}",
             cell[0],
             cell[1],
-            if cutout { " cutout on" } else { "" }
+            Self::options(slots, cutout)
         ));
+    }
+
+    fn options(slots: &str, cutout: bool) -> String {
+        let mut text = String::new();
+        if !slots.is_empty() && !slots.chars().any(char::is_whitespace) {
+            text.push_str(" slots ");
+            text.push_str(slots);
+        }
+        if cutout {
+            text.push_str(" cutout on");
+        }
+        text
     }
 
     pub fn to_text(&self) -> String {
         let mut text = String::from(
-            "# World Composer models: <class> <variant> <mesh> [cutout on] | <class> cell <cx> <cz> <mesh> [cutout on]\n",
+            "# World Composer models: <class> <variant> <mesh> [slots a.mat;b.mat] [cutout on] | <class> cell <cx> <cz> <mesh> [slots ...] [cutout on]\n",
         );
         for line in &self.lines {
             text.push_str(line);
@@ -967,11 +982,17 @@ override pin boulder 5 5 2
     #[test]
     fn models_files_list_variants_and_cells() {
         let mut models = ModelsFile::default();
-        models.variant(0, 2, "a/oak_trunk.obj", false);
-        models.cell(1, [3, -4], "b/rock.obj", true);
+        models.variant(0, 2, "a/oak_trunk.obj", "", false);
+        models.cell(1, [3, -4], "b/rock.obj", "", true);
+        models.variant(0, 1, "a/oak_leaves.obj", "m/leaf.mat", true);
+        models.variant(0, 0, "a/oak_bark.obj", "m/bark.mat;m/moss.mat", false);
+        models.variant(0, 3, "a/oak_x.obj", "m/with space.mat", false);
         let text = models.to_text();
         assert!(text.contains("\n0 2 a/oak_trunk.obj\n"));
         assert!(text.contains("\n1 cell 3 -4 b/rock.obj cutout on\n"));
+        assert!(text.contains("\n0 1 a/oak_leaves.obj slots m/leaf.mat cutout on\n"));
+        assert!(text.contains("\n0 0 a/oak_bark.obj slots m/bark.mat;m/moss.mat\n"));
+        assert!(text.contains("\n0 3 a/oak_x.obj\n"), "a path with a space is left out");
         assert!(is_cutout_part("oak_leaves.obj"));
         assert!(!is_cutout_part("oak_trunk.obj"));
     }

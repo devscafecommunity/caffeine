@@ -1,6 +1,6 @@
 {
   "name": "World Composer: compose a world from recipes, edit its rules, reseed and build it",
-  "description": "Opens the World fixture (a hills terrain, two rock recipes and World/Valley.generator.world). Adds a recipe from the Library as a new class and undoes it, reseeds, edits a class's rules and builds the world into the scene: the status says how many instances per class were placed and whether the cache answered. A Library recipe can also be dragged onto the Composition, and the edit layer has a Remove brush for the Viewport.",
+  "description": "Opens the World fixture (a hills terrain, two rock recipes and World/Valley.generator.world). Adds a recipe from the Library as a new class and undoes it, reseeds, edits a class's rules and builds the world into the scene: the status says how many instances per class were placed and whether the cache answered. A Library recipe can also be dragged onto the Composition, and the edit layer has a Remove brush for the Viewport. Frame then points the Viewport camera at the built world and brings the Viewport to the front.",
   "fixture": "world",
   "size": [
     1600,
@@ -145,6 +145,23 @@
     {
       "action": "screenshot",
       "name": "world-composer-built"
+    },
+    {
+      "action": "expect",
+      "exists": "id:world.toolbar.frame"
+    },
+    {
+      "action": "click",
+      "target": "id:world.toolbar.frame",
+      "label": "frame the built world in the Viewport"
+    },
+    {
+      "action": "expect",
+      "exists": "id:viewport.canvas.surface"
+    },
+    {
+      "action": "expect",
+      "missing": "id:world.toolbar.build"
     }
   ]
 }

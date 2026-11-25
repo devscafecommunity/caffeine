@@ -183,6 +183,8 @@ pub enum Edit {
     Save,
     SaveAsPrefab,
     Build,
+    /// Points the viewport camera at the last build and shows the Viewport.
+    Frame,
     Preview,
     SetName(String),
     SetSearch(String),
@@ -366,6 +368,7 @@ pub fn view<'a, Message: Clone + 'a>(
                 emit(Edit::SaveAsPrefab)
             ),
             button::primary(id::WORLD_BUILD, "Build", emit(Edit::Build)),
+            button::compact(id::WORLD_FRAME, "Frame", emit(Edit::Frame)),
         ]
         .spacing(6)
         .align_y(iced::Alignment::Center)

@@ -1,8 +1,8 @@
 //! Editor state and message handling of the **World Composer** tab (`caffeine-website/.../world-composition.md`).
 //!
 //! The tab edits a composition (`uikit::world`, the Rust mirror of the engine's text grammar) with its own undo
-//! history, checks it with the engine (`world_check`), previews it with a coarse build whose terrain is baked off the
-//! UI thread, and builds it: every recipe resolved and hashed, the terrain recipe baked, the engine's cached build
+//! history, checks it with the engine (`world_check`), previews it with a coarse build that runs (terrain bake and
+//! engine build) on a worker thread through a session-free `WorldBuilder`, and builds it: every recipe resolved and hashed, the terrain recipe baked, the engine's cached build
 //! (`world_build_cached`), then the scene. A small world becomes entities (one per instance, its nature model's parts
 //! as children, like Scatter); a large one an instance bake (`World/<name>.cinst`), a models file and one entity with
 //! the `World Instances` component. The build is one undo step.
@@ -18,14 +18,13 @@ use crate::uikit::{asset_folders, nature, terrain};
 use doppio_engine::{WorldBuild, WorldBuildDesc, WorldMask, WorldRecipe, WorldRecipeKind};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Up to this many instances a build becomes entities; above it, an instance bake drawn by one entity.
 pub(super) const SMALL_WORLD: usize = 3000;
-/// The coarse preview stops counting here.
-pub(super) const PREVIEW_MAX: u32 = 2000;
 /// The preview bakes the terrain at this resolution (the build at the recipe's own).
 const PREVIEW_RESOLUTION: usize = 129;
 /// Bake parameters (`adapt param.<name>`) are quantised to this many steps per unit: one model per bucket.
@@ -53,7 +52,21 @@ pub(super) struct LastBuild {
     pub corner: [f32; 3],
 }
 
-type TerrainJob = (u64, Receiver<Result<BakedTerrain, String>>);
+/// What a preview worker sends back.
+#[derive(Debug)]
+pub(super) struct PreviewOutcome {
+    /// The edit generation it previewed; anything but the latest is dropped.
+    pub generation: u64,
+    /// The terrain it baked (content hash of the recipe, terrain), kept whatever the generation.
+    pub terrain: Option<(u64, Arc<BakedTerrain>)>,
+    /// Counts per class, the note, and the terrain's size; `Err` is the note of a failed preview; `None` when the
+    /// worker stopped early because a newer edit came in.
+    pub result: Option<Result<(Vec<(String, u32)>, String, [f32; 2]), String>>,
+}
+
+struct PreviewJob {
+    rx: Receiver<PreviewOutcome>,
+}
 
 pub(super) struct WorldGen {
     pub comp: Composition,
@@ -73,7 +86,10 @@ pub(super) struct WorldGen {
     pub preview: Option<Vec<(String, u32)>>,
     pub preview_note: String,
     preview_at: Option<Instant>,
-    preview_job: Option<TerrainJob>,
+    preview_job: Option<PreviewJob>,
+    /// Bumped by every edit; the worker of an older generation stops before its build and its result is dropped.
+    pub preview_generation: u64,
+    preview_latest: Arc<AtomicU64>,
     /// Baked terrains by (content hash of the recipe file, resolution).
     terrains: HashMap<(u64, usize), Arc<BakedTerrain>>,
     pub last_build: Option<LastBuild>,
@@ -112,6 +128,8 @@ impl WorldGen {
             preview_note: "No preview yet.".to_owned(),
             preview_at: None,
             preview_job: None,
+            preview_generation: 0,
+            preview_latest: Arc::new(AtomicU64::new(0)),
             terrains: HashMap::new(),
             last_build: None,
             small_world: SMALL_WORLD,
@@ -178,6 +196,37 @@ impl WorldGen {
 
     fn schedule_preview(&mut self) {
         self.preview_at = Some(Instant::now() + PREVIEW_DEBOUNCE);
+        self.bump_preview_generation();
+    }
+
+    fn bump_preview_generation(&mut self) {
+        self.preview_generation += 1;
+        self.preview_latest
+            .store(self.preview_generation, Ordering::SeqCst);
+    }
+
+    /// Takes a worker's result: its terrain joins the cache, its counts replace the preview only when it previewed
+    /// the latest edit. Returns whether it was applied.
+    pub(super) fn apply_preview(&mut self, outcome: PreviewOutcome) -> bool {
+        if let Some((key, terrain)) = outcome.terrain {
+            self.terrains.insert((key, PREVIEW_RESOLUTION), terrain);
+        }
+        if outcome.generation != self.preview_generation {
+            return false;
+        }
+        match outcome.result {
+            Some(Ok((counts, note, size))) => {
+                self.preview = Some(counts);
+                self.preview_note = note;
+                self.size = size;
+            }
+            Some(Err(note)) => {
+                self.preview = None;
+                self.preview_note = note;
+            }
+            None => return false,
+        }
+        true
     }
 
     pub fn view_state(&self) -> panel::View<'_> {
@@ -360,26 +409,99 @@ enum ModelKey {
     Cell([i32; 2]),
 }
 
-/// The baked models of every class of a build: (class index, key) -> mesh paths relative to the asset root.
-type Models = BTreeMap<(usize, ModelKey), Vec<String>>;
+/// One part of a baked model: its mesh (relative to the asset root), its material(s) as the scene applies them
+/// (`;`-joined per sub-mesh, empty for none) and whether it draws as cut-out cards.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct ModelPart {
+    pub mesh: String,
+    pub slots: String,
+    pub cutout: bool,
+}
+
+/// The baked models of every class of a build: (class index, key) -> parts.
+type Models = BTreeMap<(usize, ModelKey), Vec<ModelPart>>;
+
+/// The Nature Generator's material writer behind a world bake: a baked part gets the same `.mat` asset (bark, leaf
+/// cards, rock surface, your own material) as the part of a tree placed from the Nature tab.
+pub(super) struct WorldMaterials<'a> {
+    pub app: &'a mut App,
+    pub root: PathBuf,
+}
+
+impl recipe_ref::PartMaterials for WorldMaterials<'_> {
+    fn material(&mut self, part: &nature::mesh::Part) -> Result<String, String> {
+        match &part.surface {
+            Some(spec) => self.app.ensure_surface_material(part, spec),
+            None => self.app.ensure_nature_material(
+                &part.material,
+                super::naturegen::Foliage::for_spec(&part.name, &part.material),
+            ),
+        }
+    }
+
+    fn exists(&self, material: &str) -> bool {
+        let path = Path::new(material);
+        path.is_file() || self.root.join(path).is_file()
+    }
+}
+
+/// A material path as the models file stores it: relative to the asset root when it is under it.
+fn asset_relative(root: &Path, path: &str) -> String {
+    let as_path = Path::new(path);
+    if as_path.is_absolute() && as_path.starts_with(root) {
+        asset_folders::relative(root, as_path)
+    } else {
+        path.replace('\\', "/")
+    }
+}
+
+/// True when a `.mat` cuts its shape out of its picture (it says so in its alpha mode).
+fn material_is_cutout(root: &Path, material: &str) -> bool {
+    material
+        .split(';')
+        .filter(|m| !m.is_empty())
+        .any(|m| {
+            let path = Path::new(m);
+            let file = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                root.join(path)
+            };
+            std::fs::read_to_string(file).is_ok_and(|text| text.to_lowercase().contains("cutout"))
+        })
+}
 
 /// Bakes the nature models a build needs: the variant pool of each class, or one model per parameter bucket
-/// (`adapt param.<name>`, quantised) or per instance (`unique`).
-fn bake_models(root: &Path, build: &WorldBuild, cache: &Path) -> Result<(Models, usize), String> {
+/// (`adapt param.<name>`, quantised) or per instance (`unique`). Every part gets its material from `materials`.
+fn bake_models(
+    root: &Path,
+    build: &WorldBuild,
+    cache: &Path,
+    materials: &mut dyn recipe_ref::PartMaterials,
+) -> Result<(Models, usize), String> {
     let mut models = Models::new();
     let mut baked = 0usize;
-    let mesh_paths = |baked: &Baked| -> Vec<String> {
+    let parts = |baked: &Baked| -> Vec<ModelPart> {
         baked
             .files
             .iter()
-            .map(|file| asset_folders::relative(root, &baked.directory.join(file)))
+            .enumerate()
+            .map(|(index, file)| {
+                let mesh = asset_folders::relative(root, &baked.directory.join(file));
+                let slots = baked.materials.get(index).cloned().unwrap_or_default();
+                ModelPart {
+                    cutout: world::is_cutout_part(&mesh) || material_is_cutout(root, &slots),
+                    mesh,
+                    slots,
+                }
+            })
             .collect()
     };
     for (index, class) in build.classes.iter().enumerate() {
         let recipe_path = root.join(&class.reference);
         let base_seed = u64::from(class.salt);
         if class.unique || !class.params.is_empty() {
-            let mut buckets: HashMap<Vec<u32>, Vec<String>> = HashMap::new();
+            let mut buckets: HashMap<Vec<u32>, Vec<ModelPart>> = HashMap::new();
             for instance in build.instances_of(index) {
                 let (seed, values): (u32, Vec<f32>) = if class.unique {
                     (
@@ -406,16 +528,17 @@ fn bake_models(root: &Path, build: &WorldBuild, cache: &Path) -> Result<(Models,
                             .cloned()
                             .zip(values.iter().copied())
                             .collect();
-                        let result = recipe_ref::bake_nature_instance(
+                        let result = recipe_ref::bake_nature_instance_with(
                             &recipe_path,
                             seed,
                             None,
                             &params,
                             cache,
+                            Some(&mut *materials),
                         )
                         .map_err(|e| format!("{}: {e}", class.id))?;
-                        baked += 1;
-                        let files = mesh_paths(&result);
+                        baked += usize::from(!result.cached);
+                        let files = parts(&result);
                         buckets.insert(bucket, files.clone());
                         files
                     }
@@ -429,18 +552,78 @@ fn bake_models(root: &Path, build: &WorldBuild, cache: &Path) -> Result<(Models,
                 .map(|i| i.variant + 1)
                 .max()
                 .unwrap_or(0);
-            let pool = recipe_ref::nature_variants(&recipe_path, base_seed, count, None, cache)
-                .map_err(|e| format!("{}: {e}", class.id))?;
+            let pool = recipe_ref::nature_variants_with(
+                &recipe_path,
+                base_seed,
+                count,
+                None,
+                cache,
+                Some(&mut *materials),
+            )
+            .map_err(|e| format!("{}: {e}", class.id))?;
             for (variant, result) in pool.iter().enumerate() {
                 baked += usize::from(!result.cached);
-                models.insert(
-                    (index, ModelKey::Variant(variant as u32)),
-                    mesh_paths(result),
-                );
+                models.insert((index, ModelKey::Variant(variant as u32)), parts(result));
             }
         }
     }
     Ok((models, baked))
+}
+
+/// The preview worker: bakes the terrain unless it is cached, stops if a newer edit came in, then builds.
+#[allow(clippy::too_many_arguments)]
+fn run_preview(
+    builder: doppio_engine::WorldBuilder,
+    generation: u64,
+    latest: &AtomicU64,
+    root: &Path,
+    comp: &Composition,
+    terrain_path: &Path,
+    key: u64,
+    cached: Option<Arc<BakedTerrain>>,
+) -> PreviewOutcome {
+    let mut outcome = PreviewOutcome {
+        generation,
+        terrain: None,
+        result: None,
+    };
+    let terrain = match cached {
+        Some(terrain) => terrain,
+        None => match bake_terrain(terrain_path, Some(PREVIEW_RESOLUTION)) {
+            Ok(baked) => {
+                let baked = Arc::new(baked);
+                outcome.terrain = Some((key, baked.clone()));
+                baked
+            }
+            Err(error) => {
+                outcome.result = Some(Err(format!("Preview: {error}")));
+                return outcome;
+            }
+        },
+    };
+    if latest.load(Ordering::SeqCst) != generation {
+        return outcome;
+    }
+    let recipes = resolve_recipes(root, comp);
+    let desc = build_desc(comp, &terrain, recipes, None, 0);
+    let started = Instant::now();
+    outcome.result = Some(match builder.build(&desc) {
+        Ok(build) if build.ok => {
+            let counts = per_class_counts(&build);
+            let note = format!(
+                "Preview ({}² terrain, {:.0} ms): {} instance{} — {}",
+                terrain.res,
+                started.elapsed().as_secs_f32() * 1000.0,
+                build.instances.len(),
+                if build.instances.len() == 1 { "" } else { "s" },
+                WorldGen::counts_text(&counts)
+            );
+            Ok((counts, note, desc.size))
+        }
+        Ok(build) => Err(format!("Preview: {}", build.errors.join("; "))),
+        Err(error) => Err(format!("Preview: {error}")),
+    });
+    outcome
 }
 
 impl App {
@@ -538,8 +721,10 @@ impl App {
             }
             Edit::SaveAsPrefab => self.save_world_prefab(),
             Edit::Build => self.build_world(),
+            Edit::Frame => self.frame_world(),
             Edit::Preview => {
                 w.preview_at = Some(Instant::now());
+                w.bump_preview_generation();
                 self.pump_world_preview(false);
             }
             Edit::SetName(name) => w.name = name,
@@ -948,34 +1133,29 @@ impl App {
         Ok(baked)
     }
 
-    /// The coarse preview: its terrain is baked on a worker thread, then the engine counts at most `PREVIEW_MAX`
-    /// instances. Runs from the tick once edits settle; `wait` blocks until it is done (tests).
+    /// The coarse preview, off the UI thread: a worker bakes the terrain (once per recipe content) and builds the
+    /// composition with a session-free `WorldBuilder`, then the counts per class come back through a channel. Runs
+    /// from the tick once edits settle, one worker at a time; a worker whose edit is no longer the latest stops before
+    /// its build and its result is dropped. `wait` blocks until it is done (tests).
     pub(super) fn pump_world_preview(&mut self, wait: bool) {
-        if let Some((key, rx)) = self.worldgen.preview_job.take() {
-            let result = if wait {
-                rx.recv()
-                    .unwrap_or_else(|_| Err("the preview worker stopped".to_owned()))
+        if let Some(job) = self.worldgen.preview_job.take() {
+            let outcome = if wait {
+                job.rx.recv().ok()
             } else {
-                match rx.try_recv() {
-                    Ok(result) => result,
+                match job.rx.try_recv() {
+                    Ok(outcome) => Some(outcome),
                     Err(TryRecvError::Empty) => {
-                        self.worldgen.preview_job = Some((key, rx));
+                        self.worldgen.preview_job = Some(job);
                         return;
                     }
-                    Err(TryRecvError::Disconnected) => Err("the preview worker stopped".to_owned()),
+                    Err(TryRecvError::Disconnected) => None,
                 }
             };
-            match result {
-                Ok(baked) => {
-                    self.worldgen
-                        .terrains
-                        .insert((key, PREVIEW_RESOLUTION), Arc::new(baked));
-                    self.worldgen.preview_at = Some(Instant::now());
+            match outcome {
+                Some(outcome) => {
+                    self.worldgen.apply_preview(outcome);
                 }
-                Err(error) => {
-                    self.worldgen.preview_note = format!("Preview: {error}");
-                    return;
-                }
+                None => self.worldgen.preview_note = "Preview: the worker stopped".to_owned(),
             }
         }
         let due = self
@@ -1004,6 +1184,15 @@ impl App {
             self.worldgen.preview_note = "Preview: add a terrain recipe first".to_owned();
             return;
         }
+        let Some(builder) = self
+            .engine
+            .as_ref()
+            .and_then(doppio_engine::Engine::world_builder)
+        else {
+            self.worldgen.preview_note =
+                "Preview: the engine library has no World Composer (C ABI v28)".to_owned();
+            return;
+        };
         let path = root.join(&comp.terrain);
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
@@ -1013,59 +1202,58 @@ impl App {
             }
         };
         let key = recipe_ref::content_hash(&bytes);
-        let Some(terrain) = self
+        let cached = self
             .worldgen
             .terrains
             .get(&(key, PREVIEW_RESOLUTION))
-            .cloned()
-        else {
-            // Bake it off the UI thread, then come back here.
-            let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = tx.send(bake_terrain(&path, Some(PREVIEW_RESOLUTION)));
-            });
-            self.worldgen.preview_job = Some((key, rx));
+            .cloned();
+        if cached.is_none() {
             self.worldgen.preview_note = "Preview: baking the terrain…".to_owned();
-            if wait {
-                self.pump_world_preview(true);
-            }
+        }
+        let generation = self.worldgen.preview_generation;
+        let latest = self.worldgen.preview_latest.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(run_preview(
+                builder, generation, &latest, &root, &comp, &path, key, cached,
+            ));
+        });
+        self.worldgen.preview_job = Some(PreviewJob { rx });
+        if wait {
+            self.pump_world_preview(true);
+        }
+    }
+
+    /// Points the viewport camera at the last build from above its south-west corner, so the whole world is in view,
+    /// and brings the Viewport tab to the front.
+    pub(super) fn frame_world(&mut self) {
+        let Some(corner) = self.worldgen.last_build.as_ref().map(|b| b.corner) else {
+            self.worldgen.status = Some("Build the world first: Frame looks at the last build".to_owned());
             return;
         };
-        let recipes = resolve_recipes(&root, &comp);
-        let desc = build_desc(&comp, &terrain, recipes, None, PREVIEW_MAX);
-        self.worldgen.size = desc.size;
-        let Some(engine) = self.engine.as_ref() else {
-            self.worldgen.preview_note = "Preview: the engine is not available".to_owned();
-            return;
+        let size = self.worldgen.size;
+        let span = size[0].max(size[1]).max(1.0);
+        self.camera = doppio_engine::Camera {
+            yaw: 0.75,
+            pitch: 0.5,
+            distance: span * 0.95,
+            focus: [
+                corner[0] + size[0] * 0.5,
+                corner[1] + span * 0.04,
+                corner[2] + size[1] * 0.5,
+            ],
         };
-        let started = Instant::now();
-        match engine.world_build(&desc) {
-            Ok(build) if build.ok => {
-                let counts = per_class_counts(&build);
-                self.worldgen.preview_note = format!(
-                    "Preview ({}² terrain, {:.0} ms): {} instance{}{} — {}",
-                    terrain.res,
-                    started.elapsed().as_secs_f32() * 1000.0,
-                    build.instances.len(),
-                    if build.instances.len() == 1 { "" } else { "s" },
-                    if build.truncated {
-                        format!(" of {} (capped)", build.total)
-                    } else {
-                        String::new()
-                    },
-                    WorldGen::counts_text(&counts)
-                );
-                self.worldgen.preview = Some(counts);
-            }
-            Ok(build) => {
-                self.worldgen.preview = None;
-                self.worldgen.preview_note = format!("Preview: {}", build.errors.join("; "));
-            }
-            Err(error) => {
-                self.worldgen.preview = None;
-                self.worldgen.preview_note = format!("Preview: {error}");
+        self.apply_camera();
+        self.panes.restore();
+        for (_, group) in self.panes.iter_mut() {
+            if let Some(index) = group.pages.iter().position(|p| *p == PaneKind::Viewport) {
+                group.active = index;
             }
         }
+        self.worldgen.status = Some(format!(
+            "Framed World {} ({:.0} x {:.0} m) in the Viewport",
+            self.worldgen.name, size[0], size[1]
+        ));
     }
 
     pub(super) fn build_world(&mut self) {
@@ -1138,16 +1326,30 @@ impl App {
             None
         };
         let layer = water_layer.as_ref().unwrap_or(&build);
-        let lakes: Vec<LakeSpec> = layer
+        // Every water body with a surface grid (rivers and lakes) becomes a shaped water surface; without the
+        // engine's grid a lake is a flat plane and a river is only carved.
+        let shaped = self
+            .engine
+            .as_ref()
+            .is_some_and(doppio_engine::Engine::has_water_surface);
+        let waters: Vec<WaterSpec> = layer
             .water
             .iter()
-            .filter(|body| body.lake)
-            .filter_map(|body| lake_spec(&root, body, terrain.res, size))
+            .filter_map(|body| water_spec(&root, body, terrain.res, size, shaped))
             .collect();
-        let rivers = layer.water.iter().filter(|body| !body.lake).count();
+        let rivers = layer.water.iter().filter(|body| !body.lake).count()
+            - waters.iter().filter(|w| !w.lake).count();
         let small = build.instances.len() <= self.worldgen.small_world;
         let nature_cache = cache.join("nature");
-        let (models, baked) = bake_models(&root, &build, &nature_cache)?;
+        let (models, baked) = bake_models(
+            &root,
+            &build,
+            &nature_cache,
+            &mut WorldMaterials {
+                app: self,
+                root: root.clone(),
+            },
+        )?;
         let slug = {
             let slug = nature::slug(&name);
             if slug.is_empty() {
@@ -1171,12 +1373,21 @@ impl App {
                 return Err(written.errors.join("; "));
             }
             let mut file = world::ModelsFile::default();
-            for ((class, key), meshes) in &models {
-                for mesh in meshes {
-                    let cutout = world::is_cutout_part(mesh);
+            for ((class, key), parts) in &models {
+                for part in parts {
+                    let slots = part
+                        .slots
+                        .split(';')
+                        .map(|m| asset_relative(&root, m))
+                        .collect::<Vec<_>>()
+                        .join(";");
                     match key {
-                        ModelKey::Variant(v) => file.variant(*class, *v, mesh, cutout),
-                        ModelKey::Cell(cell) => file.cell(*class, *cell, mesh, cutout),
+                        ModelKey::Variant(v) => {
+                            file.variant(*class, *v, &part.mesh, &slots, part.cutout)
+                        }
+                        ModelKey::Cell(cell) => {
+                            file.cell(*class, *cell, &part.mesh, &slots, part.cutout)
+                        }
                     }
                 }
             }
@@ -1248,12 +1459,20 @@ impl App {
             }
             Err(error) => problems.push(format!("terrain: {error:?}")),
         }
-        // The lakes: one water surface per body, at its surface height, over its bounding box.
-        let mut lakes_placed = 0;
-        for (number, lake) in lakes.iter().enumerate() {
-            match place_lake(engine, holder, &format!("{name} lake {}", number + 1), lake) {
-                Ok(()) => lakes_placed += 1,
-                Err(error) => problems.push(format!("lake {}: {error}", number + 1)),
+        // The water: one surface per body over its bounds, shaped by its grid when the engine gives one.
+        let (mut lakes_placed, mut rivers_placed) = (0, 0);
+        for water in &waters {
+            let (kind, number) = if water.lake {
+                lakes_placed += 1;
+                ("lake", lakes_placed)
+            } else {
+                rivers_placed += 1;
+                ("river", rivers_placed)
+            };
+            if let Err(error) =
+                place_water(engine, holder, &format!("{name} {kind} {number}"), water)
+            {
+                problems.push(format!("{kind} {number}: {error}"));
             }
         }
 
@@ -1275,11 +1494,11 @@ impl App {
                     } else {
                         ModelKey::Variant(instance.variant)
                     };
-                    let meshes = models
+                    let parts = models
                         .get(&(class_index, key))
                         .map(Vec::as_slice)
                         .unwrap_or(&[]);
-                    match place_world_instance(engine, holder, &class.id, instance, meshes) {
+                    match place_world_instance(engine, holder, &class.id, instance, parts) {
                         Ok(()) => *placed.entry(class.id.clone()).or_default() += 1,
                         Err(error) => {
                             if problems.len() < 3 {
@@ -1341,9 +1560,15 @@ impl App {
                 if lakes_placed == 1 { "" } else { "s" }
             ));
         }
+        if rivers_placed > 0 {
+            summary.push_str(&format!(
+                "; {rivers_placed} river{} placed",
+                if rivers_placed == 1 { "" } else { "s" }
+            ));
+        }
         if rivers > 0 {
             summary.push_str(&format!(
-                "; {rivers} river{} carved into the terrain but not drawn as water (no river surface yet)",
+                "; {rivers} river{} carved into the terrain but not drawn as water (the engine library has no water surface grid)",
                 if rivers == 1 { "" } else { "s" }
             ));
         }
@@ -1555,23 +1780,163 @@ class stone ref Nature/Stone.generator.nature variants 2 priority 20 cell 16 rad
     Ok(path)
 }
 
-/// A lake of a build, ready to place: the water of its recipe over the body's bounding box.
-pub(super) struct LakeSpec {
-    pub water: doppio_engine::Water,
-    pub material: Option<String>,
-    /// Centre of the bounding box and the surface height, metres from the terrain's corner.
-    pub center: [f32; 3],
+/// A world that looks like one, for the documentation images and the headless `world_showcase` fixture: a 160 m
+/// highland basin (hills round a valley), a river that follows the flow and a lake in the basin, oaks and pines with
+/// their leaves, boulders, shrubs and grass. A build is a few thousand instances, so it takes the large path (an
+/// instance bake drawn by one `World Instances` entity). Returns the composition's path.
+#[cfg(any(test, feature = "headless"))]
+pub(crate) fn write_world_showcase(root: &Path) -> Result<PathBuf, String> {
+    let preset = terrain::presets()
+        .into_iter()
+        .find(|p| p.name == "Highland Lake")
+        .ok_or("no Highland Lake preset")?;
+    let mut graph = preset.graph();
+    let output = graph.output_node().ok_or("the preset has no Output")?;
+    for (key, value) in [
+        ("size_x", 160.0),
+        ("size_z", 160.0),
+        ("max_height", 26.0),
+        ("resolution", 0.0),
+    ] {
+        graph.set(output, key, value);
+    }
+    recipe::write(
+        &root
+            .join("Terrain")
+            .join(recipe::file_name("Highlands", Kind::Terrain)),
+        &Recipe::new(
+            Kind::Terrain,
+            "Highlands",
+            "",
+            terrain::to_text("Highlands", &graph),
+        ),
+    )?;
+    for (stem, preset) in [
+        ("Oak", "Oak"),
+        ("Pine", "Pine"),
+        ("Boulder", "Boulder"),
+        ("Shrub", "Shrub"),
+        ("Grass", "Grass Clump"),
+    ] {
+        let preset = nature::presets()
+            .into_iter()
+            .find(|p| p.name == preset)
+            .ok_or_else(|| format!("no {preset} preset"))?;
+        let text = nature::to_text(stem, &preset.graph(), preset.quality);
+        recipe::write(
+            &root
+                .join("Nature")
+                .join(recipe::file_name(stem, Kind::Nature)),
+            &Recipe::new(Kind::Nature, stem, "", text),
+        )?;
+    }
+    for (stem, preset) in [("River", "River"), ("Lake", "Calm Lake")] {
+        let preset = crate::uikit::water::presets()
+            .into_iter()
+            .find(|p| p.name == preset)
+            .ok_or_else(|| format!("no {preset} preset"))?;
+        let text = crate::uikit::water::to_text(stem, &preset.graph());
+        recipe::write(
+            &root
+                .join("Water")
+                .join(recipe::file_name(stem, Kind::Water)),
+            &Recipe::new(Kind::Water, stem, "", text),
+        )?;
+    }
+    let comp = "seed 2024
+water_distance 24
+terrain Terrain/Highlands.generator.terrain
+water Water/River.generator.water follow flow min 0.75 carve 1.2
+water Water/Lake.generator.water fill basins level 0.3
+class boulder ref Nature/Boulder.generator.nature variants 3 priority 40 cell 14 radius 2 density 0.5 scale 0.6 1.5 tilt 0.6 sink 0.2
+  slope 0.25 0.4 1 1
+class oak ref Nature/Oak.generator.nature variants 3 priority 30 cell 10 radius 3.5 density 0.55 scale 0.7 1.2 tilt 0.05 tint 0.08
+  slope 0 0 0.25 0.45
+  water_distance 0.05 0.15 0.7 0.9
+class pine ref Nature/Pine.generator.nature variants 3 priority 25 cell 9 radius 3 density 0.5 scale 0.7 1.3 tint 0.06
+  slope 0 0 0.35 0.55
+  height 0.35 0.5 1 1
+class shrub ref Nature/Shrub.generator.nature variants 2 priority 20 cell 5 radius 1.2 density 0.35 scale 0.7 1.3 tint 0.1
+  slope 0 0 0.4 0.6
+  water_distance 0.02 0.08 1 1
+class grass ref Nature/Grass.generator.nature variants 2 priority 10 cell 2.2 radius 0.5 density 0.55 scale 0.7 1.4 tilt 0.3 tint 0.15
+  slope 0 0 0.35 0.5
+  water_distance 0.02 0.05 1 1
+";
+    let path = root
+        .join("World")
+        .join(recipe::file_name("Highlands", Kind::World));
+    let mut world = Recipe::new(Kind::World, "Highlands", "", comp.to_owned());
+    world.generator_version = 2;
+    recipe::write(&path, &world)?;
+    Ok(path)
 }
 
-/// The water entity of a lake body: the body's recipe evaluated (its waves and look), sized to the body's bounding
-/// box (plus a vertex of margin) and set at its mean surface height. `None` for an empty body or a recipe that
-/// does not evaluate.
-fn lake_spec(
+/// A water body of a build, ready to place: the water of its recipe over the body's bounds.
+pub(super) struct WaterSpec {
+    pub water: doppio_engine::Water,
+    pub material: Option<String>,
+    /// Centre of the bounds and the surface's base height, metres from the terrain's corner.
+    pub center: [f32; 3],
+    pub lake: bool,
+    /// The shaped surface: resolution, heights relative to `center`, coverage and flow.
+    pub grid: Option<([u32; 2], Vec<f32>, Vec<u8>, Vec<f32>)>,
+}
+
+/// The recipe of a water body evaluated (its waves and look), at level 0.
+fn water_look(root: &Path, reference: &str) -> Option<(doppio_engine::Water, Option<String>)> {
+    let recipe = recipe::read(&root.join(reference)).ok()?;
+    let (_, graph) = crate::uikit::water::from_text(&recipe.graph)?;
+    let (mut water, _) = graph.build_report().ok()?;
+    water.level = 0.0;
+    Some((water, graph.look_asset()))
+}
+
+/// The water entity of a body. With the engine's surface grid (`shaped`), a river or a lake is a surface over the
+/// grid's bounds with the grid's heights (relative to the mean wet height), coverage and flow. Without it a lake is
+/// sized to its bounding box (plus a vertex of margin) at its mean surface height, and a river is `None` (it is only
+/// carved). `None` too for an empty body or a recipe that does not evaluate.
+fn water_spec(
     root: &Path,
     body: &doppio_engine::WorldWaterBody,
     res: usize,
     size: [f32; 2],
-) -> Option<LakeSpec> {
+    shaped: bool,
+) -> Option<WaterSpec> {
+    if let (true, Some(grid)) = (shaped, &body.surface_grid) {
+        let [x0, z0, x1, z1] = grid.bounds;
+        if x1 <= x0 || z1 <= z0 || grid.heights.is_empty() {
+            return None;
+        }
+        let wet: Vec<f32> = grid
+            .heights
+            .iter()
+            .zip(&grid.coverage)
+            .filter(|(_, c)| **c > 0)
+            .map(|(h, _)| *h)
+            .collect();
+        if wet.is_empty() {
+            return None;
+        }
+        let base = (wet.iter().map(|h| f64::from(*h)).sum::<f64>() / wet.len() as f64) as f32;
+        let (mut water, material) = water_look(root, &body.reference)?;
+        water.size = [x1 - x0, z1 - z0];
+        return Some(WaterSpec {
+            water,
+            material,
+            center: [(x0 + x1) * 0.5, base, (z0 + z1) * 0.5],
+            lake: body.lake,
+            grid: Some((
+                grid.resolution,
+                grid.heights.iter().map(|h| h - base).collect(),
+                grid.coverage.clone(),
+                grid.flow.clone(),
+            )),
+        });
+    }
+    if !body.lake {
+        return None;
+    }
     let res = res.max(2);
     let (mut x0, mut x1, mut z0, mut z1) = (usize::MAX, 0, usize::MAX, 0);
     let (mut sum, mut count) = (0.0f64, 0usize);
@@ -1591,31 +1956,31 @@ fn lake_spec(
         return None;
     }
     let step = [size[0] / (res - 1) as f32, size[1] / (res - 1) as f32];
-    let recipe = recipe::read(&root.join(&body.reference)).ok()?;
-    let (_, graph) = crate::uikit::water::from_text(&recipe.graph)?;
-    let (mut water, _) = graph.build_report().ok()?;
+    let (mut water, material) = water_look(root, &body.reference)?;
     water.size = [
         ((x1 - x0) as f32 + 2.0) * step[0],
         ((z1 - z0) as f32 + 2.0) * step[1],
     ];
-    water.level = 0.0;
-    Some(LakeSpec {
+    Some(WaterSpec {
         water,
-        material: graph.look_asset(),
+        material,
         center: [
             (x0 + x1) as f32 * 0.5 * step[0],
             (sum / count as f64) as f32,
             (z0 + z1) as f32 * 0.5 * step[1],
         ],
+        lake: true,
+        grid: None,
     })
 }
 
-/// A lake under the world holder, as the Water Generator places water: an engine water surface plus its material.
-fn place_lake(
+/// A body of water under the world holder, as the Water Generator places water: an engine water surface plus its
+/// material, then its shape when it has a grid.
+fn place_water(
     engine: &mut doppio_engine::Engine,
     holder: u32,
     name: &str,
-    lake: &LakeSpec,
+    spec: &WaterSpec,
 ) -> Result<(), String> {
     let id = engine
         .create_entity(name)
@@ -1624,15 +1989,26 @@ fn place_lake(
         .set_entity_parent(id, Some(holder))
         .map_err(|e| format!("parent: {e:?}"))?;
     engine
-        .set_position(id, lake.center)
+        .set_position(id, spec.center)
         .map_err(|e| format!("position: {e:?}"))?;
     engine
-        .set_water(id, &lake.water)
+        .set_water(id, &spec.water)
         .map_err(|e| format!("water ({e:?}): the engine library needs C ABI v7"))?;
-    if let Some(material) = &lake.material {
+    if let Some(material) = &spec.material {
         engine
             .apply_material(id, material)
             .map_err(|e| format!("material: {e:?}"))?;
+    }
+    if let Some((resolution, heights, coverage, flow)) = &spec.grid {
+        engine
+            .set_water_surface(
+                id,
+                *resolution,
+                heights,
+                Some(coverage.as_slice()),
+                Some(flow.as_slice()),
+            )
+            .map_err(|e| format!("surface: {e:?}"))?;
     }
     Ok(())
 }
@@ -1699,13 +2075,15 @@ fn set_world_instances(
     )
 }
 
-/// One instance of a small world: an entity under the holder with its transform and one child per model part.
+/// One instance of a small world: an entity under the holder with its transform and one child per model part, each
+/// with its material like a composite Scatter part (the first slot is the part's own material, `Material slots`
+/// gives every sub-mesh its own when there are several).
 fn place_world_instance(
     engine: &mut doppio_engine::Engine,
     holder: u32,
     class: &str,
     instance: &doppio_engine::WorldInstance,
-    meshes: &[String],
+    parts: &[ModelPart],
 ) -> Result<(), String> {
     let id = engine
         .create_entity(&format!(
@@ -1727,7 +2105,7 @@ fn place_world_instance(
         .set_scale(id, [s, s, s])
         .map_err(|e| format!("scale: {e:?}"))?;
     let tint = [instance.tint[0], instance.tint[1], instance.tint[2], 1.0];
-    for (number, mesh) in meshes.iter().enumerate() {
+    for (number, part) in parts.iter().enumerate() {
         let child = engine
             .create_entity(&format!("{class} part {}", number + 1))
             .map_err(|e| format!("create part: {e:?}"))?;
@@ -1742,9 +2120,23 @@ fn place_world_instance(
             child,
             filter,
             "Mesh",
-            doppio_engine::FieldValue::String(mesh.clone()),
+            doppio_engine::FieldValue::String(part.mesh.clone()),
         )?;
         let renderer = super::add_component(engine, child, "Mesh Renderer")?;
+        if let Some(first) = part.slots.split(';').map(str::trim).find(|s| !s.is_empty()) {
+            engine
+                .apply_material(child, first)
+                .map_err(|e| format!("material {first}: {e:?}"))?;
+        }
+        if part.slots.contains(';') {
+            super::set_component_field(
+                engine,
+                child,
+                filter,
+                "Material slots",
+                doppio_engine::FieldValue::String(part.slots.clone()),
+            )?;
+        }
         super::set_component_field(
             engine,
             child,
@@ -1752,7 +2144,7 @@ fn place_world_instance(
             "Tint",
             doppio_engine::FieldValue::Color(tint),
         )?;
-        if world::is_cutout_part(mesh) {
+        if part.cutout {
             super::set_component_field(
                 engine,
                 child,

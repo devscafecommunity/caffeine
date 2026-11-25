@@ -412,6 +412,7 @@ pub const WORLD_SAVE: UiId = UiId::fixed("world.toolbar.save");
 pub const WORLD_PREVIEW: UiId = UiId::fixed("world.toolbar.preview");
 pub const WORLD_SAVE_PREFAB: UiId = UiId::fixed("world.toolbar.save_prefab");
 pub const WORLD_BUILD: UiId = UiId::fixed("world.toolbar.build");
+pub const WORLD_FRAME: UiId = UiId::fixed("world.toolbar.frame");
 pub const WORLD_LIBRARY_SEARCH: UiId = UiId::fixed("world.library.search");
 pub const WORLD_TERRAIN: UiId = UiId::fixed("world.composition.terrain");
 pub const WORLD_TERRAIN_SIZE_X: UiId = UiId::fixed("world.composition.terrain_size_x");
@@ -657,6 +658,33 @@ pub fn naturegen_add(op: &str) -> UiId {
 
 pub fn naturegen_param(key: &str) -> UiId {
     UiId::dynamic(format!("naturegen.param.{key}"))
+}
+
+// Nature Generator: exposed parameters (the World Composer drives them by name).
+
+/// The Expose toggle beside a numeric node parameter (`naturegen.expose.<param>`).
+pub fn naturegen_expose(key: &str) -> UiId {
+    UiId::dynamic(format!("naturegen.expose.{key}"))
+}
+
+/// The name field of an exposed parameter (`naturegen.exposed.name.N`, N = its place in the list).
+pub fn naturegen_exposed_name(index: usize) -> UiId {
+    UiId::dynamic(format!("naturegen.exposed.name.{index}"))
+}
+
+/// The range minimum of an exposed parameter (`naturegen.exposed.min.N`).
+pub fn naturegen_exposed_min(index: usize) -> UiId {
+    UiId::dynamic(format!("naturegen.exposed.min.{index}"))
+}
+
+/// The range maximum of an exposed parameter (`naturegen.exposed.max.N`).
+pub fn naturegen_exposed_max(index: usize) -> UiId {
+    UiId::dynamic(format!("naturegen.exposed.max.{index}"))
+}
+
+/// Stops exposing a parameter (`naturegen.exposed.remove.N`).
+pub fn naturegen_exposed_remove(index: usize) -> UiId {
+    UiId::dynamic(format!("naturegen.exposed.remove.{index}"))
 }
 
 /// One row of the profiler's table (`profiler.table.row.N`).
@@ -1060,6 +1088,32 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: NATUREGEN_DELETE_NODE,
         description: "Deletes the selected node.",
+        kind: "button",
+    },
+    // Nature Generator: exposed parameters.
+    UiMeta {
+        id: UiId::fixed("naturegen.expose"),
+        description: "Exposes a numeric parameter of the selected node under a name the World Composer can drive (press again to stop); uses the .<param> suffix.",
+        kind: "chip",
+    },
+    UiMeta {
+        id: UiId::fixed("naturegen.exposed.name"),
+        description: "Name of an exposed parameter (letters, digits, _ or -), as the World Composer's adapt param.<name> lines use it; uses the .N suffix.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: UiId::fixed("naturegen.exposed.min"),
+        description: "Lowest value the World Composer may give an exposed parameter; uses the .N suffix.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: UiId::fixed("naturegen.exposed.max"),
+        description: "Highest value the World Composer may give an exposed parameter; uses the .N suffix.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: UiId::fixed("naturegen.exposed.remove"),
+        description: "Stops exposing a parameter; uses the .N suffix.",
         kind: "button",
     },
     UiMeta {
@@ -2009,7 +2063,7 @@ pub const CATALOG: &[UiMeta] = &[
     },
     UiMeta {
         id: WORLD_PREVIEW,
-        description: "Runs the coarse preview build off the UI thread (at most 2000 instances) and shows the count per class.",
+        description: "Runs the coarse preview on a worker thread (terrain bake and engine build, the latest edit wins) and shows the count per class.",
         kind: "button",
     },
     UiMeta {
@@ -2020,6 +2074,11 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: WORLD_BUILD,
         description: "Builds the world: resolves every recipe, bakes the terrain, places the classes and writes the scene (entities for a small world, a .cinst instance bake for a large one). One undo step.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_FRAME,
+        description: "Points the viewport camera at the last build (the whole terrain in view) and brings the Viewport tab to the front.",
         kind: "button",
     },
     UiMeta {

@@ -365,7 +365,7 @@ impl Driver {
                 }
                 app.show_water_pane();
             }
-            "world" => {
+            "world" | "world_showcase" => {
                 // The World Composer tab with a small project: a hills terrain, two rock recipes and the
                 // composition World/Valley.generator.world (written to a scratch asset folder). Needs libcaffeine-capi.
                 let engine = doppio_engine::Engine::load_default()
@@ -378,7 +378,13 @@ impl Driver {
                 ));
                 let _ = std::fs::remove_dir_all(&dir);
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-                let path = super::super::worldgen::write_world_fixture(&dir)?;
+                let path = if fixture == "world" {
+                    super::super::worldgen::write_world_fixture(&dir)?
+                } else {
+                    // A world that looks like one (documentation images): hills round a valley, a river, a lake,
+                    // trees with leaves, rocks, shrubs and grass; a build takes the large path.
+                    super::super::worldgen::write_world_showcase(&dir)?
+                };
                 app.asset_root_override = Some(dir.clone());
                 self.temp_roots.push(dir);
                 app.open_recipe_file(&path);
@@ -398,7 +404,7 @@ impl Driver {
             }
             other => {
                 return Err(format!(
-                "unknown fixture `{other}` (empty, entities, material, texture, scene3d, nature, water, terrain, world)"
+                "unknown fixture `{other}` (empty, entities, material, texture, scene3d, nature, water, terrain, world, world_showcase)"
             ))
             }
         }
@@ -464,8 +470,8 @@ impl Driver {
                 })
                 .collect();
         }
-        // The `world` fixture is a project of its own: its folder is the asset root unless the script names one.
-        if self.asset_root.is_none() && fixture == "world" {
+        // The `world` and `world_showcase` fixtures are projects of their own: its folder is the asset root unless the script names one.
+        if self.asset_root.is_none() && (fixture == "world" || fixture == "world_showcase") {
             self.asset_root = app.asset_root_override.clone();
         }
         app.asset_root_override = self.asset_root.clone();

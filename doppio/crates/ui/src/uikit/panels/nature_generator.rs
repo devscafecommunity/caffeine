@@ -11,7 +11,7 @@
 use crate::uikit::asset_kind::AssetKind;
 use crate::uikit::components::{
     asset_field, button, checkbox, dropdown, material_preview, node_canvas, scroll, slider, status,
-    text_field, texture_slot, tree_view,
+    text_field, texture_slot, toggle_chip, tree_view,
 };
 use crate::uikit::icons::Icon;
 use crate::uikit::id;
@@ -76,6 +76,20 @@ pub enum Edit {
     Place,
     /// Writes the model as a class of the default scatter plan.
     AddToScatter,
+    /// Exposes a node's numeric parameter (by key) so the World Composer can drive it; `None`
+    /// picks a unique default name (`<param>`, else `<op>_<param>`, else numbered).
+    Expose {
+        node: NodeId,
+        param: String,
+        name: Option<String>,
+    },
+    /// Stops exposing the parameter with this name.
+    Unexpose(String),
+    /// Renames an exposure (current name, new name). A name that is not valid or already taken
+    /// stays a draft in the field and changes nothing.
+    RenameExposed(String, String),
+    /// Narrows an exposure's range (name, min/max); `None` uses the parameter's own range.
+    SetExposedRange(String, Option<(f32, f32)>),
     Noop,
     PreviewPress,
     PreviewMove(Point),
@@ -130,6 +144,8 @@ pub struct View<'a> {
     pub project_textures: Vec<String>,
     /// Thumbnails of the images the selected node uses, by project path.
     pub thumbnails: std::collections::HashMap<String, Handle>,
+    /// An exposure name being typed that is not valid (yet): exposure index and text.
+    pub exposed_draft: Option<(usize, &'a str)>,
 }
 
 fn accent(category: &str) -> iced::Color {
@@ -430,6 +446,7 @@ pub fn view<'a, Message: Clone + 'a>(
     // Right column: properties, preview, naming.
     let mut right = Column::new().spacing(6);
     right = right.push(properties(&view, emit.clone()));
+    right = right.push(exposed_parameters(&view, emit.clone()));
     let press = emit(Edit::PreviewPress);
     let release = emit(Edit::PreviewRelease);
     let move_emit = emit.clone();
@@ -572,14 +589,43 @@ fn properties<'a, Message: Clone + 'a>(
                 ));
             }
             _ => {
-                body = body.push(slider::property_step(
-                    id::naturegen_param(spec.key),
-                    spec.label,
-                    spec.min..=spec.max,
-                    value,
-                    spec.step,
-                    move |v| param_emit(Edit::SetParam(node_id, index, v)),
-                ));
+                // Numeric parameters can be exposed to the World Composer by name.
+                let exposed = graph
+                    .exposed
+                    .iter()
+                    .find(|e| e.node == node_id && e.param == spec.key)
+                    .map(|e| e.name.clone());
+                let active = exposed.is_some();
+                let toggle = match exposed {
+                    Some(name) => emit(Edit::Unexpose(name)),
+                    None => emit(Edit::Expose {
+                        node: node_id,
+                        param: spec.key.to_owned(),
+                        name: None,
+                    }),
+                };
+                body = body.push(
+                    row![
+                        container(slider::property_step(
+                            id::naturegen_param(spec.key),
+                            spec.label,
+                            spec.min..=spec.max,
+                            value,
+                            spec.step,
+                            move |v| param_emit(Edit::SetParam(node_id, index, v)),
+                        ))
+                        .width(Length::Fill),
+                        toggle_chip::view(
+                            id::naturegen_expose(spec.key),
+                            "Expose",
+                            active,
+                            theme::ICON_CYAN,
+                            toggle,
+                        ),
+                    ]
+                    .spacing(4)
+                    .align_y(iced::Alignment::Center),
+                );
             }
         }
     }
@@ -666,6 +712,95 @@ fn properties<'a, Message: Clone + 'a>(
         ));
     }
     let _ = (&view.project_materials, &view.project_textures);
+    container(body)
+        .width(Length::Fill)
+        .padding(4)
+        .style(theme::surface)
+        .into()
+}
+
+/// Every exposed parameter: where it comes from, its name, its range and a remove button.
+fn exposed_parameters<'a, Message: Clone + 'a>(
+    view: &View<'a>,
+    emit: Rc<dyn Fn(Edit) -> Message + 'a>,
+) -> Element<'a, Message> {
+    let graph: &'a NatureGraph = view.graph;
+    let mut body = Column::new().spacing(3);
+    body = body.push(text("EXPOSED PARAMETERS").size(8).color(theme::TEXT_MUTED));
+    if graph.exposed.is_empty() {
+        body = body.push(
+            text("Nothing is exposed. Press Expose beside a parameter so the World Composer can drive it from the ground.")
+                .size(8)
+                .color(theme::TEXT_MUTED),
+        );
+    }
+    for (index, exposure) in graph.exposed.iter().enumerate() {
+        let node = graph.node(exposure.node);
+        let spec = node.and_then(|n| n.def().params.iter().find(|p| p.key == exposure.param));
+        let source = match (node, spec) {
+            (Some(node), Some(spec)) => {
+                format!("{} #{} · {}", node.def().title, node.id, spec.label)
+            }
+            _ => format!("{}.{} (missing)", exposure.node, exposure.param),
+        };
+        let name = exposure.name.clone();
+        let shown: &'a str = view
+            .exposed_draft
+            .filter(|(draft, _)| *draft == index)
+            .map(|(_, text)| text)
+            .unwrap_or(exposure.name.as_str());
+        body = body.push(
+            row![
+                text(source).size(9).color(theme::TEXT),
+                iced::widget::space::horizontal(),
+                button::compact(
+                    id::naturegen_exposed_remove(index),
+                    "×",
+                    emit(Edit::Unexpose(name.clone())),
+                ),
+            ]
+            .align_y(iced::Alignment::Center),
+        );
+        let rename = emit.clone();
+        let current = name.clone();
+        body = body.push(text_field::property(
+            id::naturegen_exposed_name(index),
+            "Name",
+            shown,
+            move |value| rename(Edit::RenameExposed(current.clone(), value)),
+        ));
+        if let Some(spec) = spec {
+            let (min, max) = exposure.range.unwrap_or((spec.min, spec.max));
+            let (min_emit, min_name) = (emit.clone(), name.clone());
+            body = body.push(slider::property_step(
+                id::naturegen_exposed_min(index),
+                "Min",
+                spec.min..=spec.max,
+                min,
+                spec.step,
+                move |v| {
+                    min_emit(Edit::SetExposedRange(
+                        min_name.clone(),
+                        Some((v, max.max(v))),
+                    ))
+                },
+            ));
+            let (max_emit, max_name) = (emit.clone(), name.clone());
+            body = body.push(slider::property_step(
+                id::naturegen_exposed_max(index),
+                "Max",
+                spec.min..=spec.max,
+                max,
+                spec.step,
+                move |v| {
+                    max_emit(Edit::SetExposedRange(
+                        max_name.clone(),
+                        Some((min.min(v), v)),
+                    ))
+                },
+            ));
+        }
+    }
     container(body)
         .width(Length::Fill)
         .padding(4)

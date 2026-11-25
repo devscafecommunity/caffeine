@@ -205,6 +205,10 @@ pub fn run() -> iced::Result {
                     "links": nature.graph.links.iter().map(|l| json!({
                         "from": l.from, "output": l.output, "to": l.to, "input": l.input,
                     })).collect::<Vec<_>>(),
+                    "exposed": nature.graph.exposed_parameters().iter().map(|e| json!({
+                        "name": e.name, "node": e.node, "param": e.param,
+                        "min": e.min, "max": e.max, "value": e.default,
+                    })).collect::<Vec<_>>(),
                     "ops": crate::uikit::nature::ops::NODES.iter().map(|d| json!({
                         "id": d.id, "title": d.title, "category": d.category,
                     })).collect::<Vec<_>>(),
@@ -1265,8 +1269,13 @@ pub fn run() -> iced::Result {
             |_| Ok(Message::WorldGen(world_composer::Edit::Build)),
         )
         .action(
+            "world_frame",
+            "Points the viewport camera at the last world build (the whole terrain in view) and shows the Viewport. No args.",
+            |_| Ok(Message::WorldGen(world_composer::Edit::Frame)),
+        )
+        .action(
             "world_preview",
-            "Runs the coarse preview (terrain baked off the UI thread, at most 2000 instances); read the counts with query world. No args.",
+            "Runs the coarse preview on a worker thread (terrain bake and engine build; the latest edit wins, every instance counted); read the counts with query world. No args.",
             |_| Ok(Message::WorldGen(world_composer::Edit::Preview)),
         )
         .action(
@@ -1411,6 +1420,27 @@ pub fn run() -> iced::Result {
             "nature_place",
             "Places the Nature Generator model in the scene as a group of entities, one per part, each with its own material.",
             |_| Ok(Message::NatureGen(nature_generator::Edit::Place)),
+        )
+        // Nature Generator: exposed parameters (the World Composer drives them by name).
+        .action(
+            "nature_expose",
+            "Exposes a numeric node parameter of the Nature Generator graph so the World Composer can drive it. args: { \"node\": id, \"param\": key (e.g. \"amount\"), \"name\"?: string (default: the key, else <op>_<key>, made unique) }",
+            |args| nature_exposure_edit("nature_expose", args).map(Message::NatureGen),
+        )
+        .action(
+            "nature_unexpose",
+            "Stops exposing a Nature Generator parameter. args: { \"name\": string }",
+            |args| nature_exposure_edit("nature_unexpose", args).map(Message::NatureGen),
+        )
+        .action(
+            "nature_rename_exposed",
+            "Renames an exposed Nature Generator parameter. args: { \"name\": string, \"to\": string (letters, digits, _ or -) }",
+            |args| nature_exposure_edit("nature_rename_exposed", args).map(Message::NatureGen),
+        )
+        .action(
+            "nature_set_exposed_range",
+            "Narrows the range of an exposed Nature Generator parameter, inside the parameter's own range. args: { \"name\": string, \"min\": number, \"max\": number } (omit min and max for the parameter's full range)",
+            |args| nature_exposure_edit("nature_set_exposed_range", args).map(Message::NatureGen),
         )
         .action(
             "toggle_scene_markers",
@@ -2973,4 +3003,42 @@ fn performance_json(app: &App) -> Value {
         "settings": Value::Object(values),
         "viewport": viewport_json,
     })
+}
+
+/// The Nature Generator edit of an exposure action (`nature_expose`, `nature_unexpose`,
+/// `nature_rename_exposed`, `nature_set_exposed_range`).
+pub(super) fn nature_exposure_edit(
+    action: &str,
+    args: &Value,
+) -> Result<nature_generator::Edit, String> {
+    use nature_generator::Edit;
+    match action {
+        "nature_expose" => {
+            let node = args
+                .get("node")
+                .and_then(Value::as_u64)
+                .ok_or("expected numeric \"node\"")?;
+            Ok(Edit::Expose {
+                node,
+                param: required_str(args, "param")?.to_owned(),
+                name: optional_str(args, "name")?.map(str::to_owned),
+            })
+        }
+        "nature_unexpose" => Ok(Edit::Unexpose(required_str(args, "name")?.to_owned())),
+        "nature_rename_exposed" => Ok(Edit::RenameExposed(
+            required_str(args, "name")?.to_owned(),
+            required_str(args, "to")?.to_owned(),
+        )),
+        "nature_set_exposed_range" => {
+            let name = required_str(args, "name")?.to_owned();
+            let range = match (optional_f32(args, "min")?, optional_f32(args, "max")?) {
+                (Some(min), Some(max)) if min <= max => Some((min, max)),
+                (Some(_), Some(_)) => return Err("\"min\" must not be above \"max\"".to_owned()),
+                (None, None) => None,
+                _ => return Err("give both \"min\" and \"max\", or neither".to_owned()),
+            };
+            Ok(Edit::SetExposedRange(name, range))
+        }
+        _ => Err(format!("unknown exposure action {action}")),
+    }
 }

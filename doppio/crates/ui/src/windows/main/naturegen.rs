@@ -131,6 +131,8 @@ pub(super) struct NatureGen {
     pub thumb_cache: std::cell::RefCell<std::collections::HashMap<String, Option<Handle>>>,
     pub dirty: bool,
     orbit: Option<Point>,
+    /// An exposure name being typed that is not valid or is taken: exposure index and text.
+    pub exposed_draft: Option<(usize, String)>,
 }
 
 impl NatureGen {
@@ -168,6 +170,7 @@ impl NatureGen {
             thumb_cache: Default::default(),
             dirty: false,
             orbit: None,
+            exposed_draft: None,
         };
         state.fit();
         state.refresh();
@@ -181,6 +184,7 @@ impl NatureGen {
         self.graph = graph;
         self.selected = self.graph.output_node();
         self.link = None;
+        self.exposed_draft = None;
         self.fit();
         self.refresh();
     }
@@ -278,6 +282,10 @@ impl NatureGen {
             project_materials: materials,
             project_textures: textures,
             thumbnails,
+            exposed_draft: self
+                .exposed_draft
+                .as_ref()
+                .map(|(index, text)| (*index, text.as_str())),
         }
     }
 }
@@ -351,6 +359,24 @@ fn texture_cards_png(name: &str, size: u32) -> Result<(Vec<u8>, u32, u32), Strin
         .find(|p| p.name == name)
         .ok_or_else(|| format!("unknown texture preset `{name}`"))?;
     Ok((bake(preset.build(), size)?, size, size))
+}
+
+/// A free exposure name for `node.param`: the parameter's key, else `<op>_<param>`, else that
+/// with a number.
+pub(super) fn default_exposure_name(graph: &NatureGraph, node: NodeId, param: &str) -> String {
+    let taken = |name: &str| graph.exposed.iter().any(|e| e.name == name);
+    if !taken(param) {
+        return param.to_owned();
+    }
+    let op = graph.node(node).map(|n| n.op).unwrap_or("node");
+    let base = format!("{op}_{param}");
+    if !taken(&base) {
+        return base;
+    }
+    (2..)
+        .map(|n| format!("{base}_{n}"))
+        .find(|name| !taken(name))
+        .unwrap_or(base)
 }
 
 fn snap_position(point: Point, snap: bool) -> Point {
@@ -639,6 +665,7 @@ impl App {
                         self.nature.cursor = cursor;
                         self.nature.graph = self.nature.undo[cursor].0.clone();
                         self.nature.dirty = true;
+                        self.nature.exposed_draft = None;
                         if self
                             .nature
                             .selected
@@ -706,6 +733,18 @@ impl App {
             Edit::Export => self.export_nature(),
             Edit::Place => self.place_nature(),
             Edit::AddToScatter => self.add_nature_to_scatter_plan(),
+            Edit::Expose { node, param, name } => self.expose_nature_param(node, &param, name),
+            Edit::Unexpose(name) => {
+                if self.nature.graph.unexpose(&name) {
+                    self.nature.exposed_draft = None;
+                    self.nature.status = Some(format!("Stopped exposing {name}"));
+                    self.nature.push(None);
+                } else {
+                    self.nature.status = Some(format!("Nothing is exposed as {name}"));
+                }
+            }
+            Edit::RenameExposed(name, to) => self.rename_nature_exposure(&name, to),
+            Edit::SetExposedRange(name, range) => self.set_nature_exposure_range(&name, range),
             Edit::Noop => {}
             Edit::PreviewPress => self.nature.orbit = Some(Point::ORIGIN),
             Edit::PreviewMove(point) => {
@@ -726,6 +765,123 @@ impl App {
                 self.nature.refresh();
             }
         }
+    }
+
+    /// Exposes `node.param` (a numeric parameter) under `name`, or a unique default name.
+    fn expose_nature_param(&mut self, node: NodeId, param: &str, name: Option<String>) {
+        let graph = &self.nature.graph;
+        let Some(spec) = graph
+            .node(node)
+            .and_then(|n| n.def().params.iter().find(|p| p.key == param))
+        else {
+            self.nature.status = Some(format!("Node {node} has no parameter {param}"));
+            return;
+        };
+        if !matches!(
+            spec.kind,
+            crate::uikit::procedural::ParamKind::Float | crate::uikit::procedural::ParamKind::Int
+        ) {
+            self.nature.status = Some(format!("Only numeric parameters can be exposed ({param})"));
+            return;
+        }
+        if let Some(existing) = graph
+            .exposed
+            .iter()
+            .find(|e| e.node == node && e.param == param)
+        {
+            self.nature.status = Some(format!("{param} is already exposed as {}", existing.name));
+            return;
+        }
+        let name = match name {
+            Some(name) if graph.exposed.iter().any(|e| e.name == name) => {
+                self.nature.status = Some(format!("{name} is already exposed"));
+                return;
+            }
+            Some(name) => name,
+            None => default_exposure_name(graph, node, param),
+        };
+        match self.nature.graph.expose(&name, node, param, None) {
+            Ok(()) => {
+                self.nature.status = Some(format!("Exposed {name}"));
+                self.nature.push(None);
+            }
+            Err(error) => self.nature.status = Some(error),
+        }
+    }
+
+    /// Renames an exposure in place. Text that is not a valid, free name is kept as a draft.
+    fn rename_nature_exposure(&mut self, name: &str, to: String) {
+        let Some(index) = self
+            .nature
+            .graph
+            .exposed
+            .iter()
+            .position(|e| e.name == name)
+        else {
+            self.nature.status = Some(format!("Nothing is exposed as {name}"));
+            return;
+        };
+        if to == name {
+            self.nature.exposed_draft = None;
+            return;
+        }
+        let problem = if !nature::graph::is_exposure_name(&to) {
+            Some(format!(
+                "{to:?} is not a parameter name (letters, digits, _ or -)"
+            ))
+        } else if self.nature.graph.exposed.iter().any(|e| e.name == to) {
+            Some(format!("{to} is already exposed"))
+        } else {
+            None
+        };
+        if let Some(problem) = problem {
+            self.nature.status = Some(problem);
+            self.nature.exposed_draft = Some((index, to));
+            return;
+        }
+        self.nature.exposed_draft = None;
+        self.nature.graph.exposed[index].name = to;
+        self.nature.status = None;
+        // Typing a name is one undo step.
+        self.nature.push(Some(format!("exposed-name:{index}")));
+    }
+
+    /// Narrows an exposure's range to the parameter's own; the full range is stored as `None`.
+    fn set_nature_exposure_range(&mut self, name: &str, range: Option<(f32, f32)>) {
+        let graph = &self.nature.graph;
+        let Some(index) = graph.exposed.iter().position(|e| e.name == name) else {
+            self.nature.status = Some(format!("Nothing is exposed as {name}"));
+            return;
+        };
+        let exposure = &graph.exposed[index];
+        let Some(spec) = graph
+            .node(exposure.node)
+            .and_then(|n| n.def().params.iter().find(|p| p.key == exposure.param))
+        else {
+            self.nature.status = Some(format!("{name} points at a parameter that is gone"));
+            return;
+        };
+        let range = match range {
+            Some((min, max)) => {
+                if !(min.is_finite() && max.is_finite()) {
+                    self.nature.status = Some(format!("{name}: the range must be numbers"));
+                    return;
+                }
+                let min = min.clamp(spec.min, spec.max);
+                let max = max.clamp(spec.min, spec.max);
+                if min > max {
+                    self.nature.status = Some(format!("{name}: the minimum is above the maximum"));
+                    return;
+                }
+                ((min, max) != (spec.min, spec.max)).then_some((min, max))
+            }
+            None => None,
+        };
+        if self.nature.graph.exposed[index].range == range {
+            return;
+        }
+        self.nature.graph.exposed[index].range = range;
+        self.nature.push(Some(format!("exposed-range:{index}")));
     }
 
     fn nature_dir(&self) -> Option<PathBuf> {
@@ -754,7 +910,7 @@ impl App {
 
     /// Writes the maps and the `.mat` of a part's material (once) and returns the path to apply.
     /// Bakes the part's own masks, generates its rock texture set and writes a `.mat` around it.
-    fn ensure_surface_material(
+    pub(super) fn ensure_surface_material(
         &self,
         part: &nature::mesh::Part,
         spec: &nature::surface::SurfaceSpec,
@@ -889,7 +1045,7 @@ impl App {
     }
 
     /// True when a part's material cuts its shape out of a picture (leaves, petals, blades).
-    fn material_is_cutout(&self, spec: &MaterialSpec) -> bool {
+    pub(super) fn material_is_cutout(&self, spec: &MaterialSpec) -> bool {
         match spec {
             MaterialSpec::Cards(_) | MaterialSpec::ProjectTexture(..) => true,
             MaterialSpec::Edited(inner, _) => self.material_is_cutout(inner),
@@ -970,7 +1126,7 @@ impl App {
         })
     }
 
-    fn ensure_nature_material(
+    pub(super) fn ensure_nature_material(
         &mut self,
         spec: &MaterialSpec,
         foliage: Foliage,

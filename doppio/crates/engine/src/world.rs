@@ -99,6 +99,24 @@ pub struct WorldWaterBody {
     pub cells: u32,
     pub coverage: Vec<u8>,
     pub surface: Vec<f32>,
+    /// The body as a shaped water surface over its own bounds (`caffeine_world_water_surface`); `None` on a library
+    /// without it.
+    pub surface_grid: Option<WaterSurfaceGrid>,
+}
+
+/// A water body's surface on its own grid, ready for `Engine::set_water_surface`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct WaterSurfaceGrid {
+    /// `[x0, z0, x1, z1]`, metres from the terrain's corner.
+    pub bounds: [f32; 4],
+    /// Vertices along x and z.
+    pub resolution: [u32; 2],
+    /// Surface height per vertex, metres (the terrain's frame), row 0 at `z0`.
+    pub heights: Vec<f32>,
+    /// 0 dry to 255 wet, per vertex.
+    pub coverage: Vec<u8>,
+    /// Two floats per vertex: the flow along x and z in m/s.
+    pub flow: Vec<f32>,
 }
 
 /// The result of a build. `errors` is empty exactly when `ok`.
@@ -240,6 +258,16 @@ type ReadCinstFn = unsafe extern "C" fn(*const c_char, *mut *mut c_void, *mut c_
 type CacheKeyFn = unsafe extern "C" fn(*const RawDesc, *mut u64) -> i32;
 type BuildCachedFn =
     unsafe extern "C" fn(*const RawDesc, *const c_char, *mut *mut c_void, *mut i32) -> i32;
+type WaterSurfaceFn = unsafe extern "C" fn(
+    *const c_void,
+    u32,
+    *mut f32,
+    *mut u32,
+    *mut u32,
+    *mut f32,
+    *mut u8,
+    *mut f32,
+) -> i32;
 
 #[derive(Clone, Copy)]
 pub(crate) struct WorldFunctions {
@@ -257,6 +285,8 @@ pub(crate) struct WorldFunctions {
     read_cinst: ReadCinstFn,
     cache_key: CacheKeyFn,
     build_cached: BuildCachedFn,
+    /// Optional: a library without it builds worlds whose water has no surface grid.
+    water_surface: Option<WaterSurfaceFn>,
 }
 
 impl WorldFunctions {
@@ -278,6 +308,7 @@ impl WorldFunctions {
                 read_cinst: load_symbol(library, b"caffeine_world_read_cinst\0")?,
                 cache_key: load_symbol(library, b"caffeine_world_cache_key\0")?,
                 build_cached: load_symbol(library, b"caffeine_world_build_cached\0")?,
+                water_surface: load_symbol(library, b"caffeine_world_water_surface\0"),
             })
         }
     }
@@ -291,11 +322,34 @@ fn text(chars: &[c_char]) -> String {
 
 const NEEDS_V28: &str = "the engine library needs C ABI v28 (World Composer)";
 
+/// The session-free half of the World Composer: copies of the world functions, nothing else. The C ABI library stays
+/// loaded for the process lifetime (`shared_library`), so a builder can be moved to a worker thread and outlive the
+/// `Engine` it came from. Every call builds from scratch; nothing is shared between calls.
+#[derive(Clone, Copy)]
+pub struct WorldBuilder {
+    f: WorldFunctions,
+}
+
+// The function pointers are plain code addresses into a library that is never unloaded.
+const _: fn() = || {
+    fn send_sync<T: Send + Sync>() {}
+    send_sync::<WorldBuilder>();
+};
+
 impl Engine {
+    /// A `WorldBuilder` for worker threads, or `None` on a library older than v28.
+    pub fn world_builder(&self) -> Option<WorldBuilder> {
+        self.functions.world.map(|f| WorldBuilder { f })
+    }
+
+    fn builder(&self) -> Result<WorldBuilder, String> {
+        self.world_builder().ok_or_else(|| NEEDS_V28.to_owned())
+    }
+
     /// Builds a composition. `Err` only for a desc the engine refuses outright (a NUL in a string, mismatched
     /// sizes, an engine without v28); a composition that does not build is `Ok` with `ok == false` and its errors.
     pub fn world_build(&self, desc: &WorldBuildDesc) -> Result<WorldBuild, String> {
-        self.world_build_baked(desc, None, 0.0)
+        self.builder()?.build(desc)
     }
 
     /// `world_build`, then, when it built and `bake` is set, writes the instance bake (`.cinst`) there in chunks of
@@ -306,26 +360,7 @@ impl Engine {
         bake: Option<&Path>,
         chunk_size: f32,
     ) -> Result<WorldBuild, String> {
-        let f = self.functions.world.ok_or_else(|| NEEDS_V28.to_owned())?;
-        let bake = bake
-            .map(|p| CString::new(p.to_string_lossy().as_bytes()))
-            .transpose()
-            .map_err(|_| "the bake path contains a NUL".to_owned())?;
-        with_raw_desc(desc, |raw| {
-            let mut handle: *mut c_void = std::ptr::null_mut();
-            if unsafe { (f.build)(raw, &mut handle) } != 0 || handle.is_null() {
-                return Err("the engine refused the world description".to_owned());
-            }
-            let mut out = unsafe { read_world(&f, handle) };
-            if let (Some(path), true) = (&bake, out.ok) {
-                if unsafe { (f.write_cinst)(handle, path.as_ptr(), chunk_size) } != 0 {
-                    out.errors
-                        .push(format!("cannot write the bake {}", path.to_string_lossy()));
-                }
-            }
-            unsafe { (f.free)(handle) };
-            Ok(out)
-        })?
+        self.builder()?.build_baked(desc, bake, chunk_size)
     }
 
     /// `world_build` through the persistent bake cache in `cache_dir`. The flag says whether the cache answered (a
@@ -335,26 +370,12 @@ impl Engine {
         desc: &WorldBuildDesc,
         cache_dir: &Path,
     ) -> Result<(WorldBuild, bool), String> {
-        let f = self.functions.world.ok_or_else(|| NEEDS_V28.to_owned())?;
-        let dir = CString::new(cache_dir.to_string_lossy().as_bytes())
-            .map_err(|_| "the cache path contains a NUL".to_owned())?;
-        with_raw_desc(desc, |raw| {
-            let mut handle: *mut c_void = std::ptr::null_mut();
-            let mut hit = 0i32;
-            if unsafe { (f.build_cached)(raw, dir.as_ptr(), &mut handle, &mut hit) } != 0
-                || handle.is_null()
-            {
-                return Err("the engine refused the world description".to_owned());
-            }
-            let out = unsafe { read_world(&f, handle) };
-            unsafe { (f.free)(handle) };
-            Ok((out, hit != 0))
-        })?
+        self.builder()?.build_cached(desc, cache_dir)
     }
 
     /// The cache key a build of `desc` would have (0 when a reference or the terrain is missing).
     pub fn world_cache_key(&self, desc: &WorldBuildDesc) -> Result<u64, String> {
-        let f = self.functions.world.ok_or_else(|| NEEDS_V28.to_owned())?;
+        let f = self.builder()?.f;
         with_raw_desc(desc, |raw| {
             let mut key = 0u64;
             if unsafe { (f.cache_key)(raw, &mut key) } != 0 {
@@ -366,7 +387,7 @@ impl Engine {
 
     /// Opens an instance bake (`.cinst`) as a world: classes and instances.
     pub fn world_read_cinst(&self, path: &Path) -> Result<WorldBuild, String> {
-        let f = self.functions.world.ok_or_else(|| NEEDS_V28.to_owned())?;
+        let f = self.builder()?.f;
         let path = CString::new(path.to_string_lossy().as_bytes())
             .map_err(|_| "the path contains a NUL".to_owned())?;
         let mut handle: *mut c_void = std::ptr::null_mut();
@@ -390,10 +411,78 @@ impl Engine {
 
     /// Parses and validates a composition's graph text: `Ok`, or every problem, one per line.
     pub fn world_check(&self, graph: &str) -> Result<(), String> {
-        let f = self.functions.world.ok_or_else(|| NEEDS_V28.to_owned())?;
+        self.builder()?.check(graph)
+    }
+}
+
+impl WorldBuilder {
+    /// True when builds fill `WorldWaterBody::surface_grid` (`caffeine_world_water_surface`).
+    pub fn has_water_surface(&self) -> bool {
+        self.f.water_surface.is_some()
+    }
+
+    /// See `Engine::world_build`.
+    pub fn build(&self, desc: &WorldBuildDesc) -> Result<WorldBuild, String> {
+        self.build_baked(desc, None, 0.0)
+    }
+
+    /// See `Engine::world_build_baked`.
+    pub fn build_baked(
+        &self,
+        desc: &WorldBuildDesc,
+        bake: Option<&Path>,
+        chunk_size: f32,
+    ) -> Result<WorldBuild, String> {
+        let f = self.f;
+        let bake = bake
+            .map(|p| CString::new(p.to_string_lossy().as_bytes()))
+            .transpose()
+            .map_err(|_| "the bake path contains a NUL".to_owned())?;
+        with_raw_desc(desc, |raw| {
+            let mut handle: *mut c_void = std::ptr::null_mut();
+            if unsafe { (f.build)(raw, &mut handle) } != 0 || handle.is_null() {
+                return Err("the engine refused the world description".to_owned());
+            }
+            let mut out = unsafe { read_world(&f, handle) };
+            if let (Some(path), true) = (&bake, out.ok) {
+                if unsafe { (f.write_cinst)(handle, path.as_ptr(), chunk_size) } != 0 {
+                    out.errors
+                        .push(format!("cannot write the bake {}", path.to_string_lossy()));
+                }
+            }
+            unsafe { (f.free)(handle) };
+            Ok(out)
+        })?
+    }
+
+    /// See `Engine::world_build_cached`.
+    pub fn build_cached(
+        &self,
+        desc: &WorldBuildDesc,
+        cache_dir: &Path,
+    ) -> Result<(WorldBuild, bool), String> {
+        let f = self.f;
+        let dir = CString::new(cache_dir.to_string_lossy().as_bytes())
+            .map_err(|_| "the cache path contains a NUL".to_owned())?;
+        with_raw_desc(desc, |raw| {
+            let mut handle: *mut c_void = std::ptr::null_mut();
+            let mut hit = 0i32;
+            if unsafe { (f.build_cached)(raw, dir.as_ptr(), &mut handle, &mut hit) } != 0
+                || handle.is_null()
+            {
+                return Err("the engine refused the world description".to_owned());
+            }
+            let out = unsafe { read_world(&f, handle) };
+            unsafe { (f.free)(handle) };
+            Ok((out, hit != 0))
+        })?
+    }
+
+    /// See `Engine::world_check`.
+    pub fn check(&self, graph: &str) -> Result<(), String> {
         let graph = CString::new(graph).map_err(|_| "the text contains a NUL".to_owned())?;
         let mut error = vec![0 as c_char; 4096];
-        if unsafe { (f.check)(graph.as_ptr(), error.as_mut_ptr(), error.len() as u32) } == 0 {
+        if unsafe { (self.f.check)(graph.as_ptr(), error.as_mut_ptr(), error.len() as u32) } == 0 {
             return Ok(());
         }
         Err(text(&error))
@@ -567,6 +656,9 @@ unsafe fn read_world(f: &WorldFunctions, handle: *mut c_void) -> WorldBuild {
                 cells: body.cells,
                 coverage,
                 surface,
+                surface_grid: f
+                    .water_surface
+                    .and_then(|get| read_water_surface(get, handle, i)),
             });
         }
     }
@@ -583,6 +675,58 @@ unsafe fn read_world(f: &WorldFunctions, handle: *mut c_void) -> WorldBuild {
         }
     }
     out
+}
+
+/// The surface grid of water body `index`: its resolution first (NULL arrays), then the arrays.
+///
+/// # Safety
+/// `handle` must be a live `CaffeineWorld*`.
+unsafe fn read_water_surface(
+    get: WaterSurfaceFn,
+    handle: *mut c_void,
+    index: u32,
+) -> Option<WaterSurfaceGrid> {
+    let mut bounds = [0f32; 4];
+    let (mut rx, mut rz) = (0u32, 0u32);
+    if get(
+        handle,
+        index,
+        bounds.as_mut_ptr(),
+        &mut rx,
+        &mut rz,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+    ) != 0
+        || rx < 2
+        || rz < 2
+    {
+        return None;
+    }
+    let cells = rx as usize * rz as usize;
+    let mut grid = WaterSurfaceGrid {
+        bounds,
+        resolution: [rx, rz],
+        heights: vec![0.0; cells],
+        coverage: vec![0; cells],
+        flow: vec![0.0; cells * 2],
+    };
+    let (mut again_x, mut again_z) = (rx, rz);
+    if get(
+        handle,
+        index,
+        grid.bounds.as_mut_ptr(),
+        &mut again_x,
+        &mut again_z,
+        grid.heights.as_mut_ptr(),
+        grid.coverage.as_mut_ptr(),
+        grid.flow.as_mut_ptr(),
+    ) != 0
+        || (again_x, again_z) != (rx, rz)
+    {
+        return None;
+    }
+    Some(grid)
 }
 
 #[cfg(test)]
@@ -704,5 +848,54 @@ mod tests {
         let mut bad = desc;
         bad.heights.pop();
         assert!(engine.world_build(&bad).is_err());
+    }
+
+    #[test]
+    fn a_world_builder_builds_on_another_thread_like_the_engine() {
+        let _guard = test_lock();
+        let Some(engine) = Engine::load_default() else {
+            return;
+        };
+        let Some(builder) = engine.world_builder() else {
+            return; // a libcaffeine-capi from before C ABI 28
+        };
+        let desc = bowl();
+        let here = engine.world_build(&desc).expect("build");
+        let there = std::thread::spawn(move || builder.build(&desc).expect("build"))
+            .join()
+            .expect("the worker");
+        assert_eq!(there.instance_hash, here.instance_hash);
+        assert_eq!(there.instances.len(), here.instances.len());
+        assert!(builder.check(&bowl().graph).is_ok());
+        assert!(builder.check("class oak\n").is_err());
+    }
+
+    #[test]
+    fn water_bodies_carry_their_surface_grid_when_the_engine_has_it() {
+        let _guard = test_lock();
+        let Some(engine) = Engine::load_default() else {
+            return;
+        };
+        let Some(builder) = engine.world_builder() else {
+            return;
+        };
+        let world = builder.build(&bowl()).expect("build");
+        assert!(world.ok, "{:?}", world.errors);
+        if !builder.has_water_surface() {
+            // A library from before `caffeine_world_water_surface`: no grid, nothing else changes.
+            assert!(world.water.iter().all(|b| b.surface_grid.is_none()));
+            return;
+        }
+        let grid = world.water[0]
+            .surface_grid
+            .as_ref()
+            .expect("a surface grid");
+        let cells = grid.resolution[0] as usize * grid.resolution[1] as usize;
+        assert!(grid.resolution[0] >= 2 && grid.resolution[1] >= 2);
+        assert_eq!(grid.heights.len(), cells);
+        assert_eq!(grid.coverage.len(), cells);
+        assert_eq!(grid.flow.len(), cells * 2);
+        assert!(grid.bounds[2] > grid.bounds[0] && grid.bounds[3] > grid.bounds[1]);
+        assert!(grid.coverage.iter().any(|c| *c > 0));
     }
 }
