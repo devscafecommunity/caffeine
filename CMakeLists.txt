@@ -139,6 +139,7 @@ add_library(caffeine-core
     src/caffeine/engine/AssetLoader.cpp
     src/caffeine/core/DebugHookRegistry.cpp
     src/caffeine/capi/EngineAPI.cpp
+    src/caffeine/capi/WorldAPI.cpp
     src/caffeine/project/ProjectManager.cpp
     src/caffeine/scene/EditorContext.cpp
     src/caffeine/scene/EditorSceneSerializer.cpp
@@ -337,6 +338,7 @@ add_library(Caffeine::Core ALIAS caffeine-core)
 # engine directly. The ABI is versioned in include/caffeine/capi/EngineAPI.h.
 add_library(caffeine-capi SHARED
     src/caffeine/capi/EngineAPI.cpp
+    src/caffeine/capi/WorldAPI.cpp
 )
 target_include_directories(caffeine-capi PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
