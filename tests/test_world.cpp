@@ -162,7 +162,7 @@ TEST_CASE("World: a build is a pure function and halves add up to the whole", "[
     CHECK(whole.classes[2].id == "grass");
     for (const WorldClassInstances& cls : whole.classes) CHECK_FALSE(cls.instances.empty());
     CHECK(whole.total == countOf(whole));
-    CHECK(whole.water.size() == 1);
+    CHECK(whole.water.bodies.size() == 1);
     CHECK(whole.materials.size() == 1);
 
     const WorldPart again = build(valley.request());
@@ -185,7 +185,7 @@ TEST_CASE("World: a build is a pure function and halves add up to the whole", "[
     CHECK(a.cacheKey != whole.cacheKey);
 
     // Golden value: changing it means every saved world moves; bump GENERATOR_VERSION instead.
-    CHECK(instanceHash(whole) == 0x6baace751a6c39b7ull);
+    CHECK(instanceHash(whole) == 0x4b14b768a899d002ull);
 }
 
 TEST_CASE("World: reordering or adding classes does not move the others", "[world][determinism]") {
@@ -267,8 +267,8 @@ TEST_CASE("World: overrides remove, move and pin without touching other instance
     REQUIRE(p);
     CHECK(p->variant == (pinned.variant + 1) % 8);
     // Every other instance is untouched.
-    CHECK(instanceHash(WorldPart{true, {}, {after.classes[0]}, {}, {}, 0, false, 0}) ==
-          instanceHash(WorldPart{true, {}, {before.classes[0]}, {}, {}, 0, false, 0}));
+    CHECK(instanceHash(WorldPart{true, {}, {after.classes[0]}, {}, {}, {}, 0, false, 0}) ==
+          instanceHash(WorldPart{true, {}, {before.classes[0]}, {}, {}, {}, 0, false, 0}));
 
     // The edit layer survives the text form.
     WorldComposition reparsed;
@@ -298,13 +298,21 @@ TEST_CASE("World: references are checked all at once and nothing is built on fai
     CHECK(part.errors[0].find("Moss.generator.material") != std::string::npos);
     CHECK(part.errors[1].find("OakTree") != std::string::npos);
 
-    SECTION("an unknown mask, a newer world and a missing terrain are errors too") {
-        Valley other;
-        other.composition.classes[2].where.push_back({"water_distance", 0.0f, 0.0f, 0.5f, 1.0f});
-        WorldBuildRequest r = other.request();
+    SECTION("a newer world and a missing terrain are errors too") {
+        WorldBuildRequest r = valley.request();
         r.generatorVersion = 3;
         r.frame.heightmap = nullptr;
         const WorldPart failed = build(r);
+        CHECK_FALSE(failed.ok);
+        CHECK(failed.errors.size() == 2);
+    }
+
+    SECTION("so are masks the terrain does not have, in a rule, an adapt or a river") {
+        Valley other;
+        other.composition.classes[2].where.push_back({"snow_depth", 0.0f, 0.0f, 0.5f, 1.0f});
+        other.composition.classes[1].adapt.push_back({"tint", "moss", -1.0f});
+        other.composition.water[0].follow = "flow";
+        const WorldPart failed = build(other.request());
         CHECK_FALSE(failed.ok);
         CHECK(failed.errors.size() == 3);
     }
@@ -322,6 +330,141 @@ TEST_CASE("World: the instance budget stops the build and says so", "[world]") {
     CHECK(cut.truncated);
     CHECK(countOf(cut) == request.maxInstances);
     CHECK(cut.total == full.total);
+    CHECK(full.total == countOf(full));
     // What is kept is the same every time (chunk order, as in Scatter on Terrain).
     CHECK(instanceHash(build(request)) == instanceHash(cut));
+}
+
+TEST_CASE("World: rivers, carving, lakes and the water_distance mask", "[world][water]") {
+    Valley valley;
+    valley.composition.water.clear();
+    valley.composition.water.push_back({"Water/River.generator.water", "wetness", 0.85f, false, 0.0f, 1.5f});
+    valley.composition.water.push_back({"Water/Lake.generator.water", "", 0.0f, true, 0.35f, 0.0f});
+    WorldClass reeds;
+    reeds.id = "reeds";
+    reeds.ref = "Nature/Reeds.generator.nature";
+    reeds.priority = 10;
+    reeds.cell = 3.0f;
+    reeds.radius = 0.5f;
+    reeds.where.push_back({"water_distance", 0.0f, 0.0f, 0.05f, 0.1f});
+    valley.composition.classes.push_back(reeds);
+    REQUIRE(valley.composition.validate().empty());
+
+    const WorldPart part = build(valley.request());
+    INFO((part.errors.empty() ? std::string() : part.errors[0]));
+    REQUIRE(part.ok);
+    REQUIRE(part.water.bodies.size() == 2);
+    const WaterBody& river = part.water.bodies[0];
+    const WaterBody& lake = part.water.bodies[1];
+    CHECK_FALSE(river.lake);
+    CHECK(lake.lake);
+    CHECK(river.cells > 0);
+    CHECK(lake.cells > 0);
+    CHECK(part.water.carved);
+
+    // The river bed is 1.5 m lower than the baked ground, and its surface lies between the two.
+    bool checked = false;
+    for (size_t i = 0; i < river.coverage.size() && !checked; ++i) {
+        if (!river.coverage[i]) continue;
+        const f32 before = valley.map.heights()[i] * valley.frame.maxHeight;
+        const f32 after = part.terrain.heights()[i] * valley.frame.maxHeight;
+        if (before < 1.6f) continue;
+        CHECK(after == Approx(before - 1.5f).margin(1e-3f));
+        CHECK(river.surface[i] > after);
+        CHECK(river.surface[i] < before);
+        checked = true;
+    }
+    CHECK(checked);
+    // Lake water stands at most at the level and above the ground.
+    for (size_t i = 0; i < lake.coverage.size(); ++i) {
+        if (!lake.coverage[i]) continue;
+        CHECK(lake.surface[i] <= 0.35f * valley.frame.maxHeight + 1e-4f);
+        CHECK(lake.surface[i] > part.terrain.heights()[i] * valley.frame.maxHeight);
+    }
+    // The distance mask is 0 on water and grows away from it.
+    u8 farthest = 0;
+    for (size_t i = 0; i < part.water.distance.size(); ++i) {
+        if (river.coverage[i] || lake.coverage[i]) CHECK(part.water.distance[i] == 0);
+        farthest = std::max(farthest, part.water.distance[i]);
+    }
+    CHECK(farthest > 128);
+
+    // Reeds only grow at the bank.
+    const WorldClassInstances* bank = nullptr;
+    for (const auto& cls : part.classes) {
+        if (cls.id == "reeds") bank = &cls;
+    }
+    REQUIRE(bank);
+    REQUIRE_FALSE(bank->instances.empty());
+    for (const InstanceContext& ctx : bank->context) CHECK(ctx.waterDistance < 0.1f);
+
+    // Carving and lakes are computed on the whole terrain, so regions still add up.
+    WorldBuildRequest left = valley.request(), right = valley.request();
+    left.x1 = 128.0f;
+    left.z1 = 256.0f;
+    right.x0 = 128.0f;
+    right.x1 = 256.0f;
+    right.z1 = 256.0f;
+    std::set<Key> joined = keysOf(build(left));
+    for (const Key& k : keysOf(build(right))) joined.insert(k);
+    CHECK(joined == keysOf(part));
+}
+
+TEST_CASE("World: adapt maps the ground context onto each instance", "[world][adapt]") {
+    Valley plain;
+    for (WorldClass& cls : plain.composition.classes) cls.adapt.clear();
+    const WorldPart before = build(plain.request());
+    REQUIRE(before.ok);
+
+    Valley adapted;
+    for (WorldClass& cls : adapted.composition.classes) cls.adapt.clear();
+    WorldClass& oak = adapted.composition.classes[1];
+    oak.adapt.push_back({"size", "wetness", 0.5f});
+    oak.adapt.push_back({"snow", "height", -1.0f});
+    oak.adapt.push_back({"tint", "neighbours", -1.0f});
+    oak.adapt.push_back({"lean", "slope", 1.0f});
+    const WorldPart after = build(adapted.request());
+    INFO((after.errors.empty() ? std::string() : after.errors[0]));
+    REQUIRE(after.ok);
+
+    // Same instances (adapt never moves or removes), different looks.
+    CHECK(keysOf(after) == keysOf(before));
+    const WorldClassInstances& a = after.classes[1];
+    const WorldClassInstances& b = before.classes[1];
+    REQUIRE(a.id == "oak");
+    REQUIRE(a.instances.size() == b.instances.size());
+    REQUIRE(a.context.size() == a.instances.size());
+    bool crowded = false;
+    for (size_t i = 0; i < a.instances.size(); ++i) {
+        const InstanceContext& ctx = a.context[i];
+        CHECK(a.instances[i].scale == Approx(b.instances[i].scale * (1.0f + 0.5f * (2.0f * ctx.wetness - 1.0f))));
+        CHECK(ctx.snowModifier == Approx(ctx.height));
+        CHECK(a.instances[i].tint.x == Approx(b.instances[i].tint.x * (1.0f - 0.2f * ctx.neighbours)));
+        crowded = crowded || ctx.neighbours > 0.0f;
+    }
+    CHECK(crowded);
+    // The other classes are untouched.
+    CHECK(instanceHash(WorldPart{true, {}, {after.classes[0]}, {}, {}, {}, 0, false, 0}) ==
+          instanceHash(WorldPart{true, {}, {before.classes[0]}, {}, {}, {}, 0, false, 0}));
+
+    // Crowding reads past the region's border, so halves still agree with the whole, context included.
+    WorldBuildRequest left = adapted.request();
+    left.x1 = 100.0f;
+    left.z1 = 256.0f;
+    const WorldPart half = build(left);
+    REQUIRE(half.ok);
+    for (size_t i = 0; i < half.classes[1].instances.size(); ++i) {
+        const Scatter::Instance& h = half.classes[1].instances[i];
+        for (size_t j = 0; j < a.instances.size(); ++j) {
+            if (a.instances[j].cellX != h.cellX || a.instances[j].cellZ != h.cellZ) continue;
+            CHECK(half.classes[1].context[i].neighbours == a.context[j].neighbours);
+            CHECK(h.scale == a.instances[j].scale);
+        }
+    }
+
+    WorldComposition reparsed;
+    REQUIRE(WorldComposition::fromText(adapted.composition.toText(), reparsed));
+    REQUIRE(reparsed.classes[1].adapt.size() == 4);
+    CHECK(reparsed.classes[1].adapt[0].amount == 0.5f);
+    CHECK(reparsed.classes[1].adapt[1].amount < 0.0f);
 }

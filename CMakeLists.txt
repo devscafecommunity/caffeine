@@ -126,6 +126,7 @@ add_library(caffeine-core
     src/caffeine/scatter/TerrainScatter.cpp
     src/caffeine/world/WorldComposition.cpp
     src/caffeine/world/WorldBuild.cpp
+    src/caffeine/world/WorldWater.cpp
     src/caffeine/micromesh/Micromesh.cpp
     src/caffeine/procedural/ProceduralProfiles.cpp
     src/caffeine/procedural/ProceduralGenerator.cpp

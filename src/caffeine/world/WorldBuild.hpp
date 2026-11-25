@@ -7,11 +7,12 @@
 //
 //   1. resolve    every ref -> recipe (exists, right kind, supported version). Any failure: build nothing, list all.
 //   2. terrain    the caller bakes the terrain recipe and passes its frame and masks (the graph lives in Doppio).
-//   3. water      references checked and passed through (bodies, `water_distance` and carving are phase C2).
+//   3. water      rivers, optional bed carving, lakes and the `water_distance` mask (`world/WorldWater.hpp`).
 //   4. materials  references checked and passed through as bindings.
 //   5. classes    the scatter core over the terrain, every class at once: priority + exclusion radius decide
 //                 conflicts, the biome terms decide density, the class id's hash is its salt.
-//   6. overrides  the edit layer: remove, move (height re-conformed), pin a variant.
+//   6. overrides  the edit layer: remove, move (height re-conformed), pin a variant; then the ground context at
+//                 each instance and the class's `adapt` mappings (size, lean, tint, wetness, snow).
 //   7. output     a `WorldPart`.
 //
 // An instance belongs to the region where it was generated, also after an `override move`, so the edit layer keeps
@@ -20,6 +21,7 @@
 #include "scatter/Scatter.hpp"
 #include "terrain/TerrainMasks.hpp"
 #include "world/WorldComposition.hpp"
+#include "world/WorldWater.hpp"
 
 #include <functional>
 #include <string>
@@ -56,12 +58,29 @@ struct WorldBuildRequest {
     u32 maxInstances = 200000;
 };
 
+/// What the ground is like under one instance (all 0..1), and the run-time modifiers `adapt` set.
+struct InstanceContext {
+    f32 slope = 0.0f;
+    f32 height = 0.0f;
+    /// The `wetness` mask, 0 when the terrain has none.
+    f32 wetness = 0.0f;
+    f32 waterDistance = 1.0f;
+    /// Other generated instances within three radii, over 6 (0 when no class adapts to `neighbours`).
+    f32 neighbours = 0.0f;
+    f32 wetnessModifier = 0.0f;
+    f32 snowModifier = 0.0f;
+};
+
 struct WorldClassInstances {
     std::string id;
     /// `classSalt(id)`: the `classId` of every instance below.
     u32 salt = 0;
     std::string ref;
+    /// Hero class: bake one model per instance (seeded by `Instance::seed`) instead of using the variant pool.
+    bool unique = false;
     std::vector<Scatter::Instance> instances;
+    /// One per instance, same order.
+    std::vector<InstanceContext> context;
 };
 
 struct WorldPart {
@@ -70,8 +89,11 @@ struct WorldPart {
     std::vector<std::string> errors;
     /// One entry per class, in placement order (priority descending, then salt), whatever the list order.
     std::vector<WorldClassInstances> classes;
-    std::vector<WorldWater> water;
+    /// The terrain the instances stand on: the baked one, carved by rivers that ask for it.
+    Terrain::TerrainHeightmap terrain;
+    WaterLayer water;
     std::vector<WorldMaterial> materials;
+    /// Instances in the region after the edits (exact unless `truncated`).
     u32 total = 0;
     bool truncated = false;
     /// Key of this build in a cache: seed, region, algorithm version, the composition and every recipe it used.
@@ -80,7 +102,7 @@ struct WorldPart {
 
 WorldPart build(const WorldBuildRequest& request);
 
-/// Hash of the instance lists (class, cell, variant, position to the millimetre, seed): the golden value tests pin.
+/// Hash of the instance lists (class, cell, variant, position to the millimetre, scale, seed): the golden value tests pin.
 u64 instanceHash(const WorldPart& part);
 
 }  // namespace Caffeine::World

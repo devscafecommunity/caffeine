@@ -11,7 +11,8 @@
 //
 //     seed 1234
 //     terrain Terrain/Alpine.generator.terrain size 1024 1024
-//     water Water/River.generator.water follow flow min 0.8
+//     water_distance 64
+//     water Water/River.generator.water follow flow min 0.8 carve 1.5
 //     water Water/Lake.generator.water fill basins level 0.18
 //     material terrain.layer0 Materials/Moss.generator.material
 //     class boulder ref Nature/MossRock.generator.nature variants 6 priority 30 cell 16 radius 2.2 density 0.9 scale 0.7 1.6 tilt 0.8 sink 0.3
@@ -20,14 +21,15 @@
 //       slope   0.00 0.00 0.15 0.35
 //       wetness 0.20 0.40 0.80 1.00
 //       adapt size wetness
-//       adapt lean slope
+//       adapt lean slope 0.3
+//       adapt wetness water_distance
 //     override remove oak 12 -4
 //     override move oak 3 7 120.5 88.25
 //     override pin boulder 5 5 2
 //
 // Class properties: `ref` (required), `variants`, `priority`, `cell`, `radius`, `density`, `scale <min> <max>`,
 // `tilt`, `sink`, `tint` (the jitter), `base` (the rule's base density), `unique on|off`. Indented lines are a biome
-// term `<mask> <rise0> <rise1> <fall1> <fall0>` or `adapt <size|lean|tint> <mask>`.
+// term `<mask> <rise0> <rise1> <fall1> <fall0>` or `adapt <size|lean|tint|wetness|snow> <mask|neighbours> [amount]`.
 //
 // A class is known by its `id` (a word), never by its place in the list: its placement salt is a hash of the id
 // (`classSalt`), so reordering classes or adding one does not move any other instance. References are project paths
@@ -62,6 +64,8 @@ struct WorldWater {
     /// A lake: fill the basins under a normalised level.
     bool fillBasins = false;
     f32 level = 0.0f;
+    /// A river: metres its bed is lowered before the classes read the masks (0 = no carving).
+    f32 carve = 0.0f;
 };
 
 struct WorldMaterial {
@@ -70,12 +74,26 @@ struct WorldMaterial {
     std::string ref;
 };
 
-/// Drives an instance parameter from the ground context (applied from phase C3 of the design).
+/// Drives an instance parameter from the ground context at the instance (`v`, 0..1):
+///   size     scale *= 1 + amount * (2v - 1)            (default amount 0.25)
+///   lean     tilt toward the normal += amount * v      (0.5)
+///   tint     tint *= 1 - amount * v                    (0.2)
+///   wetness  the run-time wetness modifier = amount * v (1)
+///   snow     the run-time snow modifier = amount * v    (1)
+/// The source is any terrain mask (`water_distance` included) or `neighbours`: how crowded the instance is, the
+/// count of other generated instances within three of its radii, over 6. Neighbours are counted before the edit
+/// layer, so moving or removing an instance never changes another one.
 struct WorldAdapt {
-    /// `size`, `lean` or `tint`.
     std::string target;
     std::string mask;
+    /// Negative means the target's default.
+    f32 amount = -1.0f;
+
+    f32 effectiveAmount() const;
 };
+
+/// `adapt` targets, in the order the build applies them.
+bool isAdaptTarget(std::string_view target);
 
 struct WorldClass {
     /// Letters, digits, '_' and '-'; unique in the composition.
@@ -121,6 +139,8 @@ u32 classSalt(std::string_view id);
 struct WorldComposition {
     u64 seed = 0;
     WorldTerrain terrain;
+    /// Metres at which the `water_distance` mask reaches 1.
+    f32 waterDistance = 64.0f;
     std::vector<WorldWater> water;
     std::vector<WorldMaterial> materials;
     std::vector<WorldClass> classes;

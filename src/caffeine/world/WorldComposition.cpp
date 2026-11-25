@@ -56,6 +56,18 @@ bool isClassKey(const std::string& word) {
 
 }  // namespace
 
+bool isAdaptTarget(std::string_view target) {
+    return target == "size" || target == "lean" || target == "tint" || target == "wetness" || target == "snow";
+}
+
+f32 WorldAdapt::effectiveAmount() const {
+    if (amount >= 0.0f) return amount;
+    if (target == "size") return 0.25f;
+    if (target == "lean") return 0.5f;
+    if (target == "tint") return 0.2f;
+    return 1.0f;
+}
+
 const char* recipeKindName(RecipeKind kind) {
     switch (kind) {
         case RecipeKind::Terrain: return "terrain";
@@ -89,6 +101,7 @@ std::vector<std::string> WorldComposition::validate() const {
     if (terrain.ref.empty()) errors.push_back("the composition has no `terrain`");
     if (terrain.sizeX < 0.0f || terrain.sizeZ < 0.0f) errors.push_back("the terrain size must not be negative");
     if (classes.empty()) errors.push_back("the composition has no `class`");
+    if (!(waterDistance > 0.0f)) errors.push_back("`water_distance` must be above 0");
 
     std::map<u32, std::string> salts;
     for (const WorldClass& cls : classes) {
@@ -101,8 +114,8 @@ std::vector<std::string> WorldComposition::validate() const {
         if (cls.minScale > cls.maxScale) errors.push_back(name + ": the scale range decreases");
         if (!(cls.minScale > 0.0f)) errors.push_back(name + ": the scale must be above 0");
         for (const WorldAdapt& a : cls.adapt) {
-            if (a.target != "size" && a.target != "lean" && a.target != "tint") {
-                errors.push_back(name + ": `adapt " + a.target + "` is not size, lean or tint");
+            if (!isAdaptTarget(a.target)) {
+                errors.push_back(name + ": `adapt " + a.target + "` is not size, lean, tint, wetness or snow");
             }
         }
         const u32 salt = classSalt(cls.id);
@@ -115,6 +128,7 @@ std::vector<std::string> WorldComposition::validate() const {
     }
     for (const WorldWater& w : water) {
         if (w.ref.empty()) errors.push_back("a `water` line has no recipe");
+        if (w.carve < 0.0f) errors.push_back("water `" + w.ref + "`: `carve` must not be negative");
         if (w.follow.empty() && !w.fillBasins) {
             errors.push_back("water `" + w.ref + "` needs `follow <mask>` or `fill basins`");
         }
@@ -136,6 +150,7 @@ std::string WorldComposition::toText() const {
     out.imbue(std::locale::classic());
     out << std::setprecision(9);
     out << "seed " << seed << '\n';
+    if (waterDistance != 64.0f) out << "water_distance " << waterDistance << '\n';
     if (!terrain.ref.empty()) {
         out << "terrain " << terrain.ref;
         if (terrain.sizeX > 0.0f || terrain.sizeZ > 0.0f) out << " size " << terrain.sizeX << ' ' << terrain.sizeZ;
@@ -144,6 +159,7 @@ std::string WorldComposition::toText() const {
     for (const WorldWater& w : water) {
         out << "water " << w.ref;
         if (!w.follow.empty()) out << " follow " << w.follow << " min " << w.min;
+        if (w.carve > 0.0f) out << " carve " << w.carve;
         if (w.fillBasins) out << " fill basins level " << w.level;
         out << '\n';
     }
@@ -158,7 +174,11 @@ std::string WorldComposition::toText() const {
         for (const Terrain::BiomeTerm& t : c.where) {
             out << "  " << t.mask << ' ' << t.rise0 << ' ' << t.rise1 << ' ' << t.fall1 << ' ' << t.fall0 << '\n';
         }
-        for (const WorldAdapt& a : c.adapt) out << "  adapt " << a.target << ' ' << a.mask << '\n';
+        for (const WorldAdapt& a : c.adapt) {
+            out << "  adapt " << a.target << ' ' << a.mask;
+            if (a.amount >= 0.0f) out << ' ' << a.amount;
+            out << '\n';
+        }
     }
     for (const WorldOverride& o : overrides) {
         out << "override " << opName(o.op) << ' ' << o.classId << ' ' << o.cellX << ' ' << o.cellZ;
@@ -193,8 +213,16 @@ bool WorldComposition::fromText(const std::string& text, WorldComposition& out, 
             if (!current) return fail("an indented line must come after a `class` line");
             if (first == "adapt") {
                 WorldAdapt a;
-                if (!(words >> a.target >> a.mask)) return fail("`adapt` is `adapt <size|lean|tint> <mask>`");
+                if (!(words >> a.target >> a.mask)) {
+                    return fail("`adapt` is `adapt <size|lean|tint|wetness|snow> <mask|neighbours> [amount]`");
+                }
                 if (!Terrain::TerrainMasks::validName(a.mask)) return fail("`" + a.mask + "` is not a mask name");
+                std::string amount;
+                if (words >> amount) {
+                    std::istringstream number(amount);
+                    number.imbue(std::locale::classic());
+                    if (!(number >> a.amount) || a.amount < 0.0f) return fail("the adapt amount must be a number >= 0");
+                }
                 current->adapt.push_back(a);
             } else {
                 if (isClassKey(first)) return fail("`" + first + "` is a property: put it on the `class` line");
@@ -212,6 +240,9 @@ bool WorldComposition::fromText(const std::string& text, WorldComposition& out, 
         } else if (first == "seed") {
             current = nullptr;
             if (!(words >> result.seed)) return fail("`seed` takes one whole number");
+        } else if (first == "water_distance") {
+            current = nullptr;
+            if (!(words >> result.waterDistance)) return fail("`water_distance` takes metres");
         } else if (first == "terrain") {
             current = nullptr;
             if (!(words >> result.terrain.ref) || !validRef(result.terrain.ref)) {
@@ -241,6 +272,8 @@ bool WorldComposition::fromText(const std::string& text, WorldComposition& out, 
                     w.fillBasins = true;
                 } else if (key == "level") {
                     if (!(words >> w.level)) return fail("`level` needs a number");
+                } else if (key == "carve") {
+                    if (!(words >> w.carve)) return fail("`carve` needs metres");
                 } else {
                     return fail("unknown water property `" + key + "`");
                 }
