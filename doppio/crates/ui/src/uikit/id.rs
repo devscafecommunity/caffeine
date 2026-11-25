@@ -365,6 +365,46 @@ pub const TP_SHARED: UiId = UiId::fixed("terrain_paint.brush.shared");
 pub const TP_RULE_ADD: UiId = UiId::fixed("terrain_paint.auto.add");
 pub const TP_FALLBACK: UiId = UiId::fixed("terrain_paint.auto.fallback");
 pub const TP_APPLY: UiId = UiId::fixed("terrain_paint.auto.apply");
+pub const PANE_TERRAIN_VEGETATION: UiId = UiId::fixed("editor.pane.terrain_vegetation");
+pub const PANE_TAB_TERRAIN_VEGETATION: UiId = UiId::fixed("editor.pane.tab.terrain_vegetation");
+pub const SHOW_TERRAIN_VEGETATION: UiId = UiId::fixed("editor.menu.view.terrain_vegetation");
+pub const TV_ACTIVE: UiId = UiId::fixed("terrain_vegetation.tool.active");
+pub const TV_ENABLE: UiId = UiId::fixed("terrain_vegetation.setup.enable");
+pub const TV_DISABLE: UiId = UiId::fixed("terrain_vegetation.setup.disable");
+pub const TV_ADD: UiId = UiId::fixed("terrain_vegetation.palette.add");
+pub const TV_ADD_ASSET: UiId = UiId::fixed("terrain_vegetation.palette.add_asset");
+pub const TV_VARIANT_ADD: UiId = UiId::fixed("terrain_vegetation.species.add_variant");
+pub const TV_REMOVE: UiId = UiId::fixed("terrain_vegetation.species.remove");
+pub const TV_NAME: UiId = UiId::fixed("terrain_vegetation.species.name");
+pub const TV_MATERIAL: UiId = UiId::fixed("terrain_vegetation.species.material");
+pub const TV_PROCEDURAL: UiId = UiId::fixed("terrain_vegetation.species.procedural");
+pub const TV_VISIBLE: UiId = UiId::fixed("terrain_vegetation.species.visible");
+pub const TV_DENSITY: UiId = UiId::fixed("terrain_vegetation.species.density");
+pub const TV_RADIUS: UiId = UiId::fixed("terrain_vegetation.species.radius");
+pub const TV_PRIORITY: UiId = UiId::fixed("terrain_vegetation.species.priority");
+pub const TV_SCALE_MIN: UiId = UiId::fixed("terrain_vegetation.species.scale_min");
+pub const TV_SCALE_MAX: UiId = UiId::fixed("terrain_vegetation.species.scale_max");
+pub const TV_TILT: UiId = UiId::fixed("terrain_vegetation.species.tilt");
+pub const TV_SINK: UiId = UiId::fixed("terrain_vegetation.species.sink");
+pub const TV_JITTER: UiId = UiId::fixed("terrain_vegetation.species.tint_jitter");
+pub const TV_TINT_R: UiId = UiId::fixed("terrain_vegetation.species.tint_r");
+pub const TV_TINT_G: UiId = UiId::fixed("terrain_vegetation.species.tint_g");
+pub const TV_TINT_B: UiId = UiId::fixed("terrain_vegetation.species.tint_b");
+pub const TV_DISTANCE: UiId = UiId::fixed("terrain_vegetation.species.distance");
+pub const TV_RULE_ADD: UiId = UiId::fixed("terrain_vegetation.species.rule_add");
+pub const TV_TOOL: UiId = UiId::fixed("terrain_vegetation.brush.tool");
+pub const TV_BRADIUS: UiId = UiId::fixed("terrain_vegetation.brush.radius");
+pub const TV_BSTRENGTH: UiId = UiId::fixed("terrain_vegetation.brush.strength");
+pub const TV_BSPACING: UiId = UiId::fixed("terrain_vegetation.brush.spacing");
+pub const TV_PER100: UiId = UiId::fixed("terrain_vegetation.brush.per_100m2");
+pub const TV_AMOUNT: UiId = UiId::fixed("terrain_vegetation.brush.amount");
+pub const TV_ONLY: UiId = UiId::fixed("terrain_vegetation.brush.only");
+pub const TV_RESPECT: UiId = UiId::fixed("terrain_vegetation.brush.respect_rules");
+pub const TV_SHARED: UiId = UiId::fixed("terrain_vegetation.brush.shared");
+pub const TV_SEED: UiId = UiId::fixed("terrain_vegetation.source.seed");
+pub const TV_RESEED: UiId = UiId::fixed("terrain_vegetation.source.reseed");
+pub const TV_BAKE: UiId = UiId::fixed("terrain_vegetation.source.bake");
+pub const TV_REDERIVE: UiId = UiId::fixed("terrain_vegetation.source.rederive");
 pub const PANE_PERFORMANCE: UiId = UiId::fixed("editor.pane.performance");
 pub const PANE_TAB_PERFORMANCE: UiId = UiId::fixed("editor.pane.tab.performance");
 pub const SHOW_PERFORMANCE: UiId = UiId::fixed("editor.menu.view.performance");
@@ -948,6 +988,23 @@ pub fn terrain_paint_layer(index: usize) -> UiId {
 /// A widget of the `index`-th auto-layering rule (`layer`, `rise0`, `rise1`, `fall1`, `fall0`, `remove`).
 pub fn terrain_paint_rule(index: usize, field: &str) -> UiId {
     UiId::dynamic(format!("terrain_paint.auto.rule.{index}.{field}"))
+}
+
+/// One species row of the Terrain Vegetation palette.
+pub fn terrain_vegetation_species(index: usize) -> UiId {
+    UiId::dynamic(format!("terrain_vegetation.palette.species.{index}"))
+}
+
+/// A widget of the `index`-th variant of the selected species (`path`, `remove`).
+pub fn terrain_vegetation_variant(index: usize, field: &str) -> UiId {
+    UiId::dynamic(format!(
+        "terrain_vegetation.species.variant.{index}.{field}"
+    ))
+}
+
+/// A widget of the `index`-th rule of the selected species (`rise0`, `rise1`, `fall1`, `fall0`, `remove`).
+pub fn terrain_vegetation_rule(index: usize, field: &str) -> UiId {
+    UiId::dynamic(format!("terrain_vegetation.species.rule.{index}.{field}"))
 }
 
 /// One card in the asset manager grid.
@@ -1808,6 +1865,221 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: UiId::fixed("terrain_paint.auto.rule"),
         description: "Terrain Paint: An auto-layering rule (layer, mask, four sliders, remove); widgets use the .N.field suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: PANE_TERRAIN_VEGETATION,
+        description: "Terrain Vegetation: the species palette of a terrain, the vegetation brush and the procedural source.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_TERRAIN_VEGETATION,
+        description: "Tab of the Terrain Vegetation panel.",
+        kind: "tab",
+    },
+    UiMeta {
+        id: SHOW_TERRAIN_VEGETATION,
+        description: "Brings the Terrain Vegetation tab to the front.",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: TV_ACTIVE,
+        description: "Terrain Vegetation: Turns the vegetation brush on: a left click or drag on the terrain places or edits plants.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TV_ENABLE,
+        description: "Terrain Vegetation: Turns vegetation on for the terrain: a species palette and instances drawn by the renderer, not entities.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TV_DISABLE,
+        description: "Terrain Vegetation: Stops drawing the terrain's vegetation (the species and instances are kept).",
+        kind: "button",
+    },
+    UiMeta {
+        id: TV_ADD,
+        description: "Terrain Vegetation: Adds a species to the palette.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TV_ADD_ASSET,
+        description: "Terrain Vegetation: Adds a species whose mesh is the asset selected in the Assets panel.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TV_VARIANT_ADD,
+        description: "Terrain Vegetation: Adds the asset selected in the Assets panel as another variant (mesh) of the selected species.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TV_REMOVE,
+        description: "Terrain Vegetation: Removes the selected species and its manual instances.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TV_NAME,
+        description: "Terrain Vegetation: The selected species' name.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: TV_MATERIAL,
+        description: "Terrain Vegetation: A .mat the selected species is drawn with; empty uses the mesh's own materials.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: TV_PROCEDURAL,
+        description: "Terrain Vegetation: The species grows by itself by its density, rules and the seed.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TV_VISIBLE,
+        description: "Terrain Vegetation: Draws the species; off hides it without losing anything.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TV_DENSITY,
+        description: "Terrain Vegetation: Instances per hectare where the species grows by itself at full suitability.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_RADIUS,
+        description: "Terrain Vegetation: Metres of room an instance takes: two never overlap.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_PRIORITY,
+        description: "Terrain Vegetation: Higher priority wins a conflict (rocks, then trees, then bushes, then grass).",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_SCALE_MIN,
+        description: "Terrain Vegetation: Smallest scale.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_SCALE_MAX,
+        description: "Terrain Vegetation: Largest scale.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_TILT,
+        description: "Terrain Vegetation: How far the plant leans toward the ground's slope (0 stands upright, 1 follows it).",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_SINK,
+        description: "Terrain Vegetation: Metres the base sinks into the ground.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_JITTER,
+        description: "Terrain Vegetation: Per-instance colour variation.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_TINT_R,
+        description: "Terrain Vegetation: Red of the species' tint.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_TINT_G,
+        description: "Terrain Vegetation: Green of the species' tint.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_TINT_B,
+        description: "Terrain Vegetation: Blue of the species' tint.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_DISTANCE,
+        description: "Terrain Vegetation: Metres beyond which the species is not drawn.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_RULE_ADD,
+        description: "Terrain Vegetation: Adds a rule: the species grows only where the mask (slope, height or curvature) is inside a range.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TV_TOOL,
+        description: "Terrain Vegetation: What a stamp does: place plants, erase them, scale, rotate, tint, replace the species or thin them out.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TV_BRADIUS,
+        description: "Terrain Vegetation: Brush radius in metres.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_BSTRENGTH,
+        description: "Terrain Vegetation: The share of what is under a stamp that an erase, thin or tint takes; placing keeps its acceptance high.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_BSPACING,
+        description: "Terrain Vegetation: Metres between stamps; 0 means half the radius.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_PER100,
+        description: "Terrain Vegetation: Paint: candidate instances per 100 square metres per stamp.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_AMOUNT,
+        description: "Terrain Vegetation: Scale: the share added to the scale; Rotate: degrees.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_ONLY,
+        description: "Terrain Vegetation: Act only on this species, or on all of them.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TV_RESPECT,
+        description: "Terrain Vegetation: Paint only where the species' rules allow; off places on purpose where they do not.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TV_SHARED,
+        description: "Terrain Vegetation: Use the stamp picture, jitter, symmetry and protection of the Terrain Brush tab's brush.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TV_SEED,
+        description: "Terrain Vegetation: The world seed of the procedural source.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TV_RESEED,
+        description: "Terrain Vegetation: Grows the procedural vegetation from another seed (edits keyed to the old trees fall away).",
+        kind: "button",
+    },
+    UiMeta {
+        id: TV_BAKE,
+        description: "Terrain Vegetation: Turns the selected species' procedural plants into manual ones you can edit one by one.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TV_REDERIVE,
+        description: "Terrain Vegetation: Removes the baked plants of the selected species and lets it grow by itself again.",
+        kind: "button",
+    },
+    UiMeta {
+        id: UiId::fixed("terrain_vegetation.palette.species"),
+        description: "Terrain Vegetation: A species of the palette; rows use the .N suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("terrain_vegetation.species.variant"),
+        description: "Terrain Vegetation: A variant (mesh) of the selected species; widgets use the .N.field suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("terrain_vegetation.species.rule"),
+        description: "Terrain Vegetation: A rule of the selected species (mask, four sliders, remove); widgets use the .N.field suffix.",
         kind: "list_row",
     },
     UiMeta {

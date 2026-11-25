@@ -127,7 +127,7 @@ fn new_layer(name: String) -> PaletteLayer {
 
 impl App {
     /// The terrain the pane edits: the selected entity when it is a terrain, else the first terrain of the scene.
-    fn paint_terrain(&self) -> Option<u32> {
+    pub(super) fn paint_terrain(&self) -> Option<u32> {
         let engine = self.engine.as_ref()?;
         let is_terrain = |id: u32| {
             engine
@@ -207,6 +207,9 @@ impl App {
             // One tool at a time: sculpting and painting share the left button.
             if self.terrain_editor.active {
                 self.set_terrain_tool(false);
+            }
+            if self.terrain_vegetation.active {
+                self.terrain_vegetation.active = false;
             }
             self.texture_set_paint_mode = false;
             self.refresh_paint_state();
@@ -621,6 +624,7 @@ impl App {
                     entity,
                     points: 0,
                     paint: true,
+                    vegetation: false,
                 });
                 true
             }

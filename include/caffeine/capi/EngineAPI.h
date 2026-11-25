@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define CAFFEINE_CAPI_VERSION 29
+#define CAFFEINE_CAPI_VERSION 30
 #define CAFFEINE_ENTITY_NONE UINT32_MAX
 
 typedef struct CaffeineSession CaffeineSession;
@@ -1264,6 +1264,110 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_autolayer(CaffeineSess
 /** The layers under a world-space point (metres): what an eyedropper reads. CAFFEINE_NOT_FOUND off the terrain or with layers off. */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_layer_at(const CaffeineSession* session, CaffeineEntity entity,
                                                                    double x, double y, double z, CaffeineLayerSample* out);
+
+/**
+ * Terrain vegetation (v30): plants and rocks as terrain data, not entities. A terrain has a palette of species (variant
+ * meshes, density per hectare, room, size, where it may stand) and two stacking sources: the procedural one, which grows
+ * each species by itself (deterministic for the world seed), and the manual one, instances placed by hand. An edit of a
+ * procedural instance is an override keyed by its stable id, so it survives regenerating. Painting is a stroke like
+ * sculpting (`..._stroke_point`, `_stroke_end`, `_revert`, `_reapply` work for it unchanged). The renderer draws one
+ * instanced call per chunk (32 m) and species variant.
+ */
+#define CAFFEINE_VEG_SPECIES_MAX 256
+#define CAFFEINE_VEG_VARIANTS_MAX 8
+#define CAFFEINE_VEG_RULES_MAX 4
+
+typedef struct CaffeineVegRule {
+    char mask[32];               /* slope, height, curvature or a stored mask */
+    float rise0, rise1, fall1, fall0;  /* the species grows where the mask is inside this trapezoid (0..1) */
+} CaffeineVegRule;
+
+typedef struct CaffeineVegSpecies {
+    uint32_t uid;                /* stable; 0 on a species to be added */
+    char name[64];
+    uint32_t mesh_count;         /* variants, at most CAFFEINE_VEG_VARIANTS_MAX */
+    char meshes[CAFFEINE_VEG_VARIANTS_MAX][256];
+    char material[256];
+    char recipe[256];
+    float density_per_ha;
+    float radius_m;
+    int32_t priority;
+    float min_scale, max_scale;
+    float tilt;
+    float sink_m;
+    float tint_jitter;
+    float tint[3];
+    float max_distance_m;
+    int32_t procedural;
+    int32_t visible;
+    uint32_t rule_count;         /* at most CAFFEINE_VEG_RULES_MAX */
+    CaffeineVegRule rules[CAFFEINE_VEG_RULES_MAX];
+    uint32_t manual_instances;   /* out only */
+} CaffeineVegSpecies;
+
+typedef enum CaffeineVegTool {
+    CAFFEINE_VEG_PAINT = 0,
+    CAFFEINE_VEG_ERASE = 1,
+    CAFFEINE_VEG_SCALE = 2,
+    CAFFEINE_VEG_ROTATE = 3,
+    CAFFEINE_VEG_TINT = 4,
+    CAFFEINE_VEG_REPLACE = 5,
+    CAFFEINE_VEG_THIN = 6
+} CaffeineVegTool;
+
+typedef struct CaffeineVegBrush {
+    CaffeineBrushPreset shape;   /* radius, strength, spacing, falloff, stamp, jitter, symmetry, protection */
+    int32_t tool;                /* CaffeineVegTool */
+    uint32_t species;            /* Paint, Replace: the species placed (palette index) */
+    int32_t only_species;        /* the other tools: act on this species only; -1 for all */
+    float per_100m2;             /* Paint: candidate instances per 100 m2 per stamp */
+    float amount;                /* Scale: share added; Rotate: degrees */
+    float tint[3];               /* Tint: the colour moved toward */
+    int32_t respect_rules;       /* Paint: 0 places on purpose where the species' rules say no */
+} CaffeineVegBrush;
+
+typedef struct CaffeineVegInfo {
+    int32_t enabled;
+    uint32_t species_count;
+    uint64_t manual_instances;
+    uint64_t overrides;
+    uint64_t seed;
+    uint64_t gpu_bytes;          /* instance buffers on the GPU */
+} CaffeineVegInfo;
+
+typedef struct CaffeineVegInstance {
+    uint64_t id;
+    uint32_t species;            /* palette index */
+    uint32_t variant;
+    int32_t manual;
+    float x, y, z;               /* world space, metres */
+    float scale, yaw;
+} CaffeineVegInstance;
+
+/** Vegetation on or off for a terrain. On: an empty store (species palette and instances) unless it has one. Marks the scene changed. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_vegetation_enable(CaffeineSession* session, CaffeineEntity entity, int enabled);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_vegetation(const CaffeineSession* session, CaffeineEntity entity, CaffeineVegInfo* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_veg_species(const CaffeineSession* session, CaffeineEntity entity, uint32_t index, CaffeineVegSpecies* out);
+/**
+ * Replaces the species palette by `count` species (a species keeps its instances by `uid`; uid 0 adds one; a species left
+ * out is removed with its manual instances). One undoable edit (`out_record`, 0 when nothing changed); `merge_into` (0
+ * for none) folds an edit that continues into the record of the one before it, so a slider drag is one undo step.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_veg_species_apply(CaffeineSession* session, CaffeineEntity entity,
+                                                                            const CaffeineVegSpecies* species, uint32_t count,
+                                                                            uint32_t merge_into, uint32_t* out_record,
+                                                                            char* error, size_t error_size);
+/** Starts a vegetation stroke (an open stroke is ended first); points and the end are the stroke calls of version 25. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_veg_paint_begin(CaffeineSession* session, CaffeineEntity entity, const CaffeineVegBrush* brush);
+/** Turns a species' procedural instances into manual ones (the procedural source of it goes off) so they can be edited one by one. Undoable. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_veg_bake(CaffeineSession* session, CaffeineEntity entity, uint32_t species, uint32_t* out_record);
+/** The opposite: removes the baked instances of a species and turns its procedural source back on. Undoable. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_veg_rederive(CaffeineSession* session, CaffeineEntity entity, uint32_t species, uint32_t* out_record);
+/** A new world seed for the procedural source. Undoable. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_veg_reseed(CaffeineSession* session, CaffeineEntity entity, uint64_t seed, uint32_t* out_record);
+/** The instances within `radius` metres of a world-space point, nearest chunks first (up to `capacity`; `*count` is how many were found in all). */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_veg_instances(const CaffeineSession* session, CaffeineEntity entity, double x, double z,
+                                                                        float radius, CaffeineVegInstance* out, uint32_t capacity, uint32_t* count);
 
 /** Terrain height in metres at (x, z) metres from the terrain's corner. The mesh is centred on its entity, so the corner is at the entity position minus half the size. */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_height(const CaffeineSession* session,

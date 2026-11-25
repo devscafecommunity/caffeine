@@ -1068,8 +1068,8 @@ fn layout_presets_keep_every_page() {
         assert_eq!(state.len(), 4);
         let pages: usize = state.iter().map(|(_, group)| group.pages.len()).sum();
         assert_eq!(
-            pages, 23,
-            "the Gameplay, Camera, Terrain Brush and Terrain Paint tabs joined the workspace"
+            pages, 24,
+            "the Gameplay, Camera, Terrain Brush, Terrain Paint and Terrain Vegetation tabs joined the workspace"
         );
     }
     let mut harness = Harness::with_entities();
@@ -1094,6 +1094,7 @@ fn layouts_keep_the_right_column_for_inspector_profiler_photon_and_environment()
                 PaneKind::Performance,
                 PaneKind::TerrainBrush,
                 PaneKind::TerrainPaint,
+                PaneKind::TerrainVegetation,
                 PaneKind::Photon,
                 PaneKind::Environment,
                 PaneKind::Audio
@@ -17384,5 +17385,532 @@ mod terrain_paint {
         assert!(engine
             .terrain_autolayer(id, "class 99 base 1\n", 0, None)
             .is_err());
+    }
+}
+
+mod terrain_vegetation {
+    use super::*;
+    use crate::uikit::panels::terrain_paint::{BrushAmount, RuleCorner};
+    use crate::uikit::panels::terrain_vegetation::{Edit, SpeciesNumber};
+    use doppio_engine::VegTool;
+
+    /// A flat terrain in front of the camera, vegetation still off.
+    fn scene() -> Option<(Harness, u32)> {
+        let mut harness = engine_harness()?;
+        if !harness.app.engine.as_ref()?.has_terrain_vegetation() {
+            return None; // a libcaffeine-capi from before C ABI 30
+        }
+        let engine = harness.app.engine.as_mut().unwrap();
+        let id = engine.create_entity("Ground").ok()?;
+        engine
+            .set_terrain(
+                id,
+                &doppio_engine::Terrain {
+                    resolution: [129, 129],
+                    size: [256.0, 256.0],
+                    max_height: 80.0,
+                    ..doppio_engine::Terrain::default()
+                },
+                &vec![0.3f32; 129 * 129],
+                None,
+            )
+            .ok()?;
+        harness.app.entities = projectloader::read_entities(harness.app.engine.as_ref().unwrap());
+        harness.app.selected = harness
+            .app
+            .entities
+            .iter()
+            .position(|e| e.id == id)
+            .unwrap_or(0);
+        harness.app.camera = doppio_engine::Camera {
+            yaw: 0.0,
+            pitch: 1.0,
+            distance: 120.0,
+            focus: [0.0, 12.0, 0.0],
+        };
+        harness.app.viewport_frame_camera = None;
+        harness.rebase_history();
+        Some((harness, id))
+    }
+
+    fn centre(harness: &Harness) -> iced::Point {
+        iced::Point::new(
+            harness.app().viewport_logical.0 * 0.5,
+            harness.app().viewport_logical.1 * 0.5,
+        )
+    }
+
+    fn info(harness: &Harness, id: u32) -> doppio_engine::VegInfo {
+        harness
+            .app()
+            .engine
+            .as_ref()
+            .unwrap()
+            .terrain_vegetation(id)
+            .unwrap()
+    }
+
+    fn nearby(harness: &Harness, id: u32, radius: f32) -> u32 {
+        harness
+            .app()
+            .engine
+            .as_ref()
+            .unwrap()
+            .veg_instances(id, 0.0, 0.0, radius, 1)
+            .map_or(0, |(_, total)| total)
+    }
+
+    /// Vegetation on and two species: a pine that grows by itself and a rock that is only ever placed by hand.
+    fn with_species(harness: &mut Harness) {
+        harness.dispatch(Message::TerrainVegetation(Edit::Enable(true)));
+        harness.dispatch(Message::TerrainVegetation(Edit::AddSpeciesWith {
+            name: "Pine".to_owned(),
+            meshes: vec!["Meshes/pine.obj".to_owned()],
+            tint: [0.2, 0.7, 0.2],
+            density_per_ha: 300.0,
+            radius_m: 2.0,
+        }));
+        harness.dispatch(Message::TerrainVegetation(Edit::AddSpeciesWith {
+            name: "Rock".to_owned(),
+            meshes: vec!["Meshes/rock.obj".to_owned()],
+            tint: [0.5, 0.5, 0.5],
+            density_per_ha: 0.0,
+            radius_m: 1.5,
+        }));
+    }
+
+    #[test]
+    fn the_pane_shows_up_and_vegetation_starts_off() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        assert!(PaneKind::ALL.contains(&PaneKind::TerrainVegetation));
+        assert_eq!(
+            PaneKind::from_name("terrain_vegetation"),
+            Some(PaneKind::TerrainVegetation)
+        );
+        harness.dispatch(Message::ShowTerrainVegetation);
+        assert!(harness
+            .app()
+            .panes
+            .iter()
+            .any(|(_, group)| group.active_kind() == PaneKind::TerrainVegetation));
+        let state = &harness.app().terrain_vegetation;
+        assert_eq!(state.entity, Some(id));
+        assert_eq!(state.terrain_name.as_deref(), Some("Ground"));
+        assert!(!state.info.unwrap().enabled);
+        assert!(state.species.is_empty());
+    }
+
+    #[test]
+    fn turning_vegetation_on_is_one_undoable_step() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainVegetation);
+        let steps = harness.app().history.len();
+        harness.dispatch(Message::TerrainVegetation(Edit::Enable(true)));
+        assert!(info(&harness, id).enabled);
+        assert_eq!(harness.app().history.len(), steps + 1);
+        harness.dispatch(Message::Undo);
+        assert!(!info(&harness, id).enabled);
+        harness.dispatch(Message::Redo);
+        assert!(info(&harness, id).enabled);
+    }
+
+    #[test]
+    fn a_species_grows_by_itself_and_one_that_is_hidden_does_not() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainVegetation);
+        with_species(&mut harness);
+        let species = &harness.app().terrain_vegetation.species;
+        assert_eq!(species.len(), 2);
+        assert_eq!(species[0].name, "Pine");
+        assert_eq!(
+            harness.app().terrain_vegetation.selected,
+            1,
+            "the new species is selected"
+        );
+        let grown = nearby(&harness, id, 400.0);
+        assert!(grown > 500, "{grown} pines grow by themselves");
+
+        harness.dispatch(Message::TerrainVegetation(Edit::Select(0)));
+        harness.dispatch(Message::TerrainVegetation(Edit::Visible(false)));
+        assert_eq!(nearby(&harness, id, 400.0), 0);
+        harness.dispatch(Message::Undo);
+        assert_eq!(nearby(&harness, id, 400.0), grown);
+    }
+
+    #[test]
+    fn planting_by_agent_is_one_step_that_undoes_and_redoes() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainVegetation);
+        with_species(&mut harness);
+        harness.dispatch(Message::TerrainVegetation(Edit::Brush(
+            BrushAmount::Radius,
+            12.0,
+        )));
+        harness.dispatch(Message::TerrainVegetation(Edit::Per100(6.0)));
+        harness.dispatch(Message::TerrainVegetation(Edit::Brush(
+            BrushAmount::Strength,
+            1.0,
+        )));
+        let steps = harness.app().history.len();
+        harness.dispatch(Message::TerrainVegetationStroke {
+            terrain: Some(id),
+            points: vec![[0.0, 0.0, 0.0], [20.0, 0.0, 0.0]],
+        });
+        assert_eq!(harness.app().history.len(), steps + 1);
+        assert!(harness
+            .app()
+            .history
+            .undo_name()
+            .unwrap()
+            .starts_with("Vegetation"));
+        let placed = info(&harness, id).manual_instances;
+        assert!(placed > 10, "{placed} rocks were placed");
+        assert_eq!(
+            harness.app().terrain_vegetation.species[1].manual_instances as u64,
+            placed
+        );
+        harness.dispatch(Message::Undo);
+        assert_eq!(info(&harness, id).manual_instances, 0);
+        harness.dispatch(Message::Redo);
+        assert_eq!(info(&harness, id).manual_instances, placed);
+    }
+
+    #[test]
+    fn a_mouse_drag_plants_one_stroke_and_does_not_orbit_and_ctrl_erases() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainVegetation);
+        with_species(&mut harness);
+        harness.dispatch(Message::TerrainVegetation(Edit::Brush(
+            BrushAmount::Radius,
+            14.0,
+        )));
+        harness.dispatch(Message::TerrainVegetation(Edit::Per100(8.0)));
+        harness.dispatch(Message::TerrainVegetation(Edit::Brush(
+            BrushAmount::Strength,
+            1.0,
+        )));
+        harness.dispatch(Message::TerrainVegetation(Edit::Active(true)));
+        assert!(harness.app().terrain_cursor.active);
+        assert_eq!(harness.app().terrain_cursor.radius_m, 14.0);
+
+        let camera = harness.app().camera;
+        let steps = harness.app().history.len();
+        let at = centre(&harness);
+        harness.dispatch(Message::ViewportMoved(at));
+        harness.dispatch(Message::ViewportPressed(iced::mouse::Button::Left));
+        assert!(harness
+            .app()
+            .terrain_editor
+            .stroke
+            .as_ref()
+            .is_some_and(|s| s.vegetation));
+        for dx in [4.0, 8.0, 12.0] {
+            harness.dispatch(Message::ViewportMoved(iced::Point::new(at.x + dx, at.y)));
+        }
+        harness.dispatch(Message::ViewportReleased(iced::mouse::Button::Left));
+        assert!(harness.app().terrain_editor.stroke.is_none());
+        assert_eq!(harness.app().camera, camera);
+        assert_eq!(harness.app().history.len(), steps + 1);
+        let placed = info(&harness, id).manual_instances;
+        assert!(placed > 5, "{placed}");
+
+        // Ctrl turns plant into erase: the same drag clears what it covers (the planted rocks and the grown pines).
+        harness.dispatch(Message::TerrainModifiers { ctrl: true });
+        harness.dispatch(Message::ViewportPressed(iced::mouse::Button::Left));
+        harness.dispatch(Message::ViewportMoved(iced::Point::new(at.x + 2.0, at.y)));
+        harness.dispatch(Message::ViewportReleased(iced::mouse::Button::Left));
+        harness.dispatch(Message::TerrainModifiers { ctrl: false });
+        assert!(info(&harness, id).manual_instances < placed);
+    }
+
+    #[test]
+    fn dragging_a_slider_is_one_undo_step() {
+        let Some((mut harness, _)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainVegetation);
+        with_species(&mut harness);
+        harness.dispatch(Message::TerrainVegetation(Edit::Select(0)));
+        let steps = harness.app().history.len();
+        let before = harness.app().terrain_vegetation.species[0].density_per_ha;
+        for density in [350.0, 400.0, 450.0, 500.0, 550.0] {
+            harness.dispatch(Message::TerrainVegetation(Edit::Number(
+                SpeciesNumber::Density,
+                density,
+            )));
+        }
+        assert_eq!(
+            harness.app().terrain_vegetation.species[0].density_per_ha,
+            550.0
+        );
+        assert_eq!(
+            harness.app().history.len(),
+            steps + 1,
+            "five ticks, one step"
+        );
+        harness.dispatch(Message::TerrainVegetation(Edit::Number(
+            SpeciesNumber::Radius,
+            3.0,
+        )));
+        assert_eq!(
+            harness.app().history.len(),
+            steps + 2,
+            "another field starts a new step"
+        );
+        harness.dispatch(Message::Undo);
+        assert_eq!(harness.app().terrain_vegetation.species[0].radius_m, 2.0);
+        harness.dispatch(Message::Undo);
+        assert_eq!(
+            harness.app().terrain_vegetation.species[0].density_per_ha,
+            before
+        );
+        harness.dispatch(Message::Redo);
+        assert_eq!(
+            harness.app().terrain_vegetation.species[0].density_per_ha,
+            550.0
+        );
+    }
+
+    #[test]
+    fn variants_and_rules_are_edited_and_a_rule_keeps_a_species_off_the_ground() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainVegetation);
+        with_species(&mut harness);
+        harness.dispatch(Message::TerrainVegetation(Edit::Select(0)));
+        harness.dispatch(Message::TerrainVegetation(Edit::AddVariant(
+            "Meshes/pine_b.obj".to_owned(),
+        )));
+        harness.dispatch(Message::TerrainVegetation(Edit::AddVariant(
+            "Meshes/pine_b.obj".to_owned(),
+        )));
+        assert_eq!(
+            harness.app().terrain_vegetation.species[0].meshes.len(),
+            2,
+            "a variant is added once"
+        );
+        harness.dispatch(Message::TerrainVegetation(Edit::RemoveVariant(0)));
+        assert_eq!(
+            harness.app().terrain_vegetation.species[0].meshes,
+            vec!["Meshes/pine_b.obj".to_owned()]
+        );
+
+        let grown = nearby(&harness, id, 400.0);
+        assert!(grown > 0);
+        // The ground stands at 30 % of the height range: a rule that wants it above 90 % keeps the pines off.
+        harness.dispatch(Message::TerrainVegetation(Edit::AddRule(
+            "height".to_owned(),
+        )));
+        harness.dispatch(Message::TerrainVegetation(Edit::Rule(
+            0,
+            RuleCorner::Rise0,
+            0.9,
+        )));
+        let rule = &harness.app().terrain_vegetation.species[0].rules[0];
+        assert!(
+            rule.rise0 <= rule.rise1 && rule.rise1 <= rule.fall1 && rule.fall1 <= rule.fall0,
+            "{rule:?}"
+        );
+        assert_eq!(
+            nearby(&harness, id, 400.0),
+            0,
+            "the pines do not suit this ground now"
+        );
+        harness.dispatch(Message::TerrainVegetation(Edit::RemoveRule(0)));
+        assert_eq!(
+            nearby(&harness, id, 400.0),
+            grown,
+            "without the rule they are back, the same ones"
+        );
+        harness.dispatch(Message::TerrainVegetation(Edit::AddRule(
+            "moisture".to_owned(),
+        )));
+        assert!(
+            harness.app().terrain_vegetation.species[0].rules.is_empty(),
+            "an unknown mask adds nothing"
+        );
+    }
+
+    #[test]
+    fn removing_a_species_takes_its_instances_and_undo_brings_them_back() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainVegetation);
+        with_species(&mut harness);
+        harness.dispatch(Message::TerrainVegetation(Edit::Brush(
+            BrushAmount::Strength,
+            1.0,
+        )));
+        harness.dispatch(Message::TerrainVegetationStroke {
+            terrain: Some(id),
+            points: vec![[0.0, 0.0, 0.0]],
+        }); // rocks (species 1 is selected)
+        let placed = info(&harness, id).manual_instances;
+        assert!(placed > 0);
+        harness.dispatch(Message::TerrainVegetation(Edit::RemoveSpecies));
+        assert_eq!(harness.app().terrain_vegetation.species.len(), 1);
+        assert_eq!(info(&harness, id).manual_instances, 0);
+        harness.dispatch(Message::Undo);
+        assert_eq!(harness.app().terrain_vegetation.species.len(), 2);
+        assert_eq!(info(&harness, id).manual_instances, placed);
+    }
+
+    #[test]
+    fn reseed_bake_and_rederive_are_undoable_steps() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainVegetation);
+        with_species(&mut harness);
+        harness.dispatch(Message::TerrainVegetation(Edit::Select(0)));
+        let first = harness
+            .app()
+            .engine
+            .as_ref()
+            .unwrap()
+            .veg_instances(id, 0.0, 0.0, 30.0, 500)
+            .unwrap()
+            .0;
+
+        harness.dispatch(Message::TerrainVegetation(Edit::Seed(4242)));
+        harness.dispatch(Message::TerrainVegetation(Edit::Reseed));
+        assert_eq!(info(&harness, id).seed, 4242);
+        let second = harness
+            .app()
+            .engine
+            .as_ref()
+            .unwrap()
+            .veg_instances(id, 0.0, 0.0, 30.0, 500)
+            .unwrap()
+            .0;
+        assert_ne!(first.first().map(|i| i.id), second.first().map(|i| i.id));
+        harness.dispatch(Message::Undo);
+        assert_eq!(info(&harness, id).seed, 1);
+
+        let grown = nearby(&harness, id, 400.0);
+        harness.dispatch(Message::TerrainVegetation(Edit::Bake));
+        assert_eq!(info(&harness, id).manual_instances as u32, grown);
+        assert!(!harness.app().terrain_vegetation.species[0].procedural);
+        assert_eq!(
+            nearby(&harness, id, 400.0),
+            grown,
+            "the same plants, now editable one by one"
+        );
+        harness.dispatch(Message::TerrainVegetation(Edit::Rederive));
+        assert_eq!(info(&harness, id).manual_instances, 0);
+        assert!(harness.app().terrain_vegetation.species[0].procedural);
+        harness.dispatch(Message::Undo);
+        assert_eq!(info(&harness, id).manual_instances as u32, grown);
+    }
+
+    #[test]
+    fn planting_needs_vegetation_and_says_so() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainVegetation);
+        harness.dispatch(Message::TerrainVegetationStroke {
+            terrain: Some(id),
+            points: vec![[0.0, 0.0, 0.0]],
+        });
+        assert!(harness
+            .app()
+            .terrain_vegetation
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("turn on vegetation")));
+        harness.dispatch(Message::TerrainVegetation(Edit::Active(true)));
+        let at = centre(&harness);
+        harness.dispatch(Message::ViewportMoved(at));
+        harness.dispatch(Message::ViewportPressed(iced::mouse::Button::Left));
+        assert!(harness.app().terrain_editor.stroke.is_none());
+        harness.dispatch(Message::ViewportReleased(iced::mouse::Button::Left));
+    }
+
+    #[test]
+    fn the_three_tools_take_turns_and_the_radius_keys_follow_the_active_one() {
+        let Some((mut harness, _)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainVegetation);
+        with_species(&mut harness);
+        harness.dispatch(Message::TerrainBrush(
+            crate::uikit::panels::terrain_brush::Edit::Active(true),
+        ));
+        harness.dispatch(Message::TerrainVegetation(Edit::Active(true)));
+        assert!(harness.app().terrain_vegetation.active);
+        assert!(
+            !harness.app().terrain_editor.active,
+            "planting turned sculpting off"
+        );
+        let radius = harness.app().terrain_vegetation.radius;
+        harness.dispatch(Message::TerrainBrushRadius(2.0));
+        assert_eq!(harness.app().terrain_vegetation.radius, radius * 2.0);
+        harness.dispatch(Message::TerrainPaint(
+            crate::uikit::panels::terrain_paint::Edit::Active(true),
+        ));
+        assert!(
+            !harness.app().terrain_vegetation.active,
+            "painting layers turned planting off"
+        );
+        harness.dispatch(Message::TerrainVegetation(Edit::Active(true)));
+        harness.dispatch(Message::TerrainBrush(
+            crate::uikit::panels::terrain_brush::Edit::Active(true),
+        ));
+        assert!(
+            !harness.app().terrain_vegetation.active,
+            "sculpting turned planting off"
+        );
+    }
+
+    #[test]
+    fn brush_settings_are_kept_in_range_and_the_tool_changes_the_stroke() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainVegetation);
+        with_species(&mut harness);
+        harness.dispatch(Message::TerrainVegetation(Edit::Brush(
+            BrushAmount::Radius,
+            -3.0,
+        )));
+        assert_eq!(harness.app().terrain_vegetation.radius, 0.1);
+        harness.dispatch(Message::TerrainVegetation(Edit::Per100(900.0)));
+        assert_eq!(harness.app().terrain_vegetation.per_100m2, 100.0);
+
+        // Erase pines only: select "Pine" as the species acted on.
+        harness.dispatch(Message::TerrainVegetation(Edit::Brush(
+            BrushAmount::Radius,
+            60.0,
+        )));
+        harness.dispatch(Message::TerrainVegetation(Edit::Brush(
+            BrushAmount::Strength,
+            1.0,
+        )));
+        harness.dispatch(Message::TerrainVegetation(Edit::Tool(VegTool::Erase)));
+        harness.dispatch(Message::TerrainVegetation(Edit::Only(0)));
+        let grown = nearby(&harness, id, 40.0);
+        assert!(grown > 0);
+        harness.dispatch(Message::TerrainVegetationStroke {
+            terrain: Some(id),
+            points: vec![[0.0, 0.0, 0.0]],
+        });
+        assert!(nearby(&harness, id, 40.0) < grown);
+        assert!(
+            info(&harness, id).overrides > 0,
+            "grown plants are erased by overrides, not deleted"
+        );
     }
 }

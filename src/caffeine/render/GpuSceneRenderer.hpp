@@ -326,6 +326,8 @@ private:
         bool skipColorDraw = false;
         u32  batchCount = 1;
         u32  batchByteOffset = 0;
+        /// Instances in a buffer of their own (terrain vegetation); null: the renderer's shared instance buffer.
+        RHI::Buffer* batchBuffer = nullptr;
         Vec3 aabbMin{};
         Vec3 aabbMax{};
         bool hasAabb = false;
@@ -462,6 +464,9 @@ private:
                                           const GpuSceneRenderOptions& options);
     void applyCoarseOcclusion(std::vector<MeshDraw>& draws, const GpuSceneCamera& camera,
                               const GpuSceneRenderOptions& options) const;
+    /// Adds the draws of every terrain's vegetation (one instanced draw per chunk and species variant).
+    void appendVegetationDraws(ECS::World& world, const Vec3& cameraPos, const Spatial::Frustum& frustum,
+                               const std::string& projectRoot, std::vector<MeshDraw>& draws);
     void assignInstanceBatches(std::vector<MeshDraw>& draws, const GpuSceneRenderOptions& options,
                                std::vector<float>& instanceMatrices) const;
     bool ensureReflectionTargets(u32 width, u32 height);

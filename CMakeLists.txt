@@ -117,6 +117,9 @@ add_library(caffeine-core
     src/caffeine/terrain/paint/TerrainLayerMap.cpp
     src/caffeine/terrain/paint/TerrainPaintStroke.cpp
     src/caffeine/terrain/paint/TerrainAutoLayer.cpp
+    src/caffeine/terrain/vegetation/VegetationSpecies.cpp
+    src/caffeine/terrain/vegetation/TerrainVegetation.cpp
+    src/caffeine/terrain/vegetation/VegetationStroke.cpp
     src/caffeine/terrain/TerrainContainer.cpp
     src/caffeine/terrain/TerrainLodSystem.cpp
     src/caffeine/terrain/TerrainSplatmap.cpp
@@ -298,6 +301,7 @@ else()
             src/caffeine/render/ShaderBytecode.cpp
             src/caffeine/render/ShaderCompiler.cpp
             src/caffeine/render/GpuTextureCache.cpp
+            src/caffeine/render/TerrainVegetationGpu.cpp
             src/caffeine/render/GpuSceneRenderer.cpp
             src/caffeine/render/PostProcessStack.cpp
             src/caffeine/render/MinZPyramid.cpp

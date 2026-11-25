@@ -26,6 +26,7 @@ use crate::uikit::panels::project_manager;
 use crate::uikit::panels::terrain_brush as terrain_brush_panel;
 use crate::uikit::panels::terrain_generator;
 use crate::uikit::panels::terrain_paint as terrain_paint_panel;
+use crate::uikit::panels::terrain_vegetation as terrain_vegetation_panel;
 use crate::uikit::panels::texture_generator;
 use crate::uikit::panels::texture_set as texture_set_panel;
 use serde_json::{json, Value};
@@ -309,6 +310,190 @@ pub fn run() -> iced::Result {
                 let field = required_str(args, "field")?;
                 let value = args.get("value").ok_or_else(|| "missing \"value\"".to_owned())?;
                 performance_edit(field, value).map(Message::Performance)
+            },
+        )
+        .query(
+            "terrain_vegetation",
+            "Terrain Vegetation: whether the brush is on, the terrain, whether it has vegetation, the species (uid, name, variants, density per hectare, room, priority, scale, tilt, sink, tint, drawn-to distance, procedural, visible, rules, manual instances), the selected species, the brush, the seed and the counts of manual instances, overrides and GPU bytes.",
+            |app, _| Ok(terrain_vegetation_json(app)),
+        )
+        .query(
+            "terrain_vegetation_instances",
+            "The plants within a radius of a world-space point (up to 200): id, species, variant, manual or grown, position, scale. args: { \"x\": number, \"z\": number, \"radius\"?: number (metres, default 20), \"terrain_id\"?: number }",
+            |app, args| {
+                let x = args.get("x").and_then(Value::as_f64).ok_or("missing \"x\"")?;
+                let z = args.get("z").and_then(Value::as_f64).ok_or("missing \"z\"")?;
+                let radius = optional_f32(args, "radius")?.unwrap_or(20.0);
+                let entity = args
+                    .get("terrain_id")
+                    .and_then(Value::as_u64)
+                    .map(|id| id as u32)
+                    .or(app.terrain_vegetation.entity)
+                    .ok_or("there is no terrain")?;
+                let engine = app.engine.as_ref().ok_or("no engine")?;
+                let (list, total) = engine
+                    .veg_instances(entity, x, z, radius, 200)
+                    .ok_or("that terrain has no vegetation")?;
+                Ok(json!({
+                    "total": total,
+                    "instances": list.iter().map(|i| json!({
+                        "id": i.id.to_string(),
+                        "species": i.species,
+                        "variant": i.variant,
+                        "manual": i.manual,
+                        "position": i.position,
+                        "scale": i.scale,
+                    })).collect::<Vec<_>>(),
+                }))
+            },
+        )
+        .action(
+            "show_terrain_vegetation",
+            "Brings the Terrain Vegetation tab to the front. args: {}",
+            |_| Ok(Message::ShowTerrainVegetation),
+        )
+        .action(
+            "terrain_vegetation_active",
+            "Turns the vegetation brush on or off. args: { \"active\"?: boolean (default true) }",
+            |args| {
+                Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::Active(
+                    args.get("active").and_then(Value::as_bool).unwrap_or(true),
+                )))
+            },
+        )
+        .action(
+            "terrain_vegetation_enable",
+            "Vegetation on or off for the terrain (on: an empty palette to fill). One undo step. args: { \"enabled\"?: boolean (default true) }",
+            |args| {
+                Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::Enable(
+                    args.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+                )))
+            },
+        )
+        .action(
+            "terrain_vegetation_add_species",
+            "Adds a species (and selects it). One undo step. args: { \"name\"?: string, \"meshes\"?: [string] (project paths of the variants), \"tint\"?: [r, g, b], \"density_per_ha\"?: number, \"radius_m\"?: number }",
+            |args| {
+                let tint = args
+                    .get("tint")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_f64).map(|v| v as f32).collect::<Vec<_>>())
+                    .filter(|v| v.len() == 3)
+                    .map_or([1.0, 1.0, 1.0], |v| [v[0], v[1], v[2]]);
+                let meshes = args
+                    .get("meshes")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+                    .unwrap_or_default();
+                Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::AddSpeciesWith {
+                    name: optional_str(args, "name")?.unwrap_or("Species").to_owned(),
+                    meshes,
+                    tint,
+                    density_per_ha: optional_f32(args, "density_per_ha")?.unwrap_or(200.0),
+                    radius_m: optional_f32(args, "radius_m")?.unwrap_or(1.0),
+                }))
+            },
+        )
+        .action(
+            "terrain_vegetation_select_species",
+            "Selects a species: the one the brush places and the panel edits. args: { \"index\": number }",
+            |args| {
+                let index = args.get("index").and_then(Value::as_u64).ok_or("missing \"index\"")?;
+                Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::Select(index as usize)))
+            },
+        )
+        .action(
+            "terrain_vegetation_edit_species",
+            "Edits the selected species: `name`, `material` take a string, `procedural` and `visible` a bool, `add_variant` a project path of a mesh, `remove_variant` an index, and these take a number: density (per hectare), radius, priority, min_scale, max_scale, tilt, sink, tint_jitter, tint_r, tint_g, tint_b, distance. One undo step (a run of edits of one field is one). args: { \"field\": string, \"value\": string | number | bool }",
+            |args| {
+                let field = required_str(args, "field")?;
+                let value = args.get("value").ok_or("missing \"value\"")?;
+                terrain_vegetation_species_edit(field, value).map(Message::TerrainVegetation)
+            },
+        )
+        .action(
+            "terrain_vegetation_remove_species",
+            "Removes the selected species and its manual instances. One undo step. args: {}",
+            |_| Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::RemoveSpecies)),
+        )
+        .action(
+            "terrain_vegetation_rule",
+            "Adds a rule to the selected species: it grows only where the mask is inside a range. args: { \"mask\": \"slope\" | \"height\" | \"curvature\" }, or { \"remove\": number } to drop a rule by index",
+            |args| {
+                if let Some(index) = args.get("remove").and_then(Value::as_u64) {
+                    return Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::RemoveRule(index as usize)));
+                }
+                Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::AddRule(
+                    required_str(args, "mask")?.to_owned(),
+                )))
+            },
+        )
+        .action(
+            "terrain_vegetation_set_rule",
+            "Sets a number of a rule of the selected species: `from`, `full_from`, `full_to`, `to` (0 to 1). args: { \"rule\": number, \"field\": string, \"value\": number }",
+            |args| {
+                use terrain_paint_panel::RuleCorner;
+                let rule = args.get("rule").and_then(Value::as_u64).ok_or("missing \"rule\"")? as usize;
+                let value = args.get("value").and_then(Value::as_f64).ok_or("missing \"value\"")? as f32;
+                let corner = match required_str(args, "field")? {
+                    "from" => RuleCorner::Rise0,
+                    "full_from" => RuleCorner::Rise1,
+                    "full_to" => RuleCorner::Fall1,
+                    "to" => RuleCorner::Fall0,
+                    other => return Err(format!("no rule field called \"{other}\"")),
+                };
+                Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::Rule(rule, corner, value)))
+            },
+        )
+        .action(
+            "terrain_vegetation_set",
+            "Sets one vegetation brush setting: `tool` (paint, erase, scale, rotate, tint, replace, thin) takes a name; `radius`, `strength`, `spacing`, `per_100m2`, `amount`, `seed` a number; `only_species` an index (-1 for all); `respect_rules` and `shared_shape` a bool. args: { \"field\": string, \"value\": string | number | bool }",
+            |args| {
+                let field = required_str(args, "field")?;
+                let value = args.get("value").ok_or("missing \"value\"")?;
+                terrain_vegetation_brush_edit(field, value).map(Message::TerrainVegetation)
+            },
+        )
+        .action(
+            "terrain_vegetation_reseed",
+            "Grows the procedural vegetation from the seed in the panel (set it with terrain_vegetation_set `seed`). One undo step. args: {}",
+            |_| Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::Reseed)),
+        )
+        .action(
+            "terrain_vegetation_bake",
+            "Turns the selected species' grown plants into manual ones (it stops growing by itself). One undo step. args: {}",
+            |_| Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::Bake)),
+        )
+        .action(
+            "terrain_vegetation_rederive",
+            "Removes the baked plants of the selected species and lets it grow by itself again. One undo step. args: {}",
+            |_| Ok(Message::TerrainVegetation(terrain_vegetation_panel::Edit::Rederive)),
+        )
+        .action(
+            "terrain_vegetation_stroke",
+            "Plants or edits along world-space points (metres) with the selected species and the vegetation brush, exactly as dragging the mouse would: one undo step. args: { \"points\": [[x, z] or [x, y, z], ...], \"terrain_id\"?: number (default: the selected terrain) }",
+            |args| {
+                let points = args
+                    .get("points")
+                    .and_then(Value::as_array)
+                    .ok_or("missing \"points\": [[x, z], ...]")?
+                    .iter()
+                    .map(|point| {
+                        let numbers: Vec<f64> = point
+                            .as_array()
+                            .map(|a| a.iter().filter_map(Value::as_f64).collect())
+                            .unwrap_or_default();
+                        match numbers.as_slice() {
+                            [x, z] => Ok([*x, 0.0, *z]),
+                            [x, y, z] => Ok([*x, *y, *z]),
+                            _ => Err("a point is [x, z] or [x, y, z] in metres".to_owned()),
+                        }
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                Ok(Message::TerrainVegetationStroke {
+                    terrain: args.get("terrain_id").and_then(Value::as_u64).map(|id| id as u32),
+                    points,
+                })
             },
         )
         .query(
@@ -3221,6 +3406,155 @@ fn terrain_paint_brush_edit(
                 .ok_or_else(|| format!("\"{field}\" takes a number"))
         }
     }
+}
+
+fn terrain_vegetation_species_edit(
+    field: &str,
+    value: &Value,
+) -> Result<terrain_vegetation_panel::Edit, String> {
+    use terrain_vegetation_panel::{Edit, SpeciesNumber};
+    match normalized(field).as_str() {
+        "name" => value
+            .as_str()
+            .map(|v| Edit::Name(v.to_owned()))
+            .ok_or_else(|| "\"name\" takes a string".to_owned()),
+        "material" => value
+            .as_str()
+            .map(|v| Edit::Material(v.to_owned()))
+            .ok_or_else(|| "\"material\" takes a project path".to_owned()),
+        "procedural" => value
+            .as_bool()
+            .map(Edit::Procedural)
+            .ok_or_else(|| "\"procedural\" takes a bool".to_owned()),
+        "visible" => value
+            .as_bool()
+            .map(Edit::Visible)
+            .ok_or_else(|| "\"visible\" takes a bool".to_owned()),
+        "addvariant" => value
+            .as_str()
+            .map(|v| Edit::AddVariant(v.to_owned()))
+            .ok_or_else(|| "\"add_variant\" takes a project path".to_owned()),
+        "removevariant" => value
+            .as_u64()
+            .map(|v| Edit::RemoveVariant(v as usize))
+            .ok_or_else(|| "\"remove_variant\" takes an index".to_owned()),
+        _ => {
+            let number = SpeciesNumber::from_key(field)
+                .ok_or_else(|| format!("no species setting called \"{field}\""))?;
+            value
+                .as_f64()
+                .map(|v| Edit::Number(number, v as f32))
+                .ok_or_else(|| format!("\"{field}\" takes a number"))
+        }
+    }
+}
+
+fn terrain_vegetation_brush_edit(
+    field: &str,
+    value: &Value,
+) -> Result<terrain_vegetation_panel::Edit, String> {
+    use doppio_engine::VegTool;
+    use terrain_paint_panel::BrushAmount;
+    use terrain_vegetation_panel::Edit;
+    match normalized(field).as_str() {
+        "tool" => {
+            let wanted = value
+                .as_str()
+                .map(normalized)
+                .ok_or("\"tool\" takes a name")?;
+            VegTool::ALL
+                .iter()
+                .find(|t| {
+                    normalized(t.label()) == wanted || (wanted == "thin" && **t == VegTool::Thin)
+                })
+                .map(|t| Edit::Tool(*t))
+                .ok_or_else(|| format!("no vegetation tool called \"{wanted}\""))
+        }
+        "per100m2" => value
+            .as_f64()
+            .map(|v| Edit::Per100(v as f32))
+            .ok_or_else(|| "\"per_100m2\" takes a number".to_owned()),
+        "amount" => value
+            .as_f64()
+            .map(|v| Edit::Amount(v as f32))
+            .ok_or_else(|| "\"amount\" takes a number".to_owned()),
+        "seed" => value
+            .as_u64()
+            .map(Edit::Seed)
+            .ok_or_else(|| "\"seed\" takes a number".to_owned()),
+        "onlyspecies" => value
+            .as_i64()
+            .map(|v| Edit::Only(v as i32))
+            .ok_or_else(|| "\"only_species\" takes an index".to_owned()),
+        "respectrules" => value
+            .as_bool()
+            .map(Edit::Respect)
+            .ok_or_else(|| "\"respect_rules\" takes a bool".to_owned()),
+        "sharedshape" => value
+            .as_bool()
+            .map(Edit::Shared)
+            .ok_or_else(|| "\"shared_shape\" takes a bool".to_owned()),
+        _ => {
+            let amount = BrushAmount::from_key(field)
+                .ok_or_else(|| format!("no vegetation brush setting called \"{field}\""))?;
+            value
+                .as_f64()
+                .map(|v| Edit::Brush(amount, v as f32))
+                .ok_or_else(|| format!("\"{field}\" takes a number"))
+        }
+    }
+}
+
+fn terrain_vegetation_json(app: &App) -> Value {
+    let veg = &app.terrain_vegetation;
+    let info = veg.info.unwrap_or_default();
+    json!({
+        "active": veg.active,
+        "terrain": veg.entity,
+        "terrain_name": veg.terrain_name,
+        "enabled": info.enabled,
+        "manual_instances": info.manual_instances,
+        "overrides": info.overrides,
+        "seed": info.seed.to_string(),
+        "gpu_bytes": info.gpu_bytes,
+        "selected": veg.selected,
+        "species": veg.species.iter().enumerate().map(|(i, s)| json!({
+            "index": i,
+            "uid": s.uid,
+            "name": s.name,
+            "meshes": s.meshes,
+            "material": s.material,
+            "density_per_ha": s.density_per_ha,
+            "radius_m": s.radius_m,
+            "priority": s.priority,
+            "min_scale": s.min_scale,
+            "max_scale": s.max_scale,
+            "tilt": s.tilt,
+            "sink_m": s.sink_m,
+            "tint": s.tint,
+            "tint_jitter": s.tint_jitter,
+            "max_distance_m": s.max_distance_m,
+            "procedural": s.procedural,
+            "visible": s.visible,
+            "manual_instances": s.manual_instances,
+            "rules": s.rules.iter().map(|r| json!({
+                "mask": r.mask, "from": r.rise0, "full_from": r.rise1, "full_to": r.fall1, "to": r.fall0,
+            })).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+        "brush": {
+            "tool": veg.tool.label(),
+            "radius": veg.radius,
+            "strength": veg.strength,
+            "spacing": veg.spacing,
+            "per_100m2": veg.per_100m2,
+            "amount": veg.amount,
+            "only_species": veg.only,
+            "respect_rules": veg.respect_rules,
+            "shared_shape": veg.shared_shape,
+            "seed": veg.seed.to_string(),
+        },
+        "status": veg.status,
+    })
 }
 
 fn terrain_paint_json(app: &App) -> Value {

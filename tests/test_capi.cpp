@@ -2223,3 +2223,227 @@ TEST_CASE("C API terrain layers: a palette, painting, auto-layering, removal and
     caffeine_session_destroy(second);
     std::filesystem::remove_all(root);
 }
+
+TEST_CASE("C API terrain vegetation: species, procedural and painted instances, edits, undo and a scene round trip", "[capi][terrain][vegetation]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Ground");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 129;
+    terrain.resolution_z = 129;
+    terrain.size_x = 256.0f;
+    terrain.size_z = 256.0f;
+    terrain.max_height = 80.0f;
+    std::vector<float> heights(129 * 129, 0.3f);
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+
+    // Off until asked for; every call says so.
+    CaffeineVegInfo info{};
+    REQUIRE(caffeine_session_terrain_vegetation(session, entity, &info) == CAFFEINE_OK);
+    CHECK(info.enabled == 0);
+    CaffeineVegBrush brush{};
+    CHECK(caffeine_session_terrain_veg_paint_begin(session, entity, &brush) == CAFFEINE_ERROR);
+    CHECK(caffeine_session_terrain_vegetation_enable(session, 9999u, 1) == CAFFEINE_NOT_FOUND);
+    REQUIRE(caffeine_session_terrain_vegetation_enable(session, entity, 1) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_vegetation(session, entity, &info) == CAFFEINE_OK);
+    CHECK(info.enabled == 1);
+    CHECK(info.species_count == 0);
+
+    // Two species: a pine that grows by itself on flat ground and a rock that is only ever placed by hand.
+    CaffeineVegSpecies pine{};
+    std::snprintf(pine.name, sizeof(pine.name), "%s", "Pine");
+    pine.mesh_count = 2;
+    std::snprintf(pine.meshes[0], sizeof(pine.meshes[0]), "%s", "Meshes/pine_a.obj");
+    std::snprintf(pine.meshes[1], sizeof(pine.meshes[1]), "%s", "Meshes/pine_b.obj");
+    pine.density_per_ha = 300.0f;
+    pine.radius_m = 2.0f;
+    pine.priority = 1;
+    pine.min_scale = 0.8f;
+    pine.max_scale = 1.2f;
+    pine.tilt = 0.15f;
+    pine.tint_jitter = 0.05f;
+    pine.tint[0] = pine.tint[1] = pine.tint[2] = 1.0f;
+    pine.max_distance_m = 300.0f;
+    pine.procedural = 1;
+    pine.visible = 1;
+    CaffeineVegSpecies rock = pine;
+    std::snprintf(rock.name, sizeof(rock.name), "%s", "Rock");
+    rock.mesh_count = 1;
+    std::snprintf(rock.meshes[0], sizeof(rock.meshes[0]), "%s", "Meshes/rock.obj");
+    rock.density_per_ha = 0.0f;
+    rock.radius_m = 1.5f;
+    rock.priority = 5;
+    rock.procedural = 0;
+    std::vector<CaffeineVegSpecies> list = {pine, rock};
+    char error[200] = {};
+    uint32_t record = 0;
+    CHECK(caffeine_session_terrain_veg_species_apply(session, entity, list.data(), 2, 0, &record, error, sizeof(error)) == CAFFEINE_OK);
+    CHECK(record != 0);
+    const uint32_t addRecord = record;
+    REQUIRE(caffeine_session_terrain_vegetation(session, entity, &info) == CAFFEINE_OK);
+    CHECK(info.species_count == 2);
+    CaffeineVegSpecies back{};
+    REQUIRE(caffeine_session_terrain_veg_species(session, entity, 0, &back) == CAFFEINE_OK);
+    CHECK(std::string(back.name) == "Pine");
+    CHECK(back.uid != 0);
+    CHECK(back.mesh_count == 2);
+    CHECK(back.density_per_ha == Approx(300.0f));
+    CHECK(caffeine_session_terrain_veg_species(session, entity, 2, &back) == CAFFEINE_NOT_FOUND);
+
+    // A bad edit is refused with the reason.
+    CaffeineVegSpecies bad = list[0];
+    bad.min_scale = 3.0f;
+    bad.max_scale = 1.0f;
+    list[0] = bad;
+    CHECK(caffeine_session_terrain_veg_species_apply(session, entity, list.data(), 2, 0, &record, error, sizeof(error)) == CAFFEINE_ERROR);
+    CHECK(std::string(error).find("scale") != std::string::npos);
+
+    // The procedural pines are there: about 300 per hectare, 6.5 ha.
+    std::vector<CaffeineVegInstance> found(20000);
+    uint32_t count = 0;
+    REQUIRE(caffeine_session_terrain_veg_instances(session, entity, 0.0, 0.0, 400.0f, found.data(), static_cast<uint32_t>(found.size()), &count) == CAFFEINE_OK);
+    CHECK(count > 1200);
+    CHECK(count < 2800);
+    bool allPines = true;
+    for (uint32_t i = 0; i < std::min<uint32_t>(count, 20000); ++i) allPines &= found[i].species == 0 && found[i].manual == 0;
+    CHECK(allPines);
+    // A pine edit by uid keeps its instances; dragging a slider folds into one record.
+    REQUIRE(caffeine_session_terrain_veg_species(session, entity, 0, &back) == CAFFEINE_OK);
+    CaffeineVegSpecies edited = back;
+    edited.max_distance_m = 120.0f;
+    CaffeineVegSpecies rockBack{};
+    REQUIRE(caffeine_session_terrain_veg_species(session, entity, 1, &rockBack) == CAFFEINE_OK);
+    std::vector<CaffeineVegSpecies> both = {edited, rockBack};
+    uint32_t merged = 0;
+    REQUIRE(caffeine_session_terrain_veg_species_apply(session, entity, both.data(), 2, addRecord, &merged, error, sizeof(error)) == CAFFEINE_OK);
+    CHECK(merged == addRecord);
+    REQUIRE(caffeine_session_terrain_veg_species(session, entity, 0, &back) == CAFFEINE_OK);
+    CHECK(back.max_distance_m == Approx(120.0f));
+    uint32_t countAfter = 0;
+    REQUIRE(caffeine_session_terrain_veg_instances(session, entity, 0.0, 0.0, 400.0f, found.data(), static_cast<uint32_t>(found.size()), &countAfter) == CAFFEINE_OK);
+    CHECK(countAfter == count);
+
+    // Paint rocks by hand with the round brush.
+    CaffeineBrushPreset round{};
+    for (uint32_t i = 0; i < caffeine_terrain_brush_count(); ++i) {
+        REQUIRE(caffeine_terrain_brush_at(i, &round) == CAFFEINE_OK);
+        if (std::string(round.name) == "Round hard") break;
+    }
+    brush.shape = round;
+    brush.shape.radius_m = 12.0f;
+    brush.shape.strength = 1.0f;
+    brush.tool = CAFFEINE_VEG_PAINT;
+    brush.species = 1;
+    brush.only_species = -1;
+    brush.per_100m2 = 6.0f;
+    brush.respect_rules = 1;
+    CHECK(caffeine_session_terrain_veg_paint_begin(session, entity, &brush) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_stroke_point(session, 0.0, 0.0, 0.0, 1.0f, nullptr) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_stroke_point(session, 20.0, 0.0, 0.0, 1.0f, nullptr) == CAFFEINE_OK);
+    CaffeineTerrainStrokeResult result{};
+    REQUIRE(caffeine_session_terrain_stroke_end(session, &result) == CAFFEINE_OK);
+    CHECK(result.record != 0);
+    REQUIRE(caffeine_session_terrain_vegetation(session, entity, &info) == CAFFEINE_OK);
+    const uint64_t painted = info.manual_instances;
+    CHECK(painted > 10);
+    REQUIRE(caffeine_session_terrain_veg_species(session, entity, 1, &rockBack) == CAFFEINE_OK);
+    CHECK(rockBack.manual_instances == painted);
+
+    // Undo and redo the stroke by its record, the same calls as for a height stroke.
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, result.record) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_vegetation(session, entity, &info) == CAFFEINE_OK);
+    CHECK(info.manual_instances == 0);
+    REQUIRE(caffeine_session_terrain_stroke_reapply(session, result.record) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_vegetation(session, entity, &info) == CAFFEINE_OK);
+    CHECK(info.manual_instances == painted);
+
+    // Erase pines under the brush: an override, not a deletion; undo gives them back.
+    uint32_t pinesBefore = 0;
+    REQUIRE(caffeine_session_terrain_veg_instances(session, entity, 0.0, 0.0, 30.0f, found.data(), static_cast<uint32_t>(found.size()), &pinesBefore) == CAFFEINE_OK);
+    CaffeineVegBrush erase = brush;
+    erase.tool = CAFFEINE_VEG_ERASE;
+    erase.only_species = 0;
+    erase.shape.radius_m = 40.0f;
+    REQUIRE(caffeine_session_terrain_veg_paint_begin(session, entity, &erase) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_stroke_point(session, 0.0, 0.0, 0.0, 1.0f, nullptr) == CAFFEINE_OK);
+    CaffeineTerrainStrokeResult erased{};
+    REQUIRE(caffeine_session_terrain_stroke_end(session, &erased) == CAFFEINE_OK);
+    uint32_t pinesAfter = 0;
+    REQUIRE(caffeine_session_terrain_veg_instances(session, entity, 0.0, 0.0, 30.0f, found.data(), static_cast<uint32_t>(found.size()), &pinesAfter) == CAFFEINE_OK);
+    CHECK(pinesAfter < pinesBefore);
+    REQUIRE(caffeine_session_terrain_vegetation(session, entity, &info) == CAFFEINE_OK);
+    CHECK(info.overrides > 0);
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, erased.record) == CAFFEINE_OK);
+    uint32_t pinesBack = 0;
+    REQUIRE(caffeine_session_terrain_veg_instances(session, entity, 0.0, 0.0, 30.0f, found.data(), static_cast<uint32_t>(found.size()), &pinesBack) == CAFFEINE_OK);
+    CHECK(pinesBack == pinesBefore);
+    REQUIRE(caffeine_session_terrain_stroke_reapply(session, erased.record) == CAFFEINE_OK);
+
+    // Bad requests.
+    CaffeineVegBrush wrong = brush;
+    wrong.species = 9;
+    CHECK(caffeine_session_terrain_veg_paint_begin(session, entity, &wrong) == CAFFEINE_INVALID_ARGUMENT);
+    wrong = brush;
+    wrong.tool = 12;
+    CHECK(caffeine_session_terrain_veg_paint_begin(session, entity, &wrong) == CAFFEINE_INVALID_ARGUMENT);
+
+    // Bake the pines: the same trees, now manual; the procedural source of the species is off; undo restores it.
+    uint32_t bakeRecord = 0;
+    REQUIRE(caffeine_session_terrain_veg_bake(session, entity, 0, &bakeRecord) == CAFFEINE_OK);
+    CHECK(bakeRecord != 0);
+    REQUIRE(caffeine_session_terrain_vegetation(session, entity, &info) == CAFFEINE_OK);
+    CHECK(info.manual_instances > painted + 1000);
+    REQUIRE(caffeine_session_terrain_veg_species(session, entity, 0, &back) == CAFFEINE_OK);
+    CHECK(back.procedural == 0);
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, bakeRecord) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_vegetation(session, entity, &info) == CAFFEINE_OK);
+    CHECK(info.manual_instances == painted);
+    REQUIRE(caffeine_session_terrain_veg_species(session, entity, 0, &back) == CAFFEINE_OK);
+    CHECK(back.procedural == 1);
+
+    // A new seed grows another forest.
+    uint32_t seedRecord = 0;
+    REQUIRE(caffeine_session_terrain_veg_reseed(session, entity, 777, &seedRecord) == CAFFEINE_OK);
+    CHECK(seedRecord != 0);
+    std::vector<CaffeineVegInstance> other(20000);
+    uint32_t otherCount = 0;
+    REQUIRE(caffeine_session_terrain_veg_instances(session, entity, 0.0, 0.0, 30.0f, other.data(), static_cast<uint32_t>(other.size()), &otherCount) == CAFFEINE_OK);
+    CHECK(other[0].id != found[0].id);
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, seedRecord) == CAFFEINE_OK);
+
+    // The scene saves the vegetation next to the terrain; a new session reads it back.
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "caffeine_vegetation_project";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "Scenes");
+    const std::string scene = (root / "Scenes" / "main.caf").string();
+    REQUIRE(caffeine_session_save_scene(session, scene.c_str()) == CAFFEINE_OK);
+    bool foundFile = false;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) foundFile |= entry.path().extension() == ".terrainveg";
+    CHECK(foundFile);
+    REQUIRE(caffeine_session_terrain_vegetation(session, entity, &info) == CAFFEINE_OK);
+    const uint64_t manualNow = info.manual_instances;
+    caffeine_session_destroy(session);
+
+    CaffeineSession* second = caffeine_session_create();
+    REQUIRE(caffeine_session_load_scene(second, scene.c_str()) == CAFFEINE_OK);
+    CaffeineEntity loaded = 0;
+    bool haveGround = false;
+    for (uint32_t i = 0; i < caffeine_session_entity_count(second); ++i) {
+        CaffeineEntityInfo entityInfo{};
+        if (caffeine_session_entity_at(second, i, &entityInfo) == CAFFEINE_OK && std::string(entityInfo.name) == "Ground") {
+            loaded = entityInfo.id;
+            haveGround = true;
+        }
+    }
+    REQUIRE(haveGround);
+    CaffeineVegInfo loadedInfo{};
+    REQUIRE(caffeine_session_terrain_vegetation(second, loaded, &loadedInfo) == CAFFEINE_OK);
+    CHECK(loadedInfo.enabled == 1);
+    CHECK(loadedInfo.species_count == 2);
+    CHECK(loadedInfo.manual_instances == manualNow);
+    uint32_t loadedPines = 0;
+    REQUIRE(caffeine_session_terrain_veg_instances(second, loaded, 0.0, 0.0, 30.0f, found.data(), static_cast<uint32_t>(found.size()), &loadedPines) == CAFFEINE_OK);
+    CHECK(loadedPines == pinesAfter);  // the erase override came back too
+    caffeine_session_destroy(second);
+    std::filesystem::remove_all(root);
+}

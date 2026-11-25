@@ -458,6 +458,7 @@ enum PaneKind {
     Performance,
     TerrainBrush,
     TerrainPaint,
+    TerrainVegetation,
     PhaseShift,
     Rig2d,
     Profiler,
@@ -680,6 +681,15 @@ enum Message {
     /// An edit of the Terrain Paint panel (palette, paint brush, auto-layering, the tool's switch).
     TerrainPaint(crate::uikit::panels::terrain_paint::Edit),
     ShowTerrainPaint,
+    /// An edit of the Terrain Vegetation panel (species, brush, procedural source, the tool's switch).
+    TerrainVegetation(crate::uikit::panels::terrain_vegetation::Edit),
+    ShowTerrainVegetation,
+    /// One whole vegetation stroke along world-space points, metres (the `terrain_vegetation_stroke` agent action).
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    TerrainVegetationStroke {
+        terrain: Option<u32>,
+        points: Vec<[f64; 3]>,
+    },
     /// Removes every auto-layering rule (the `terrain_paint_rule` agent action with `clear`).
     #[cfg_attr(not(feature = "agent"), allow(dead_code))]
     TerrainPaintClearRules,
@@ -872,6 +882,7 @@ struct App {
     terrain_cursor: terraincursor::State,
     terrain_editor: terraineditor::State,
     terrain_paint: terrainpaint::State,
+    terrain_vegetation: terrainvegetation::State,
     /// The scene holds a water surface, so the editor keeps stepping the engine for it.
     has_water: bool,
     water_scan: u32,
@@ -1038,6 +1049,7 @@ impl PaneKind {
             PaneKind::Performance => "Performance",
             PaneKind::TerrainBrush => "Terrain Brush",
             PaneKind::TerrainPaint => "Terrain Paint",
+            PaneKind::TerrainVegetation => "Terrain Vegetation",
             PaneKind::PhaseShift => "PhaseShift",
             PaneKind::Rig2d => "Rig 2D",
             PaneKind::Profiler => "Profiler",
@@ -1068,6 +1080,7 @@ impl PaneKind {
             PaneKind::Performance => id::PANE_TAB_PERFORMANCE,
             PaneKind::TerrainBrush => id::PANE_TAB_TERRAIN_BRUSH,
             PaneKind::TerrainPaint => id::PANE_TAB_TERRAIN_PAINT,
+            PaneKind::TerrainVegetation => id::PANE_TAB_TERRAIN_VEGETATION,
             PaneKind::PhaseShift => id::PANE_TAB_PHASESHIFT,
             PaneKind::Rig2d => id::PANE_TAB_RIG2D,
             PaneKind::Profiler => id::PANE_TAB_PROFILER,
@@ -1124,6 +1137,7 @@ impl App {
                         PaneKind::Performance,
                         PaneKind::TerrainBrush,
                         PaneKind::TerrainPaint,
+                        PaneKind::TerrainVegetation,
                         PaneKind::Photon,
                         PaneKind::Environment,
                         PaneKind::Audio,
@@ -1280,6 +1294,7 @@ impl App {
             terrain_cursor: terraincursor::State::default(),
             terrain_editor: terraineditor::State::default(),
             terrain_paint: terrainpaint::State::default(),
+            terrain_vegetation: terrainvegetation::State::default(),
             has_water: false,
             water_scan: 0,
             viewport_last_tick: None,
@@ -1941,8 +1956,9 @@ impl App {
             Some(stroke) => self.move_terrain_stroke(stroke),
             None => self.apply_history_state(moved.state.clone()),
         }
-        // The palette and the layer map are edited by records and by scene restores: read them again.
+        // The palette, the layer map and the vegetation are edited by records and by scene restores: read them again.
         self.refresh_paint_state();
+        self.refresh_vegetation_state();
     }
 
     fn undo(&mut self) {
@@ -7749,6 +7765,14 @@ impl App {
             Message::ShowTerrainBrush => self.show_terrain_brush_pane(),
             Message::TerrainPaint(edit) => self.edit_terrain_paint(edit),
             Message::ShowTerrainPaint => self.show_terrain_paint_pane(),
+            Message::TerrainVegetation(edit) => self.edit_terrain_vegetation(edit),
+            Message::ShowTerrainVegetation => self.show_terrain_vegetation_pane(),
+            Message::TerrainVegetationStroke { terrain, points } => {
+                if let Err(error) = self.vegetation_stroke_along(terrain, &points) {
+                    self.log(LogLevel::Error, format!("Terrain vegetation: {error}"));
+                    self.terrain_vegetation.status = Some(format!("Could not plant: {error}"));
+                }
+            }
             Message::TerrainPaintClearRules => self.terrain_paint.rules.clear(),
             Message::TerrainPaintApplyRules { fallback } => {
                 if let Some(fallback) = fallback {
@@ -7778,6 +7802,8 @@ impl App {
             Message::TerrainBrushRadius(factor) => {
                 if self.terrain_paint.active {
                     self.scale_paint_brush(factor);
+                } else if self.terrain_vegetation.active {
+                    self.scale_vegetation_brush(factor);
                 } else if self.terrain_editor.active {
                     self.scale_terrain_brush(factor);
                 }
@@ -8411,6 +8437,12 @@ impl App {
                         label: "Terrain Brush (Sculpt)",
                         shortcut: None,
                         message: Message::ShowTerrainBrush,
+                    },
+                    menu::Item {
+                        id: id::SHOW_TERRAIN_VEGETATION,
+                        label: "Terrain Vegetation (Plants)",
+                        shortcut: None,
+                        message: Message::ShowTerrainVegetation,
                     },
                     menu::Item {
                         id: id::SHOW_TERRAIN_PAINT,
@@ -9774,6 +9806,35 @@ impl App {
                 None,
                 self.camera_preview_view(),
             ),
+            PaneKind::TerrainVegetation => (
+                id::PANE_TERRAIN_VEGETATION,
+                "Terrain Vegetation",
+                Some(panels::terrain_vegetation::summary(
+                    self.terrain_vegetation.active,
+                    self.terrain_vegetation.info,
+                )),
+                panels::terrain_vegetation::view(
+                    panels::terrain_vegetation::View {
+                        active: self.terrain_vegetation.active,
+                        terrain: self.terrain_vegetation.terrain_name.as_deref(),
+                        info: self.terrain_vegetation.info,
+                        species: &self.terrain_vegetation.species,
+                        selected: self.terrain_vegetation.selected,
+                        tool: self.terrain_vegetation.tool,
+                        radius: self.terrain_vegetation.radius,
+                        strength: self.terrain_vegetation.strength,
+                        spacing: self.terrain_vegetation.spacing,
+                        per_100m2: self.terrain_vegetation.per_100m2,
+                        amount: self.terrain_vegetation.amount,
+                        only: self.terrain_vegetation.only,
+                        respect_rules: self.terrain_vegetation.respect_rules,
+                        shared_shape: self.terrain_vegetation.shared_shape,
+                        seed: self.terrain_vegetation.seed,
+                        status: self.terrain_vegetation.status.as_deref(),
+                    },
+                    Message::TerrainVegetation,
+                ),
+            ),
             PaneKind::TerrainPaint => (
                 id::PANE_TERRAIN_PAINT,
                 "Terrain Paint",
@@ -10683,6 +10744,7 @@ mod terraineditor;
 mod terrainformat;
 mod terraingen;
 mod terrainpaint;
+mod terrainvegetation;
 mod texturegen;
 mod watergen;
 mod workspace;

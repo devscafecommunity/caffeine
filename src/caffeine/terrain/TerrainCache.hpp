@@ -14,6 +14,9 @@
 #include "terrain/paint/TerrainLayerMap.hpp"
 #include "terrain/paint/TerrainPalette.hpp"
 #include "terrain/paint/TerrainPaintStroke.hpp"
+#include "terrain/vegetation/TerrainVegetation.hpp"
+#include "terrain/vegetation/VegetationStroke.hpp"
+#include <unordered_set>
 
 #ifdef CF_HAS_SDL3
 #include "rhi/RenderDevice.hpp"
@@ -65,6 +68,8 @@ public:
     struct LayerState {
         TerrainPalette palette;
         TerrainLayerMap layers;
+        TerrainVegetation vegetation;
+        bool hasVegetation = false;
     };
     /// Moves the layers out of an entry (it keeps none). Used by scene restores, which rebuild every entry.
     LayerState takeLayers(ECS::Entity entity);
@@ -77,6 +82,23 @@ public:
     /// Reads them (a missing palette file is the legacy four layers, a missing map is the splat map). False on a damaged file.
     bool loadLayers(ECS::Entity entity, ECS::TerrainComponent& terrain, const std::filesystem::path& projectRoot,
                     std::string* error = nullptr);
+
+    // --- vegetation (phase 3)
+    TerrainVegetation* vegetationFor(ECS::Entity entity);
+    const TerrainVegetation* vegetationFor(ECS::Entity entity) const;
+    /// Gives the terrain a vegetation store (kept if it has one) and turns it on.
+    bool enableVegetation(ECS::Entity entity, ECS::TerrainComponent& terrain);
+    /// The ground a vegetation resolve reads for this terrain: heights, normals and each species' rules over the masks.
+    VegetationField vegetationField(ECS::Entity entity, const ECS::TerrainComponent& terrain) const;
+    /// An edit reached the vegetation: the chunks it changed (`record.hasChunks`) or all of them go back to the GPU.
+    void commitVegetationEdit(ECS::Entity entity, ECS::TerrainComponent& terrain, const VegetationRecord& record);
+    /// The chunks the GPU has not seen since the last call (keys of `TerrainVegetation::chunkKey`); `all` when everything
+    /// changed. Clears them.
+    void takeVegetationDirty(ECS::Entity entity, std::vector<u64>& chunks, bool& all);
+    bool saveVegetation(ECS::Entity entity, ECS::TerrainComponent& terrain, const std::filesystem::path& projectRoot,
+                        std::string* error = nullptr);
+    bool loadVegetation(ECS::Entity entity, ECS::TerrainComponent& terrain, const std::filesystem::path& projectRoot,
+                        std::string* error = nullptr);
 
     TerrainSplatmap* splatmapFor(ECS::Entity entity);
     const TerrainSplatmap* splatmapFor(ECS::Entity entity) const;
@@ -156,6 +178,10 @@ private:
         TerrainSplatmap splatmap;
         TerrainPalette palette;
         TerrainLayerMap layers;
+        TerrainVegetation vegetation;
+        bool hasVegetation = false;
+        std::unordered_set<u64> vegetationDirty;  // chunks the GPU has not seen
+        bool vegetationDirtyAll = true;
         LayerBounds layerDirty;   // texels the GPU has not seen yet
         bool layerDirtyAll = true;
         TerrainMasks masks;

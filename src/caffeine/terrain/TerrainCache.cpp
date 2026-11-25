@@ -5,6 +5,9 @@
 #include "terrain/TerrainResolution.hpp"
 #include "terrain/TerrainSerializer.hpp"
 #include "terrain/TerrainGpuTextures.hpp"
+#ifdef CF_HAS_SDL3
+#include "render/TerrainVegetationGpu.hpp"
+#endif
 #include "terrain/TerrainCollisionMeshBuilder.hpp"
 #include "assets/MeshCache.hpp"
 #include "core/WorldUnits.hpp"
@@ -319,6 +322,25 @@ void TerrainCache::commitHeightEdit(ECS::Entity entity, ECS::TerrainComponent& s
     if (it == m_entries.end() || it->second.heightmap.empty()) return;
     TerrainEntry& entry = it->second;
     ++settings.dataRevision;
+    if (entry.hasVegetation && !entry.vegetationDirtyAll) {
+        // The ground moved under the vegetation standing on it: those chunks are drawn again.
+        const f32 stepX = settings.worldSizeX / static_cast<f32>(std::max(settings.resolutionX, 2u) - 1);
+        const f32 stepZ = settings.worldSizeZ / static_cast<f32>(std::max(settings.resolutionZ, 2u) - 1);
+        const f32 x0 = static_cast<f32>(region.minX) * stepX - settings.worldSizeX * 0.5f - stepX;
+        const f32 x1 = static_cast<f32>(region.maxX) * stepX - settings.worldSizeX * 0.5f + stepX;
+        const f32 z0 = static_cast<f32>(region.minZ) * stepZ - settings.worldSizeZ * 0.5f - stepZ;
+        const f32 z1 = static_cast<f32>(region.maxZ) * stepZ - settings.worldSizeZ * 0.5f + stepZ;
+        const i32 cx0 = TerrainVegetation::chunkOf(x0), cx1 = TerrainVegetation::chunkOf(x1);
+        const i32 cz0 = TerrainVegetation::chunkOf(z0), cz1 = TerrainVegetation::chunkOf(z1);
+        if (static_cast<i64>(cx1 - cx0 + 1) * (cz1 - cz0 + 1) > 4096) {
+            entry.vegetationDirtyAll = true;
+        } else {
+            for (i32 cz = cz0; cz <= cz1; ++cz) {
+                for (i32 cx = cx0; cx <= cx1; ++cx) entry.vegetationDirty.insert(TerrainVegetation::chunkKey(cx, cz));
+            }
+        }
+        ++settings.vegetationRevision;
+    }
     rebuildRegion(entity, settings, region.minX, region.minZ, region.maxX, region.maxZ);
     settings.meshRevision = settings.dataRevision;
     entry.builtRevision = settings.dataRevision;
@@ -395,6 +417,7 @@ void TerrainCache::removeEntity(ECS::Entity entity) {
 #ifdef CF_HAS_SDL3
     releaseEntryGpu(it->second);
     TerrainGpuTextureCache::instance().removeEntity(entity, m_gpuDevice);
+    Render::TerrainVegetationGpu::instance().removeEntity(entity, m_gpuDevice);
 #endif
     m_entries.erase(it);
 }
@@ -417,6 +440,137 @@ TerrainHeightmap* TerrainCache::heightmapFor(ECS::Entity entity) {
 const TerrainHeightmap* TerrainCache::heightmapFor(ECS::Entity entity) const {
     auto it = m_entries.find(entity.id());
     return it != m_entries.end() ? &it->second.heightmap : nullptr;
+}
+
+TerrainVegetation* TerrainCache::vegetationFor(ECS::Entity entity) {
+    auto it = m_entries.find(entity.id());
+    return it != m_entries.end() && it->second.hasVegetation ? &it->second.vegetation : nullptr;
+}
+
+const TerrainVegetation* TerrainCache::vegetationFor(ECS::Entity entity) const {
+    auto it = m_entries.find(entity.id());
+    return it != m_entries.end() && it->second.hasVegetation ? &it->second.vegetation : nullptr;
+}
+
+bool TerrainCache::enableVegetation(ECS::Entity entity, ECS::TerrainComponent& terrain) {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end()) return false;
+    TerrainEntry& entry = it->second;
+    if (!terrain.useVegetation || !entry.hasVegetation) {
+        // Turning vegetation on starts with an empty store, never with one an earlier terrain of the same id left behind.
+        entry.vegetation = TerrainVegetation();
+        entry.hasVegetation = true;
+    }
+    entry.vegetationDirtyAll = true;
+    terrain.useVegetation = true;
+    ++terrain.vegetationRevision;
+    return true;
+}
+
+VegetationField TerrainCache::vegetationField(ECS::Entity entity, const ECS::TerrainComponent& terrain) const {
+    VegetationField field;
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end()) return field;
+    const TerrainEntry* entry = &it->second;
+    const f32 sizeX = std::max(terrain.worldSizeX, 0.001f), sizeZ = std::max(terrain.worldSizeZ, 0.001f);
+    const f32 maxHeight = std::max(terrain.maxHeight, 0.001f);
+    const f32 stepX = sizeX / static_cast<f32>(std::max(terrain.resolutionX, 2u) - 1);
+    const f32 stepZ = sizeZ / static_cast<f32>(std::max(terrain.resolutionZ, 2u) - 1);
+    auto heightAt = [entry, sizeX, sizeZ, maxHeight](f32 x, f32 z) {
+        const f32 u = std::clamp((x + sizeX * 0.5f) / sizeX, 0.0f, 1.0f);
+        const f32 v = std::clamp((z + sizeZ * 0.5f) / sizeZ, 0.0f, 1.0f);
+        return entry->heightmap.sampleBilinear(u, v) * maxHeight;
+    };
+    field.halfX = sizeX * 0.5f;
+    field.halfZ = sizeZ * 0.5f;
+    field.height = heightAt;
+    field.normal = [heightAt, stepX, stepZ](f32 x, f32 z) {
+        const f32 dx = heightAt(x + stepX, z) - heightAt(x - stepX, z);
+        const f32 dz = heightAt(x, z + stepZ) - heightAt(x, z - stepZ);
+        const Vec3 n(-dx / (2.0f * stepX), 1.0f, -dz / (2.0f * stepZ));
+        const f32 length = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+        return Vec3(n.x / length, n.y / length, n.z / length);
+    };
+    const TerrainFrame frame{&entry->heightmap, sizeX, sizeZ, maxHeight};
+    field.density = [entry, frame, sizeX, sizeZ](u32 index, f32 x, f32 z) {
+        if (!entry->hasVegetation || index >= entry->vegetation.species().size()) return 1.0f;
+        f32 weight = 1.0f;
+        for (const BiomeTerm& term : entry->vegetation.species()[index].rules) {
+            f32 value = 0.0f;
+            // A mask that does not exist suits nowhere (the same rule as the biome table).
+            if (!entry->masks.sample(frame, term.mask, x + sizeX * 0.5f, z + sizeZ * 0.5f, value)) return 0.0f;
+            weight *= term.weight(value);
+            if (weight <= 0.0f) return 0.0f;
+        }
+        return weight;
+    };
+    return field;
+}
+
+void TerrainCache::commitVegetationEdit(ECS::Entity entity, ECS::TerrainComponent& terrain, const VegetationRecord& record) {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end()) return;
+    TerrainEntry& entry = it->second;
+    ++terrain.vegetationRevision;
+    if (record.wholeTerrain()) {
+        entry.vegetationDirtyAll = true;
+        return;
+    }
+    if (!record.hasChunks) return;
+    if (static_cast<i64>(record.maxChunkX - record.minChunkX + 1) * (record.maxChunkZ - record.minChunkZ + 1) > 4096) {
+        entry.vegetationDirtyAll = true;
+        return;
+    }
+    // A conflict can reach into the next chunk (a tree takes the spot of a bush across the border): one chunk around.
+    for (i32 cz = record.minChunkZ - 1; cz <= record.maxChunkZ + 1; ++cz) {
+        for (i32 cx = record.minChunkX - 1; cx <= record.maxChunkX + 1; ++cx) entry.vegetationDirty.insert(TerrainVegetation::chunkKey(cx, cz));
+    }
+}
+
+void TerrainCache::takeVegetationDirty(ECS::Entity entity, std::vector<u64>& chunks, bool& all) {
+    chunks.clear();
+    all = false;
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end()) return;
+    TerrainEntry& entry = it->second;
+    all = entry.vegetationDirtyAll;
+    if (!all) chunks.assign(entry.vegetationDirty.begin(), entry.vegetationDirty.end());
+    entry.vegetationDirty.clear();
+    entry.vegetationDirtyAll = false;
+}
+
+bool TerrainCache::saveVegetation(ECS::Entity entity, ECS::TerrainComponent& terrain, const std::filesystem::path& projectRoot,
+                                  std::string* error) {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end() || !it->second.hasVegetation) {
+        if (error) *error = "the terrain has no vegetation to save";
+        return false;
+    }
+    if (terrain.vegetationPath[0] == '\0') {
+        std::filesystem::path base = terrain.terrainDataPath[0] != '\0' ? std::filesystem::path(terrain.terrainDataPath)
+                                                                        : std::filesystem::path("terrain/Terrain_" + std::to_string(entity.id()));
+        base.replace_extension();
+        const std::string relative = base.string() + ".terrainveg";
+        std::memset(terrain.vegetationPath, 0, sizeof(terrain.vegetationPath));
+        std::memcpy(terrain.vegetationPath, relative.c_str(), std::min(relative.size(), sizeof(terrain.vegetationPath) - 1));
+    }
+    const std::filesystem::path file = projectRoot / terrain.vegetationPath;
+    std::error_code ec;
+    std::filesystem::create_directories(file.parent_path(), ec);
+    return it->second.vegetation.save(file.string(), error);
+}
+
+bool TerrainCache::loadVegetation(ECS::Entity entity, ECS::TerrainComponent& terrain, const std::filesystem::path& projectRoot,
+                                  std::string* error) {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end() || terrain.vegetationPath[0] == '\0') return false;
+    TerrainVegetation loaded;
+    if (!TerrainVegetation::load((projectRoot / terrain.vegetationPath).string(), loaded, error)) return false;
+    it->second.vegetation = std::move(loaded);
+    it->second.hasVegetation = true;
+    it->second.vegetationDirtyAll = true;
+    ++terrain.vegetationRevision;
+    return true;
 }
 
 TerrainPalette* TerrainCache::paletteFor(ECS::Entity entity) {
@@ -481,6 +635,12 @@ TerrainCache::LayerState TerrainCache::takeLayers(ECS::Entity entity) {
     state.layers = std::move(it->second.layers);
     it->second.palette = TerrainPalette();
     it->second.layers = TerrainLayerMap();
+    if (it->second.hasVegetation) {
+        state.vegetation = std::move(it->second.vegetation);
+        state.hasVegetation = true;
+        it->second.vegetation = TerrainVegetation();
+        it->second.hasVegetation = false;
+    }
     return state;
 }
 
@@ -489,6 +649,11 @@ void TerrainCache::adoptLayers(ECS::Entity entity, LayerState&& state) {
     entry.palette = std::move(state.palette);
     entry.layers = std::move(state.layers);
     entry.layerDirtyAll = true;
+    if (state.hasVegetation) {
+        entry.vegetation = std::move(state.vegetation);
+        entry.hasVegetation = true;
+        entry.vegetationDirtyAll = true;
+    }
 }
 
 void TerrainCache::commitLayerEdit(ECS::Entity entity, ECS::TerrainComponent& terrain, const LayerBounds& region) {
@@ -826,6 +991,7 @@ void TerrainCache::releaseGpuResources(RHI::RenderDevice* device) {
     if (!device) return;
     m_gpuDevice = device;
     TerrainGpuTextureCache::instance().releaseAll(device);
+    Render::TerrainVegetationGpu::instance().releaseAll(device);
 
     for (auto& [_, entry] : m_entries) {
         releaseEntryGpu(entry);

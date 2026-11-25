@@ -62,6 +62,13 @@ struct TerrainComponent {
     char layerMapPath[256] = {};
     /// The layer array on the GPU may take this many megabytes; the sharpness of the layers falls by classes until it fits.
     u32 layerVramBudgetMb = 256;
+
+    // --- vegetation as terrain data (terrain editing roadmap, phase 3)
+    /// On: the terrain has a species palette and instances (procedural and painted) drawn by the renderer; the data is the
+    /// project-relative `.terrainveg` file named below once saved.
+    bool useVegetation = false;
+    u32 vegetationRevision = 1;
+    char vegetationPath[256] = {};
 };
 
 }  // namespace Caffeine::ECS

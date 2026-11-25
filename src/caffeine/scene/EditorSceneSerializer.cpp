@@ -48,7 +48,7 @@ namespace IO = SceneSerializerIO;
 
 namespace {
 
-constexpr u32 kTerrainBlobVersion = 12;
+constexpr u32 kTerrainBlobVersion = 13;
 constexpr u32 kTerrainSnapshotMagic = 0x53465443;  // "CTFS"
 constexpr u32 kTerrainSnapshotVersion = 1;
 
@@ -644,6 +644,10 @@ void SceneSerializer::collectTerrainComponents(
             std::string error;
             cache.saveLayers(e, terrain, projectRoot, &error);  // records the palette and layer map paths in the component
         }
+        if (terrain.useVegetation && !projectRoot.empty()) {
+            std::string error;
+            cache.saveVegetation(e, terrain, projectRoot, &error);  // records the vegetation file's path in the component
+        }
 
         entries.push_back({e.id(), serializeTerrainComponent(terrain)});
     });
@@ -689,6 +693,9 @@ std::vector<u8> SceneSerializer::serializeTerrainComponent(const ECS::TerrainCom
     appendString(data, terrain.palettePath);
     appendString(data, terrain.layerMapPath);
     appendU32(data, terrain.layerVramBudgetMb);
+    // Version 13: vegetation.
+    appendU8(data, terrain.useVegetation ? 1 : 0);
+    appendString(data, terrain.vegetationPath);
     return data;
 }
 
@@ -936,6 +943,12 @@ bool SceneSerializer::deserializeTerrainComponent(const u8* data, u32 size,
         if (!readString(cursor, end, terrain.palettePath, sizeof(terrain.palettePath))) return false;
         if (!readString(cursor, end, terrain.layerMapPath, sizeof(terrain.layerMapPath))) return false;
         if (!readU32(cursor, end, terrain.layerVramBudgetMb)) return false;
+    }
+    if (blobVersion >= 13) {
+        u8 useVegetation = 0;
+        if (!readU8(cursor, end, useVegetation)) return false;
+        terrain.useVegetation = useVegetation != 0;
+        if (!readString(cursor, end, terrain.vegetationPath, sizeof(terrain.vegetationPath))) return false;
     }
 
     return cursor <= end;
@@ -2013,15 +2026,29 @@ bool SceneSerializer::deserializeFromMemory(const std::vector<u8>& buffer, const
                     // The layers come back to their terrain whether the restored state has them on or off, so turning them
                     // off and on again (undo, redo) loses no painting.
                     auto stashed = layerStash.find(entry.eid);
-                    if (stashed != layerStash.end() && !stashed->second.layers.empty()) {
-                        terrainCache.adoptLayers(e, std::move(stashed->second));
-                        layered->layerRevision++;
-                    } else if (layered->useLayers) {
+                    bool haveLayers = false, haveVegetation = false;
+                    if (stashed != layerStash.end()) {
+                        haveLayers = !stashed->second.layers.empty();
+                        haveVegetation = stashed->second.hasVegetation;
+                        if (haveLayers || haveVegetation) {
+                            terrainCache.adoptLayers(e, std::move(stashed->second));
+                            layered->layerRevision++;
+                            layered->vegetationRevision++;
+                        }
+                    }
+                    const std::filesystem::path root = projectRootFromScenePath(filepath);
+                    if (!haveLayers && layered->useLayers) {
                         std::string layerError;
-                        const std::filesystem::path root = projectRootFromScenePath(filepath);
                         if (root.empty() || !terrainCache.loadLayers(e, *layered, root, &layerError)) {
                             // A missing or damaged layer file must not lose the terrain: it falls back to the splat map.
                             if (!terrainCache.enableLayers(e, *layered)) layered->useLayers = false;
+                        }
+                    }
+                    if (!haveVegetation && layered->useVegetation) {
+                        std::string vegetationError;
+                        if (root.empty() || !terrainCache.loadVegetation(e, *layered, root, &vegetationError)) {
+                            // A missing or damaged file: an empty palette, the terrain stays.
+                            terrainCache.enableVegetation(e, *layered);
                         }
                     }
                     if (layered->useLayers) terrainCache.syncEntity(m_world, e);

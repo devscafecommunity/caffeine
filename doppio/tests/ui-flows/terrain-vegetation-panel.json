@@ -1,0 +1,42 @@
+{
+  "name": "Terrain Vegetation: the tab is one menu away and, with no terrain in the scene, offers nothing to plant",
+  "fixture": "scene3d",
+  "size": [
+    1440,
+    800
+  ],
+  "steps": [
+    {
+      "action": "click",
+      "target": "id:editor.menu.view",
+      "label": "open the View menu"
+    },
+    {
+      "action": "click",
+      "target": "id:editor.menu.view.terrain_vegetation",
+      "label": "open the Terrain Vegetation tab"
+    },
+    {
+      "action": "expect",
+      "exists": [
+        "id:editor.pane.terrain_vegetation",
+        "id:editor.pane.tab.terrain_vegetation"
+      ],
+      "label": "the tab is there"
+    },
+    {
+      "action": "expect",
+      "missing": [
+        "id:terrain_vegetation.tool.active",
+        "id:terrain_vegetation.setup.enable",
+        "id:terrain_vegetation.palette.add"
+      ],
+      "label": "without a terrain there is no switch, no palette and nothing to turn on"
+    },
+    {
+      "action": "screenshot",
+      "name": "terrain-vegetation",
+      "target": "id:editor.pane.terrain_vegetation"
+    }
+  ]
+}

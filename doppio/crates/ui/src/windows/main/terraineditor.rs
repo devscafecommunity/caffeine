@@ -29,6 +29,8 @@ pub(super) struct OpenStroke {
     pub points: u32,
     /// A layer-painting stroke (Terrain Paint) rather than a sculpting one.
     pub paint: bool,
+    /// A vegetation stroke (Terrain Vegetation).
+    pub vegetation: bool,
 }
 
 #[derive(Default)]
@@ -312,6 +314,9 @@ impl App {
             if self.terrain_paint.active {
                 self.terrain_paint.active = false;
             }
+            if self.terrain_vegetation.active {
+                self.terrain_vegetation.active = false;
+            }
         } else {
             self.finish_terrain_stroke();
         }
@@ -517,6 +522,9 @@ impl App {
         if self.terrain_paint.active {
             return self.begin_paint_stroke();
         }
+        if self.terrain_vegetation.active {
+            return self.begin_vegetation_stroke();
+        }
         if !self.terrain_editor.active || self.terrain_editor.stroke.is_some() || self.views.session
         {
             return false;
@@ -543,6 +551,7 @@ impl App {
                     entity,
                     points: 0,
                     paint: false,
+                    vegetation: false,
                 });
                 true
             }
@@ -596,7 +605,12 @@ impl App {
         self.viewport_dirty = true;
         self.scene_epoch += 1;
         if summary.record != 0 {
-            let name = if stroke.paint {
+            let name = if stroke.vegetation {
+                format!(
+                    "Vegetation {}",
+                    self.terrain_vegetation.tool.label().to_lowercase()
+                )
+            } else if stroke.paint {
                 let layer = self
                     .terrain_paint
                     .palette
@@ -620,6 +634,9 @@ impl App {
         if stroke.paint {
             // How many texels each layer covers changed.
             self.refresh_paint_state();
+        }
+        if stroke.vegetation {
+            self.refresh_vegetation_state();
         }
         Some(summary)
     }

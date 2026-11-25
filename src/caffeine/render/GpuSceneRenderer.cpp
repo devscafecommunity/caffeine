@@ -9,6 +9,7 @@
 #include "render/PostProcessRenderer.hpp"
 #include "render/CoarseOcclusion.hpp"
 #include "render/InstanceBatch.hpp"
+#include "render/TerrainVegetationGpu.hpp"
 #include "micromesh/Micromesh.hpp"
 #include "render/ForwardRenderFeatures.hpp"
 #include "debug/Profiler.hpp"
@@ -2094,7 +2095,8 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
                 }
                 return;
             }
-            const bool instanced = !wireframe && !displaced && draw.batchCount > 1 && m_instanceBuffer &&
+            RHI::Buffer* const instanceSource = draw.batchBuffer ? draw.batchBuffer : m_instanceBuffer;
+            const bool instanced = !wireframe && !displaced && draw.batchCount > 1 && instanceSource &&
                                    (coloured ? m_foliageInstancedPipeline : m_instancedPipeline);
             if (instanced) {
                 VertexUBO instUbo{};
@@ -2103,7 +2105,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
                 cmd->bindPipeline(coloured ? m_foliageInstancedPipeline : m_instancedPipeline);
                 cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &instUbo, sizeof(instUbo));
                 cmd->bindVertexBuffer(draw.mesh->vertexBuffer, 0);
-                cmd->bindVertexBuffer(m_instanceBuffer, 1, draw.batchByteOffset);
+                cmd->bindVertexBuffer(instanceSource, 1, draw.batchByteOffset);
                 if (coloured) cmd->bindVertexBuffer(draw.mesh->colorBuffer, 2);
                 cmd->bindIndexBuffer(draw.mesh->indexBuffer);
                 cmd->drawIndexedInstanced(indexCount, draw.batchCount, firstIndex, 0, 0);
@@ -3311,6 +3313,79 @@ void GpuSceneRenderer::applyCoarseOcclusion(std::vector<MeshDraw>& draws, const 
     draws.swap(kept);
 }
 
+void GpuSceneRenderer::appendVegetationDraws(ECS::World& world, const Vec3& cameraPos, const Spatial::Frustum& frustum,
+                                             const std::string& projectRoot, std::vector<MeshDraw>& draws) {
+    if (!m_instancedPipeline) return;
+    ECS::ComponentQuery q;
+    q.with<ECS::TerrainComponent>();
+    world.forEach<ECS::TerrainComponent>(q, [&](ECS::Entity entity, ECS::TerrainComponent& terrain) {
+        if (!terrain.useVegetation || Scene::isEffectivelyDisabled(world, entity)) return;
+        auto& cache = Terrain::TerrainCache::instance();
+        const Terrain::TerrainVegetation* veg = cache.vegetationFor(entity);
+        if (!veg) return;
+        const Mat4 worldMatrix = entityMatrix(world, entity);
+        std::vector<VegetationBatch> batches;
+        TerrainVegetationGpu::instance().collect(m_device, entity, terrain, cache, worldMatrix, cameraPos, frustum, batches, nullptr);
+        for (const VegetationBatch& batch : batches) {
+            if (batch.species >= veg->species().size()) continue;
+            const Terrain::VegetationSpecies& species = veg->species()[batch.species];
+            if (species.meshes.empty()) continue;
+            const std::string& meshPath = species.meshes[batch.variant % species.meshes.size()];
+            Assets::Mesh3D* mesh = Assets::MeshCache::getInstance().getMesh(meshPath, projectRoot);
+            if (!mesh || mesh->vertices.empty() || !ensureMeshUploaded(mesh) || !mesh->vertexBuffer || !mesh->indexBuffer) continue;
+            MeshDraw draw;
+            draw.entity = entity;
+            draw.mesh = mesh;
+            // A batch of one is a plain mesh at its own matrix; more are one instanced draw from the chunk's buffer.
+            draw.worldMatrix = batch.count == 1 ? batch.first : Mat4::identity();
+            if (batch.count > 1) {
+                draw.batchCount = batch.count;
+                draw.batchBuffer = batch.buffer;
+                draw.batchByteOffset = 0;
+            }
+            draw.castShadows = false;  // shadows from instanced vegetation are not drawn yet
+            draw.receiveShadows = true;
+            draw.meshPath = Assets::MeshCache::getInstance().getResolvedPath().empty() ? meshPath : Assets::MeshCache::getInstance().getResolvedPath();
+            draw.modTint = Vec3(species.tint[0], species.tint[1], species.tint[2]);
+            draw.viewerDistance = batch.distance;
+            if (!mesh->materials.empty()) {
+                u8 mode = 0;
+                f32 cutoff = 0.5f;
+                for (const Assets::MeshSurfaceMaterial& material : mesh->materials) {
+                    if (material.alphaMode > mode) mode = material.alphaMode;
+                    if (material.alphaMode != 0) cutoff = material.alphaCutoff;
+                }
+                draw.alphaMode = mode;
+                draw.alphaCutoff = cutoff;
+            }
+            if (!species.material.empty()) {
+                const Assets::MaterialSurface surface = Assets::MaterialCache::instance().resolve(species.material, projectRoot);
+                if (surface.valid) {
+                    draw.hasAuthoredMaterial = true;
+                    const Vec3 albedo = srgbToLinear(Vec3(surface.albedo.x, surface.albedo.y, surface.albedo.z));
+                    draw.albedo = Vec4(albedo.x, albedo.y, albedo.z, std::clamp(surface.albedo.w, 0.0f, 1.0f));
+                    draw.metallic = std::clamp(surface.metallic, 0.0f, 1.0f);
+                    draw.roughness = std::clamp(surface.roughness, 0.02f, 1.0f);
+                    draw.reflectance = std::clamp(surface.reflectance, 0.0f, 1.0f);
+                    draw.customTexturePath = surface.albedoMap;
+                    draw.customNormalPath = surface.normalMap;
+                    draw.ormMapPath = surface.ormMap;
+                    draw.uvTiling = surface.uvTiling;
+                    draw.uvOffset = surface.uvOffset;
+                    draw.alphaMode = static_cast<u8>(surface.alphaMode);
+                    draw.alphaCutoff = surface.alphaCutoff;
+                    draw.windStrength = surface.windStrength;
+                    draw.windSpeed = surface.windSpeed;
+                    draw.windFlutter = surface.windFlutter;
+                    draw.translucency = surface.translucency;
+                    if (draw.alphaMode == 0 && draw.albedo.w < 1.0f) draw.albedo.w = 1.0f;
+                }
+            }
+            draws.push_back(draw);
+        }
+    });
+}
+
 void GpuSceneRenderer::assignInstanceBatches(std::vector<MeshDraw>& draws,
                                              const GpuSceneRenderOptions& options,
                                              std::vector<float>& instanceMatrices) const {
@@ -3824,6 +3899,8 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
         m_device->uploadBuffer(m_instanceBuffer, instanceMatrices.data(),
                                instanceMatrices.size() * sizeof(float));
     }
+    // Terrain vegetation has instance buffers of its own: appended after the batching, which would reset their counts.
+    if (!opts.wireframeMeshes && !m_inReflectionPass) appendVegetationDraws(world, camera.position, frustum, projectRoot, draws);
 
     if (!m_inReflectionPass) beginMicromeshFrame(cmd, draws);
     if (!m_micromeshDraws.empty() && !opts.wireframeMeshes) {

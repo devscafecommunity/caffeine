@@ -1189,6 +1189,298 @@ impl RawBrushPreset {
     }
 }
 
+/// The most species a terrain's palette holds.
+pub const VEG_SPECIES_MAX: usize = 256;
+/// The variants and rules a species shows through the C ABI (more are kept by the engine).
+pub const VEG_VARIANTS_MAX: usize = 8;
+pub const VEG_RULES_MAX: usize = 4;
+
+/// What a vegetation stroke does (C ABI 30).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VegTool {
+    Paint = 0,
+    Erase = 1,
+    Scale = 2,
+    Rotate = 3,
+    Tint = 4,
+    Replace = 5,
+    Thin = 6,
+}
+
+impl VegTool {
+    pub const ALL: [VegTool; 7] = [
+        VegTool::Paint,
+        VegTool::Erase,
+        VegTool::Scale,
+        VegTool::Rotate,
+        VegTool::Tint,
+        VegTool::Replace,
+        VegTool::Thin,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            VegTool::Paint => "Paint",
+            VegTool::Erase => "Erase",
+            VegTool::Scale => "Scale",
+            VegTool::Rotate => "Rotate",
+            VegTool::Tint => "Tint",
+            VegTool::Replace => "Replace",
+            VegTool::Thin => "Thin out",
+        }
+    }
+}
+
+/// Where a species may stand: the mask is inside the trapezoid (0 to 1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct VegRule {
+    pub mask: String,
+    pub rise0: f32,
+    pub rise1: f32,
+    pub fall1: f32,
+    pub fall0: f32,
+}
+
+/// One species of a terrain's vegetation palette.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VegSpecies {
+    /// Stable; 0 on a species to be added.
+    pub uid: u32,
+    pub name: String,
+    /// Project paths of the baked variants.
+    pub meshes: Vec<String>,
+    pub material: String,
+    pub recipe: String,
+    pub density_per_ha: f32,
+    pub radius_m: f32,
+    pub priority: i32,
+    pub min_scale: f32,
+    pub max_scale: f32,
+    pub tilt: f32,
+    pub sink_m: f32,
+    pub tint_jitter: f32,
+    pub tint: [f32; 3],
+    pub max_distance_m: f32,
+    pub procedural: bool,
+    pub visible: bool,
+    pub rules: Vec<VegRule>,
+    /// Manual instances of the species (read only).
+    pub manual_instances: u32,
+}
+
+impl Default for VegSpecies {
+    fn default() -> Self {
+        VegSpecies {
+            uid: 0,
+            name: "Species".to_owned(),
+            meshes: Vec::new(),
+            material: String::new(),
+            recipe: String::new(),
+            density_per_ha: 200.0,
+            radius_m: 1.0,
+            priority: 0,
+            min_scale: 0.8,
+            max_scale: 1.2,
+            tilt: 0.15,
+            sink_m: 0.0,
+            tint_jitter: 0.06,
+            tint: [1.0, 1.0, 1.0],
+            max_distance_m: 250.0,
+            procedural: true,
+            visible: true,
+            rules: Vec::new(),
+            manual_instances: 0,
+        }
+    }
+}
+
+/// A brush for the vegetation tools: the shape of a sculpting brush plus what a stamp does.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VegBrush {
+    pub shape: BrushPreset,
+    pub tool: VegTool,
+    /// Paint and Replace: the species placed (palette index).
+    pub species: u32,
+    /// The other tools: act on this species only; -1 for all.
+    pub only_species: i32,
+    pub per_100m2: f32,
+    pub amount: f32,
+    pub tint: [f32; 3],
+    pub respect_rules: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct VegInfo {
+    pub enabled: bool,
+    pub species_count: u32,
+    pub manual_instances: u64,
+    pub overrides: u64,
+    pub seed: u64,
+    pub gpu_bytes: u64,
+}
+
+/// An instance as it stands on the ground now (world space, metres).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VegInstance {
+    pub id: u64,
+    pub species: u32,
+    pub variant: u32,
+    pub manual: bool,
+    pub position: [f32; 3],
+    pub scale: f32,
+    pub yaw: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawVegRule {
+    mask: [c_char; 32],
+    rise0: f32,
+    rise1: f32,
+    fall1: f32,
+    fall0: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawVegSpecies {
+    uid: u32,
+    name: [c_char; 64],
+    mesh_count: u32,
+    meshes: [[c_char; 256]; VEG_VARIANTS_MAX],
+    material: [c_char; 256],
+    recipe: [c_char; 256],
+    density_per_ha: f32,
+    radius_m: f32,
+    priority: i32,
+    min_scale: f32,
+    max_scale: f32,
+    tilt: f32,
+    sink_m: f32,
+    tint_jitter: f32,
+    tint: [f32; 3],
+    max_distance_m: f32,
+    procedural: i32,
+    visible: i32,
+    rule_count: u32,
+    rules: [RawVegRule; VEG_RULES_MAX],
+    manual_instances: u32,
+}
+
+impl RawVegSpecies {
+    fn zeroed() -> Self {
+        // Plain data: every field is a number or a byte array.
+        unsafe { std::mem::zeroed() }
+    }
+
+    fn from_species(species: &VegSpecies) -> Self {
+        let mut raw = RawVegSpecies::zeroed();
+        raw.uid = species.uid;
+        fill_c_chars(&mut raw.name, &species.name);
+        raw.mesh_count = species.meshes.len().min(VEG_VARIANTS_MAX) as u32;
+        for (slot, mesh) in raw.meshes.iter_mut().zip(&species.meshes) {
+            fill_c_chars(slot, mesh);
+        }
+        fill_c_chars(&mut raw.material, &species.material);
+        fill_c_chars(&mut raw.recipe, &species.recipe);
+        raw.density_per_ha = species.density_per_ha;
+        raw.radius_m = species.radius_m;
+        raw.priority = species.priority;
+        raw.min_scale = species.min_scale;
+        raw.max_scale = species.max_scale;
+        raw.tilt = species.tilt;
+        raw.sink_m = species.sink_m;
+        raw.tint_jitter = species.tint_jitter;
+        raw.tint = species.tint;
+        raw.max_distance_m = species.max_distance_m;
+        raw.procedural = i32::from(species.procedural);
+        raw.visible = i32::from(species.visible);
+        raw.rule_count = species.rules.len().min(VEG_RULES_MAX) as u32;
+        for (slot, rule) in raw.rules.iter_mut().zip(&species.rules) {
+            fill_c_chars(&mut slot.mask, &rule.mask);
+            slot.rise0 = rule.rise0;
+            slot.rise1 = rule.rise1;
+            slot.fall1 = rule.fall1;
+            slot.fall0 = rule.fall0;
+        }
+        raw
+    }
+
+    fn into_species(self) -> VegSpecies {
+        VegSpecies {
+            uid: self.uid,
+            name: c_char_array(&self.name),
+            meshes: self.meshes[..(self.mesh_count as usize).min(VEG_VARIANTS_MAX)]
+                .iter()
+                .map(c_char_array)
+                .collect(),
+            material: c_char_array(&self.material),
+            recipe: c_char_array(&self.recipe),
+            density_per_ha: self.density_per_ha,
+            radius_m: self.radius_m,
+            priority: self.priority,
+            min_scale: self.min_scale,
+            max_scale: self.max_scale,
+            tilt: self.tilt,
+            sink_m: self.sink_m,
+            tint_jitter: self.tint_jitter,
+            tint: self.tint,
+            max_distance_m: self.max_distance_m,
+            procedural: self.procedural != 0,
+            visible: self.visible != 0,
+            rules: self.rules[..(self.rule_count as usize).min(VEG_RULES_MAX)]
+                .iter()
+                .map(|rule| VegRule {
+                    mask: c_char_array(&rule.mask),
+                    rise0: rule.rise0,
+                    rise1: rule.rise1,
+                    fall1: rule.fall1,
+                    fall0: rule.fall0,
+                })
+                .collect(),
+            manual_instances: self.manual_instances,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawVegBrush {
+    shape: RawBrushPreset,
+    tool: i32,
+    species: u32,
+    only_species: i32,
+    per_100m2: f32,
+    amount: f32,
+    tint: [f32; 3],
+    respect_rules: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct RawVegInfo {
+    enabled: i32,
+    species_count: u32,
+    manual_instances: u64,
+    overrides: u64,
+    seed: u64,
+    gpu_bytes: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct RawVegInstance {
+    id: u64,
+    species: u32,
+    variant: u32,
+    manual: i32,
+    x: f32,
+    y: f32,
+    z: f32,
+    scale: f32,
+    yaw: f32,
+}
+
 /// What a paint stroke does with its brush's shape (C ABI 29).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaintMode {
@@ -1540,6 +1832,32 @@ type StrokeBeginFn =
 type StrokePointFn = unsafe extern "C" fn(*mut c_void, f64, f64, f64, f32, *mut u32) -> i32;
 type StrokeEndFn = unsafe extern "C" fn(*mut c_void, *mut RawStrokeResult) -> i32;
 type StrokeRecordFn = unsafe extern "C" fn(*mut c_void, u32) -> i32;
+type VegEnableFn = unsafe extern "C" fn(*mut c_void, u32, i32) -> i32;
+type VegInfoFn = unsafe extern "C" fn(*const c_void, u32, *mut RawVegInfo) -> i32;
+type VegSpeciesFn = unsafe extern "C" fn(*const c_void, u32, u32, *mut RawVegSpecies) -> i32;
+type VegSpeciesApplyFn = unsafe extern "C" fn(
+    *mut c_void,
+    u32,
+    *const RawVegSpecies,
+    u32,
+    u32,
+    *mut u32,
+    *mut c_char,
+    usize,
+) -> i32;
+type VegPaintBeginFn = unsafe extern "C" fn(*mut c_void, u32, *const RawVegBrush) -> i32;
+type VegSpeciesRecordFn = unsafe extern "C" fn(*mut c_void, u32, u32, *mut u32) -> i32;
+type VegReseedFn = unsafe extern "C" fn(*mut c_void, u32, u64, *mut u32) -> i32;
+type VegInstancesFn = unsafe extern "C" fn(
+    *const c_void,
+    u32,
+    f64,
+    f64,
+    f32,
+    *mut RawVegInstance,
+    u32,
+    *mut u32,
+) -> i32;
 type LayersEnableFn = unsafe extern "C" fn(*mut c_void, u32, i32) -> i32;
 type LayersInfoFn = unsafe extern "C" fn(*const c_void, u32, *mut RawTerrainLayers) -> i32;
 type PaletteLayerFn = unsafe extern "C" fn(*const c_void, u32, u32, *mut RawPaletteLayer) -> i32;
@@ -1821,6 +2139,15 @@ struct Functions {
     simulating: Option<SimulatingFn>,
     set_water: Option<SetWaterFn>,
     set_terrain: Option<SetTerrainFn>,
+    veg_enable: Option<VegEnableFn>,
+    veg_info: Option<VegInfoFn>,
+    veg_species: Option<VegSpeciesFn>,
+    veg_species_apply: Option<VegSpeciesApplyFn>,
+    veg_paint_begin: Option<VegPaintBeginFn>,
+    veg_bake: Option<VegSpeciesRecordFn>,
+    veg_rederive: Option<VegSpeciesRecordFn>,
+    veg_reseed: Option<VegReseedFn>,
+    veg_instances: Option<VegInstancesFn>,
     layers_enable: Option<LayersEnableFn>,
     layers_info: Option<LayersInfoFn>,
     palette_layer: Option<PaletteLayerFn>,
@@ -2080,6 +2407,25 @@ impl Engine {
                 load_symbol(library, b"caffeine_session_set_material_preview_light\0")
             },
             set_terrain: unsafe { load_symbol(library, b"caffeine_session_set_terrain\0") },
+            veg_enable: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_vegetation_enable\0")
+            },
+            veg_info: unsafe { load_symbol(library, b"caffeine_session_terrain_vegetation\0") },
+            veg_species: unsafe { load_symbol(library, b"caffeine_session_terrain_veg_species\0") },
+            veg_species_apply: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_veg_species_apply\0")
+            },
+            veg_paint_begin: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_veg_paint_begin\0")
+            },
+            veg_bake: unsafe { load_symbol(library, b"caffeine_session_terrain_veg_bake\0") },
+            veg_rederive: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_veg_rederive\0")
+            },
+            veg_reseed: unsafe { load_symbol(library, b"caffeine_session_terrain_veg_reseed\0") },
+            veg_instances: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_veg_instances\0")
+            },
             layers_enable: unsafe {
                 load_symbol(library, b"caffeine_session_terrain_layers_enable\0")
             },
@@ -2987,6 +3333,170 @@ impl Engine {
         read_string(256, |buffer, size| unsafe {
             convert(self.session, entity, buffer, size)
         })
+    }
+
+    /// Whether the engine library has terrain vegetation (C ABI 30).
+    pub fn has_terrain_vegetation(&self) -> bool {
+        self.functions.veg_enable.is_some()
+            && self.functions.veg_species_apply.is_some()
+            && self.functions.veg_paint_begin.is_some()
+    }
+
+    /// Vegetation on or off for a terrain (on: an empty store unless it has one).
+    pub fn terrain_vegetation_enable(&mut self, entity: u32, enabled: bool) -> EngineResult<()> {
+        let enable = self.functions.veg_enable.ok_or(EngineError::Error)?;
+        result(unsafe { enable(self.session, entity, i32::from(enabled)) })
+    }
+
+    pub fn terrain_vegetation(&self, entity: u32) -> Option<VegInfo> {
+        let info = self.functions.veg_info?;
+        let mut raw = RawVegInfo::default();
+        (unsafe { info(self.session, entity, &mut raw) } == 0).then_some(VegInfo {
+            enabled: raw.enabled != 0,
+            species_count: raw.species_count,
+            manual_instances: raw.manual_instances,
+            overrides: raw.overrides,
+            seed: raw.seed,
+            gpu_bytes: raw.gpu_bytes,
+        })
+    }
+
+    /// The species palette of a terrain, in order, with how many manual instances each has.
+    pub fn veg_species_list(&self, entity: u32) -> Vec<VegSpecies> {
+        let Some(species) = self.functions.veg_species else {
+            return Vec::new();
+        };
+        (0..VEG_SPECIES_MAX as u32)
+            .map_while(|index| {
+                let mut raw = RawVegSpecies::zeroed();
+                (unsafe { species(self.session, entity, index, &mut raw) } == 0)
+                    .then(|| raw.into_species())
+            })
+            .collect()
+    }
+
+    /// Replaces the palette (a species keeps its instances by uid, uid 0 adds one, one left out is removed with its
+    /// manual instances). Returns the undo record (0 when nothing changed); `merge_into` (0 for none) folds the edit
+    /// into an earlier one, so a slider drag is one undo step.
+    pub fn veg_species_apply(
+        &mut self,
+        entity: u32,
+        species: &[VegSpecies],
+        merge_into: u32,
+    ) -> Result<u32, String> {
+        let apply = self
+            .functions
+            .veg_species_apply
+            .ok_or("this engine library has no terrain vegetation (C ABI 30)")?;
+        let raw: Vec<RawVegSpecies> = species.iter().map(RawVegSpecies::from_species).collect();
+        let mut record = 0u32;
+        let mut error = [0 as c_char; 200];
+        let status = unsafe {
+            apply(
+                self.session,
+                entity,
+                raw.as_ptr(),
+                raw.len() as u32,
+                merge_into,
+                &mut record,
+                error.as_mut_ptr(),
+                error.len(),
+            )
+        };
+        match status {
+            0 => Ok(record),
+            3 => Err("the terrain has no vegetation: turn it on first".to_owned()),
+            _ => {
+                let reason = c_char_array(&error);
+                Err(if reason.is_empty() {
+                    "the species could not be changed".to_owned()
+                } else {
+                    reason
+                })
+            }
+        }
+    }
+
+    /// Starts a vegetation stroke (points go through `terrain_stroke_point`, it ends with `terrain_stroke_end`).
+    pub fn terrain_veg_paint_begin(&mut self, entity: u32, brush: &VegBrush) -> EngineResult<()> {
+        let begin = self.functions.veg_paint_begin.ok_or(EngineError::Error)?;
+        let raw = RawVegBrush {
+            shape: RawBrushPreset::from_preset(&brush.shape),
+            tool: brush.tool as i32,
+            species: brush.species,
+            only_species: brush.only_species,
+            per_100m2: brush.per_100m2,
+            amount: brush.amount,
+            tint: brush.tint,
+            respect_rules: i32::from(brush.respect_rules),
+        };
+        result(unsafe { begin(self.session, entity, &raw) })
+    }
+
+    /// Turns a species' procedural instances into manual ones. Returns the undo record.
+    pub fn veg_bake(&mut self, entity: u32, species: u32) -> EngineResult<u32> {
+        let bake = self.functions.veg_bake.ok_or(EngineError::Error)?;
+        let mut record = 0u32;
+        result(unsafe { bake(self.session, entity, species, &mut record) })?;
+        Ok(record)
+    }
+
+    /// The opposite: removes the baked instances and turns the procedural source back on.
+    pub fn veg_rederive(&mut self, entity: u32, species: u32) -> EngineResult<u32> {
+        let rederive = self.functions.veg_rederive.ok_or(EngineError::Error)?;
+        let mut record = 0u32;
+        result(unsafe { rederive(self.session, entity, species, &mut record) })?;
+        Ok(record)
+    }
+
+    /// A new world seed for the procedural source. Returns the undo record.
+    pub fn veg_reseed(&mut self, entity: u32, seed: u64) -> EngineResult<u32> {
+        let reseed = self.functions.veg_reseed.ok_or(EngineError::Error)?;
+        let mut record = 0u32;
+        result(unsafe { reseed(self.session, entity, seed, &mut record) })?;
+        Ok(record)
+    }
+
+    /// The instances within `radius` metres of a world-space point (up to `capacity`), and how many there are in all.
+    pub fn veg_instances(
+        &self,
+        entity: u32,
+        x: f64,
+        z: f64,
+        radius: f32,
+        capacity: usize,
+    ) -> Option<(Vec<VegInstance>, u32)> {
+        let instances = self.functions.veg_instances?;
+        let mut raw = vec![RawVegInstance::default(); capacity];
+        let mut total = 0u32;
+        (unsafe {
+            instances(
+                self.session,
+                entity,
+                x,
+                z,
+                radius,
+                raw.as_mut_ptr(),
+                capacity as u32,
+                &mut total,
+            )
+        } == 0)
+            .then(|| {
+                let kept = (total as usize).min(capacity);
+                let list = raw[..kept]
+                    .iter()
+                    .map(|r| VegInstance {
+                        id: r.id,
+                        species: r.species,
+                        variant: r.variant,
+                        manual: r.manual != 0,
+                        position: [r.x, r.y, r.z],
+                        scale: r.scale,
+                        yaw: r.yaw,
+                    })
+                    .collect();
+                (list, total)
+            })
     }
 
     /// Whether the engine library has layered terrain painting (C ABI 29).
@@ -4925,5 +5435,186 @@ mod tests {
         engine.terrain_layers_enable(entity, false).unwrap();
         let (off_red, off_blue) = count(&mut engine);
         assert!(off_red < 500 && off_blue < 500, "{off_red} {off_blue}");
+    }
+
+    /// A unit cube standing on y = 0 as an OBJ file, with per-face normals.
+    fn write_cube_obj(path: &std::path::Path) {
+        let mut text = String::new();
+        let corners = [
+            [-0.5, 0.0, -0.5],
+            [0.5, 0.0, -0.5],
+            [0.5, 1.0, -0.5],
+            [-0.5, 1.0, -0.5],
+            [-0.5, 0.0, 0.5],
+            [0.5, 0.0, 0.5],
+            [0.5, 1.0, 0.5],
+            [-0.5, 1.0, 0.5],
+        ];
+        for c in corners {
+            text.push_str(&format!("v {} {} {}\n", c[0], c[1], c[2]));
+        }
+        for n in ["0 0 -1", "0 0 1", "-1 0 0", "1 0 0", "0 -1 0", "0 1 0"] {
+            text.push_str(&format!("vn {n}\n"));
+        }
+        text.push_str("vt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\n");
+        // Each face: four corners (1-based), as two triangles.
+        for (quad, normal) in [
+            ([1, 4, 3, 2], 1),
+            ([5, 6, 7, 8], 2),
+            ([1, 5, 8, 4], 3),
+            ([2, 3, 7, 6], 4),
+            ([1, 2, 6, 5], 5),
+            ([4, 8, 7, 3], 6),
+        ] {
+            for tri in [[0, 1, 2], [0, 2, 3]] {
+                text.push('f');
+                for k in tri {
+                    text.push_str(&format!(" {}/{}/{}", quad[k], k + 1, normal));
+                }
+                text.push('\n');
+            }
+        }
+        std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn vegetation_is_drawn_from_instance_buffers_and_edits_show_and_undo() {
+        let _guard = test_lock();
+        let Some(mut engine) = Engine::load_default() else {
+            return;
+        };
+        if !engine.has_terrain_vegetation() || !engine.has_brush_library() {
+            return; // a libcaffeine-capi from before C ABI 30
+        }
+        let root = std::env::temp_dir().join(format!("doppio-veg-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let cube = root.join("cube.obj");
+        write_cube_obj(&cube);
+
+        // A sun, or the ground is unlit and black.
+        let sun = engine.create_entity("Sun").expect("sun");
+        for name in ["Light", "Directional Light"] {
+            let type_id = engine
+                .component_types()
+                .iter()
+                .find(|kind| kind.name == name)
+                .unwrap_or_else(|| panic!("a {name} component"))
+                .id;
+            engine.add_component(sun, type_id).expect("light component");
+        }
+        engine.set_rotation(sun, [-60.0, 30.0, 0.0]).unwrap();
+
+        let entity = engine.create_entity("Ground").expect("entity");
+        engine
+            .set_terrain(
+                entity,
+                &Terrain {
+                    resolution: [129, 129],
+                    size: [256.0, 256.0],
+                    max_height: 80.0,
+                    ..Terrain::default()
+                },
+                &vec![0.3; 129 * 129],
+                None,
+            )
+            .expect("terrain");
+        engine
+            .terrain_vegetation_enable(entity, true)
+            .expect("vegetation on");
+        let species = VegSpecies {
+            name: "Cube".to_owned(),
+            meshes: vec![cube.to_string_lossy().into_owned()],
+            density_per_ha: 300.0,
+            radius_m: 2.5,
+            min_scale: 3.0,
+            max_scale: 4.0,
+            tint: [0.0, 1.0, 0.0],
+            max_distance_m: 400.0,
+            ..VegSpecies::default()
+        };
+        engine
+            .veg_species_apply(entity, &[species], 0)
+            .expect("a species");
+        let list = engine.veg_species_list(entity);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "Cube");
+        assert_eq!(list[0].meshes.len(), 1);
+        let (instances, total) = engine.veg_instances(entity, 0.0, 0.0, 400.0, 4000).unwrap();
+        assert!(total > 500, "{total} instances grow by themselves");
+        assert_eq!(instances.len(), total as usize);
+
+        engine
+            .set_camera(Camera {
+                yaw: 0.0,
+                pitch: 1.5,
+                distance: 110.0,
+                focus: [0.0, 24.0, 0.0],
+            })
+            .unwrap();
+        // Chunks are built a few a frame: draw until the picture settles.
+        let green = |engine: &mut Engine| {
+            let mut count = 0usize;
+            for _ in 0..16 {
+                let pixels = engine.render(320, 240).expect("a frame");
+                count = pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .filter(|px| {
+                        let (r, g, b) = (i32::from(px[0]), i32::from(px[1]), i32::from(px[2]));
+                        g > 40 && g > 2 * r && g > 2 * b
+                    })
+                    .count();
+            }
+            count
+        };
+        let before = green(&mut engine);
+        assert!(before > 300, "{before} green pixels");
+        assert!(engine.terrain_vegetation(entity).unwrap().gpu_bytes > 0);
+
+        // Erase the trees under a wide brush: they leave the picture; undo brings them back.
+        let round = engine
+            .builtin_brushes()
+            .into_iter()
+            .find(|b| b.name == "Round hard")
+            .expect("a round brush");
+        engine
+            .terrain_veg_paint_begin(
+                entity,
+                &VegBrush {
+                    shape: BrushPreset {
+                        radius_m: 300.0,
+                        strength: 1.0,
+                        ..round
+                    },
+                    tool: VegTool::Erase,
+                    species: 0,
+                    only_species: -1,
+                    per_100m2: 1.0,
+                    amount: 0.0,
+                    tint: [1.0; 3],
+                    respect_rules: true,
+                },
+            )
+            .expect("begin");
+        engine
+            .terrain_stroke_point([0.0, 0.0, 0.0], 1.0)
+            .expect("point");
+        let erased = engine.terrain_stroke_end().expect("end");
+        assert!(erased.record != 0);
+        let after = green(&mut engine);
+        assert!(after < before / 10, "{after} left of {before}");
+        engine.terrain_stroke_revert(erased.record).unwrap();
+        assert!(green(&mut engine) > before / 2);
+        engine.terrain_stroke_reapply(erased.record).unwrap();
+        assert!(green(&mut engine) < before / 10);
+        engine.terrain_stroke_revert(erased.record).unwrap();
+
+        // Hiding the species takes it out of the picture too.
+        let mut hidden = engine.veg_species_list(entity);
+        hidden[0].visible = false;
+        engine.veg_species_apply(entity, &hidden, 0).unwrap();
+        assert!(green(&mut engine) < before / 10);
+        std::fs::remove_dir_all(&root).ok();
     }
 }

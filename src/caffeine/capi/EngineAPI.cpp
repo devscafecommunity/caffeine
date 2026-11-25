@@ -48,6 +48,10 @@
 #include "terrain/edit/TerrainStroke.hpp"
 #include "terrain/TerrainGpuTextures.hpp"
 #include "terrain/paint/TerrainAutoLayer.hpp"
+#include "terrain/vegetation/VegetationStroke.hpp"
+#ifdef CF_HAS_SDL3
+#include "render/TerrainVegetationGpu.hpp"
+#endif
 #include "terrain/paint/TerrainPaintStroke.hpp"
 #include "terrain/paint/TerrainPalette.hpp"
 #include "assets/MaterialCache.hpp"
@@ -108,6 +112,8 @@ struct CaffeineSession {
         std::unique_ptr<Caffeine::Terrain::TerrainStroke> stroke;
         // A paint stroke (terrain layers) lives in the same slot: only one stroke is open at a time.
         std::unique_ptr<Caffeine::Terrain::TerrainPaintStroke> paint;
+        std::unique_ptr<Caffeine::Terrain::VegetationStroke> veg;
+        float vegRadius = 0.0f;  // the brush's reach, to mark the chunks a point changes
         CaffeineEntity entity = 0;
         const Caffeine::Terrain::TerrainHeightmap* heightmap = nullptr;  // to notice a terrain that was replaced
         const Caffeine::Terrain::TerrainLayerMap* layers = nullptr;
@@ -115,19 +121,24 @@ struct CaffeineSession {
     // What a record undoes: a height stroke, a layer stroke, or an edit of the palette (with the renumbering of the
     // layer map it caused, when there was one).
     struct TerrainStrokeRecord {
-        enum class Kind { Height, Layers, Palette };
+        enum class Kind { Height, Layers, Palette, Vegetation };
         CaffeineEntity entity = 0;
         Kind kind = Kind::Height;
         Caffeine::Terrain::StrokeRecord record;
         Caffeine::Terrain::LayerStrokeRecord layerRecord;
+        Caffeine::Terrain::VegetationRecord vegRecord;
         std::string paletteBefore, paletteAfter;
         size_t bytes() const {
-            return record.bytes() + layerRecord.bytes() + paletteBefore.size() + paletteAfter.size();
+            return record.bytes() + layerRecord.bytes() + vegRecord.bytes() + paletteBefore.size() + paletteAfter.size();
         }
     };
     std::unordered_map<uint32_t, TerrainStrokeRecord> terrainRecords;
     std::vector<uint32_t> terrainRecordOrder;
     uint32_t nextTerrainRecord = 1;
+    // Manual instances per species uid, recounted when the vegetation's revision moves (read by the species list).
+    std::unordered_map<uint32_t, uint32_t> vegManualCounts;
+    uint32_t vegCountRevision = 0;
+    CaffeineEntity vegCountEntity = 0;
     // Texels per palette layer, recomputed when the terrain's layer revision moves (read by the palette list).
     std::vector<uint32_t> layerUsage;
     uint32_t layerUsageRevision = 0;
@@ -3739,13 +3750,35 @@ CaffeineResult endTerrainStroke(CaffeineSession& session, CaffeineTerrainStrokeR
     using namespace Caffeine;
     if (out) *out = CaffeineTerrainStrokeResult{};
     auto& slot = session.terrainStroke;
-    if (!slot.stroke && !slot.paint) return CAFFEINE_NOT_FOUND;
+    if (!slot.stroke && !slot.paint && !slot.veg) return CAFFEINE_NOT_FOUND;
     const CaffeineEntity entityId = slot.entity;
     CaffeineSession::TerrainStrokeRecord kept;
     kept.entity = entityId;
     uint32_t stamps = 0;
     bool empty = true;
-    if (slot.paint) {
+    if (slot.veg) {
+        kept.kind = CaffeineSession::TerrainStrokeRecord::Kind::Vegetation;
+        kept.vegRecord = slot.veg->finish();
+        slot.veg.reset();
+        stamps = kept.vegRecord.stamps;
+        empty = kept.vegRecord.empty();
+        if (out) {
+            out->stamps = stamps;
+            out->tiles_changed = static_cast<uint32_t>(kept.vegRecord.manual.size() + kept.vegRecord.overrides.size());
+            out->bytes = kept.vegRecord.bytes();
+            out->has_region = kept.vegRecord.hasChunks ? 1 : 0;
+            out->region_min_x = static_cast<uint32_t>(kept.vegRecord.minChunkX);
+            out->region_min_z = static_cast<uint32_t>(kept.vegRecord.minChunkZ);
+            out->region_max_x = static_cast<uint32_t>(kept.vegRecord.maxChunkX);
+            out->region_max_z = static_cast<uint32_t>(kept.vegRecord.maxChunkZ);
+        }
+        if (!empty && entityAlive(session, entityId)) {
+            const ECS::Entity entity = entityOf(session, entityId);
+            if (auto* component = session.world.get<ECS::TerrainComponent>(entity)) {
+                Terrain::TerrainCache::instance().commitVegetationEdit(entity, *component, kept.vegRecord);
+            }
+        }
+    } else if (slot.paint) {
         kept.kind = CaffeineSession::TerrainStrokeRecord::Kind::Layers;
         kept.layerRecord = slot.paint->finish();
         slot.paint.reset();
@@ -3804,9 +3837,21 @@ CaffeineResult applyTerrainRecord(CaffeineSession& session, uint32_t id, bool re
     const ECS::Entity entity = entityOf(session, it->second.entity);
     auto* component = session.world.get<ECS::TerrainComponent>(entity);
     if (!component) return CAFFEINE_NOT_FOUND;
-    if (session.terrainStroke.stroke || session.terrainStroke.paint) endTerrainStroke(session, nullptr);
+    if (session.terrainStroke.stroke || session.terrainStroke.paint || session.terrainStroke.veg) endTerrainStroke(session, nullptr);
     auto& cache = Terrain::TerrainCache::instance();
     CaffeineSession::TerrainStrokeRecord& record = it->second;
+    if (record.kind == CaffeineSession::TerrainStrokeRecord::Kind::Vegetation) {
+        Terrain::TerrainVegetation* veg = cache.vegetationFor(entity);
+        if (!veg) return CAFFEINE_NOT_FOUND;
+        if (revert) {
+            record.vegRecord.applyBefore(*veg);
+        } else {
+            record.vegRecord.applyAfter(*veg);
+        }
+        cache.commitVegetationEdit(entity, *component, record.vegRecord);
+        session.context.markDirty();
+        return CAFFEINE_OK;
+    }
     if (record.kind == CaffeineSession::TerrainStrokeRecord::Kind::Height) {
         auto* heightmap = cache.heightmapFor(entity);
         if (!heightmap || heightmap->empty()) return CAFFEINE_NOT_FOUND;
@@ -3856,7 +3901,7 @@ CaffeineResult caffeine_session_terrain_convert_native(CaffeineSession* session,
     const ECS::Entity entity = entityOf(*session, entityId);
     auto* terrain = session->world.get<ECS::TerrainComponent>(entity);
     if (!terrain) return CAFFEINE_NOT_FOUND;
-    if (session->terrainStroke.stroke || session->terrainStroke.paint) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
     const std::filesystem::path root(session->context.projectRootPath);
     if (!Terrain::TerrainCache::instance().convertToNative(entity, *terrain, root)) return CAFFEINE_ERROR;
     if (out_path && out_path_size > 0) copyText(out_path, out_path_size, terrain->terrainDataPath);
@@ -4089,7 +4134,7 @@ CaffeineResult caffeine_session_terrain_stroke_begin_preset(CaffeineSession* ses
         return CAFFEINE_ERROR;
     }
 
-    if (session->terrainStroke.stroke || session->terrainStroke.paint) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
     session->terrainStroke.stroke = std::make_unique<Terrain::TerrainStroke>(*heightmap, *component, settings.brush);
     session->terrainStroke.stroke->setMasks(Terrain::TerrainCache::instance().masksFor(entity));
     session->terrainStroke.entity = entityId;
@@ -4109,7 +4154,7 @@ CaffeineResult caffeine_session_terrain_stroke_begin(CaffeineSession* session, C
     if (!component || !heightmap || heightmap->empty()) return CAFFEINE_NOT_FOUND;
     if (stamp_alpha && (stamp_size < 2 || stamp_size > 1024)) return CAFFEINE_INVALID_ARGUMENT;
 
-    if (session->terrainStroke.stroke || session->terrainStroke.paint) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
 
     Terrain::StrokeBrush settings;
     settings.mode = static_cast<Terrain::TerrainBrushMode>(std::clamp(brush->mode, 0, 15));
@@ -4137,9 +4182,29 @@ CaffeineResult caffeine_session_terrain_stroke_point(CaffeineSession* session, d
     if (out_stamps) *out_stamps = 0;
     if (!session) return CAFFEINE_INVALID_ARGUMENT;
     auto& slot = session->terrainStroke;
-    if (!slot.stroke && !slot.paint) return CAFFEINE_NOT_FOUND;
+    if (!slot.stroke && !slot.paint && !slot.veg) return CAFFEINE_NOT_FOUND;
     const ECS::Entity entity = entityAlive(*session, slot.entity) ? entityOf(*session, slot.entity) : ECS::Entity::INVALID;
     auto* component = entity.isValid() ? session->world.get<ECS::TerrainComponent>(entity) : nullptr;
+    if (slot.veg) {
+        if (!component || !Terrain::TerrainCache::instance().vegetationFor(entity)) {
+            slot.veg.reset();
+            return CAFFEINE_NOT_FOUND;
+        }
+        const Mat4 vegWorld = Scene::computeWorldMatrix(session->world, entity);
+        const Vec3 vegLocal = vegWorld.inverted().transformPoint(Vec3(static_cast<f32>(x), static_cast<f32>(y), static_cast<f32>(z)));
+        const uint32_t laidVeg = slot.veg->addPoint(Terrain::StrokePoint{vegLocal.x, vegLocal.z, std::clamp(pressure, 0.0f, 1.0f)});
+        if (out_stamps) *out_stamps = laidVeg;
+        // The chunks under the brush are drawn again now, so the stroke shows as it goes.
+        Terrain::VegetationRecord live;
+        live.hasChunks = true;
+        const float reach = slot.vegRadius + 8.0f;
+        live.minChunkX = Terrain::TerrainVegetation::chunkOf(vegLocal.x - reach);
+        live.maxChunkX = Terrain::TerrainVegetation::chunkOf(vegLocal.x + reach);
+        live.minChunkZ = Terrain::TerrainVegetation::chunkOf(vegLocal.z - reach);
+        live.maxChunkZ = Terrain::TerrainVegetation::chunkOf(vegLocal.z + reach);
+        if (laidVeg > 0) Terrain::TerrainCache::instance().commitVegetationEdit(entity, *component, live);
+        return CAFFEINE_OK;
+    }
     if (slot.paint) {
         // A paint stroke: the same world-to-terrain mapping, onto the layer map.
         if (!component || Terrain::TerrainCache::instance().layerMapFor(entity) != slot.layers) {
@@ -4261,7 +4326,7 @@ CaffeineResult caffeine_session_terrain_layers_enable(CaffeineSession* session, 
     if (!component) return CAFFEINE_NOT_FOUND;
     auto& cache = Terrain::TerrainCache::instance();
     cache.syncEntity(session->world, entity);
-    if (session->terrainStroke.stroke || session->terrainStroke.paint) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
     if (enabled) {
         if (!cache.enableLayers(entity, *component)) return CAFFEINE_ERROR;
     } else {
@@ -4396,7 +4461,7 @@ CaffeineResult renumberingEdit(CaffeineSession& session, CaffeineEntity entityId
     if (out_record) *out_record = 0;
     PaintTarget target;
     if (const CaffeineResult found = paintTarget(session, entityId, target); found != CAFFEINE_OK) return found;
-    if (session.terrainStroke.stroke || session.terrainStroke.paint) endTerrainStroke(session, nullptr);
+    if (session.terrainStroke.stroke || session.terrainStroke.paint || session.terrainStroke.veg) endTerrainStroke(session, nullptr);
     CaffeineSession::TerrainStrokeRecord record;
     record.entity = entityId;
     record.kind = CaffeineSession::TerrainStrokeRecord::Kind::Palette;
@@ -4462,7 +4527,7 @@ CaffeineResult caffeine_session_terrain_paint_begin(CaffeineSession* session, Ca
             &error)) {
         return CAFFEINE_ERROR;
     }
-    if (session->terrainStroke.stroke || session->terrainStroke.paint) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
     syncLayerLocks(*target.palette, *target.map);
     Terrain::PaintBrush paint;
     paint.shape = settings.brush;
@@ -4503,7 +4568,7 @@ CaffeineResult caffeine_session_terrain_autolayer(CaffeineSession* session, Caff
             return CAFFEINE_INVALID_ARGUMENT;
         }
     }
-    if (session->terrainStroke.stroke || session->terrainStroke.paint) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
     syncLayerLocks(*target.palette, *target.map);
     Terrain::AutoLayerOptions options;
     options.fallbackLayer = fallback;
@@ -4542,6 +4607,336 @@ CaffeineResult caffeine_session_terrain_layer_at(const CaffeineSession* session,
     for (int slot = 0; slot < 4; ++slot) {
         out->layer[slot] = texel.index[slot];
         out->weight[slot] = static_cast<float>(texel.weight[slot]) / 255.0f;
+    }
+    return CAFFEINE_OK;
+}
+
+// ------------------------------------------------------------------------------------------ terrain vegetation (v30)
+
+namespace {
+
+struct VegTarget {
+    Caffeine::ECS::Entity entity = Caffeine::ECS::Entity::INVALID;
+    Caffeine::ECS::TerrainComponent* component = nullptr;
+    Caffeine::Terrain::TerrainVegetation* veg = nullptr;
+};
+
+CaffeineResult vegTarget(CaffeineSession& session, CaffeineEntity entityId, VegTarget& out) {
+    using namespace Caffeine;
+    out = VegTarget{};
+    ECS::Entity entity;
+    ECS::TerrainComponent* component = terrainOf(session, entityId, entity);
+    if (!component) return CAFFEINE_NOT_FOUND;
+    auto& cache = Terrain::TerrainCache::instance();
+    cache.syncEntity(session.world, entity);
+    if (!component->useVegetation) return CAFFEINE_ERROR;
+    out.veg = cache.vegetationFor(entity);
+    if (!out.veg) return CAFFEINE_ERROR;
+    out.entity = entity;
+    out.component = component;
+    return CAFFEINE_OK;
+}
+
+void vegSpeciesToC(const Caffeine::Terrain::VegetationSpecies& s, uint32_t manual, CaffeineVegSpecies& out) {
+    out = CaffeineVegSpecies{};
+    out.uid = s.uid;
+    copyText(out.name, sizeof(out.name), s.name.c_str());
+    out.mesh_count = static_cast<uint32_t>(std::min<size_t>(s.meshes.size(), CAFFEINE_VEG_VARIANTS_MAX));
+    for (uint32_t i = 0; i < out.mesh_count; ++i) copyText(out.meshes[i], sizeof(out.meshes[i]), s.meshes[i].c_str());
+    copyText(out.material, sizeof(out.material), s.material.c_str());
+    copyText(out.recipe, sizeof(out.recipe), s.recipe.c_str());
+    out.density_per_ha = s.densityPerHa;
+    out.radius_m = s.radius;
+    out.priority = s.priority;
+    out.min_scale = s.minScale;
+    out.max_scale = s.maxScale;
+    out.tilt = s.tilt;
+    out.sink_m = s.sinkM;
+    out.tint_jitter = s.tintJitter;
+    for (int i = 0; i < 3; ++i) out.tint[i] = s.tint[i];
+    out.max_distance_m = s.maxDistance;
+    out.procedural = s.procedural ? 1 : 0;
+    out.visible = s.visible ? 1 : 0;
+    out.rule_count = static_cast<uint32_t>(std::min<size_t>(s.rules.size(), CAFFEINE_VEG_RULES_MAX));
+    for (uint32_t i = 0; i < out.rule_count; ++i) {
+        copyText(out.rules[i].mask, sizeof(out.rules[i].mask), s.rules[i].mask.c_str());
+        out.rules[i].rise0 = s.rules[i].rise0;
+        out.rules[i].rise1 = s.rules[i].rise1;
+        out.rules[i].fall1 = s.rules[i].fall1;
+        out.rules[i].fall0 = s.rules[i].fall0;
+    }
+    out.manual_instances = manual;
+}
+
+/// A species from its C struct. `existing` (the species with this uid now, or null) keeps the variants and rules past
+/// the struct's capacity, so an edit through the struct never drops what it cannot show.
+Caffeine::Terrain::VegetationSpecies vegSpeciesFromC(const CaffeineVegSpecies& in, const Caffeine::Terrain::VegetationSpecies* existing) {
+    Caffeine::Terrain::VegetationSpecies s;
+    s.uid = in.uid;
+    s.name = in.name;
+    for (uint32_t i = 0; i < std::min<uint32_t>(in.mesh_count, CAFFEINE_VEG_VARIANTS_MAX); ++i) s.meshes.push_back(in.meshes[i]);
+    if (existing && existing->meshes.size() > CAFFEINE_VEG_VARIANTS_MAX && in.mesh_count >= CAFFEINE_VEG_VARIANTS_MAX) {
+        s.meshes.insert(s.meshes.end(), existing->meshes.begin() + CAFFEINE_VEG_VARIANTS_MAX, existing->meshes.end());
+    }
+    s.material = in.material;
+    s.recipe = in.recipe;
+    s.densityPerHa = in.density_per_ha;
+    s.radius = in.radius_m;
+    s.priority = in.priority;
+    s.minScale = in.min_scale;
+    s.maxScale = in.max_scale;
+    s.tilt = in.tilt;
+    s.sinkM = in.sink_m;
+    s.tintJitter = in.tint_jitter;
+    for (int i = 0; i < 3; ++i) s.tint[i] = in.tint[i];
+    s.maxDistance = in.max_distance_m;
+    s.procedural = in.procedural != 0;
+    s.visible = in.visible != 0;
+    for (uint32_t i = 0; i < std::min<uint32_t>(in.rule_count, CAFFEINE_VEG_RULES_MAX); ++i) {
+        Caffeine::Terrain::BiomeTerm term;
+        term.mask = in.rules[i].mask;
+        term.rise0 = in.rules[i].rise0;
+        term.rise1 = in.rules[i].rise1;
+        term.fall1 = in.rules[i].fall1;
+        term.fall0 = in.rules[i].fall0;
+        s.rules.push_back(term);
+    }
+    if (existing && existing->rules.size() > CAFFEINE_VEG_RULES_MAX && in.rule_count >= CAFFEINE_VEG_RULES_MAX) {
+        s.rules.insert(s.rules.end(), existing->rules.begin() + CAFFEINE_VEG_RULES_MAX, existing->rules.end());
+    }
+    return s;
+}
+
+CaffeineResult keepVegRecord(CaffeineSession& session, CaffeineEntity entityId, Caffeine::Terrain::VegetationRecord&& record, uint32_t* out_record) {
+    CaffeineSession::TerrainStrokeRecord kept;
+    kept.entity = entityId;
+    kept.kind = CaffeineSession::TerrainStrokeRecord::Kind::Vegetation;
+    kept.vegRecord = std::move(record);
+    session.context.markDirty();
+    const uint32_t id = keepTerrainRecord(session, std::move(kept));
+    if (out_record) *out_record = id;
+    return CAFFEINE_OK;
+}
+
+}  // namespace
+
+CaffeineResult caffeine_session_terrain_vegetation_enable(CaffeineSession* session, CaffeineEntity entityId, int enabled) {
+    using namespace Caffeine;
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    ECS::Entity entity;
+    ECS::TerrainComponent* component = terrainOf(*session, entityId, entity);
+    if (!component) return CAFFEINE_NOT_FOUND;
+    auto& cache = Terrain::TerrainCache::instance();
+    cache.syncEntity(session->world, entity);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    if (enabled) {
+        if (!cache.enableVegetation(entity, *component)) return CAFFEINE_ERROR;
+    } else {
+        // The store stays in the cache (a scene undo finds it); the renderer stops drawing it.
+        component->useVegetation = false;
+        ++component->vegetationRevision;
+    }
+    session->context.markDirty();
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_vegetation(const CaffeineSession* session, CaffeineEntity entityId, CaffeineVegInfo* out) {
+    using namespace Caffeine;
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = const_cast<CaffeineSession&>(*session);
+    ECS::Entity entity;
+    const ECS::TerrainComponent* component = terrainOf(mutableSession, entityId, entity);
+    if (!component) return CAFFEINE_NOT_FOUND;
+    *out = CaffeineVegInfo{};
+    out->enabled = component->useVegetation ? 1 : 0;
+    if (const auto* veg = Terrain::TerrainCache::instance().vegetationFor(entity)) {
+        out->species_count = static_cast<uint32_t>(veg->species().size());
+        out->manual_instances = veg->manualCount();
+        out->overrides = veg->overrideCount();
+        out->seed = veg->seed();
+    }
+#ifdef CF_HAS_SDL3
+    out->gpu_bytes = Render::TerrainVegetationGpu::instance().bytesFor(entity);
+#endif
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_veg_species(const CaffeineSession* session, CaffeineEntity entityId, uint32_t index, CaffeineVegSpecies* out) {
+    using namespace Caffeine;
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = const_cast<CaffeineSession&>(*session);
+    ECS::Entity entity;
+    const ECS::TerrainComponent* component = terrainOf(mutableSession, entityId, entity);
+    if (!component) return CAFFEINE_NOT_FOUND;
+    const Terrain::TerrainVegetation* veg = Terrain::TerrainCache::instance().vegetationFor(entity);
+    if (!veg || index >= veg->species().size()) return CAFFEINE_NOT_FOUND;
+    // Manual instances per species, counted once per revision of the vegetation, not once per species asked for.
+    if (mutableSession.vegCountEntity != entityId || mutableSession.vegCountRevision != veg->revision()) {
+        mutableSession.vegManualCounts.clear();
+        for (const Terrain::VegetationInstance& instance : veg->allManual()) ++mutableSession.vegManualCounts[instance.species];
+        mutableSession.vegCountEntity = entityId;
+        mutableSession.vegCountRevision = veg->revision();
+    }
+    const Terrain::VegetationSpecies& species = veg->species()[index];
+    const auto counted = mutableSession.vegManualCounts.find(species.uid);
+    vegSpeciesToC(species, counted != mutableSession.vegManualCounts.end() ? counted->second : 0u, *out);
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_veg_species_apply(CaffeineSession* session, CaffeineEntity entityId, const CaffeineVegSpecies* species,
+                                                          uint32_t count, uint32_t merge_into, uint32_t* out_record, char* error, size_t error_size) {
+    using namespace Caffeine;
+    if (out_record) *out_record = 0;
+    if (!session || (!species && count > 0)) return CAFFEINE_INVALID_ARGUMENT;
+    if (count > CAFFEINE_VEG_SPECIES_MAX) return CAFFEINE_INVALID_ARGUMENT;
+    VegTarget target;
+    if (const CaffeineResult found = vegTarget(*session, entityId, target); found != CAFFEINE_OK) return found;
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    std::vector<Terrain::VegetationSpecies> list;
+    for (uint32_t i = 0; i < count; ++i) list.push_back(vegSpeciesFromC(species[i], target.veg->speciesByUid(species[i].uid)));
+    std::string reason;
+    Terrain::VegetationRecord record = Terrain::editSpeciesFromText(*target.veg, Terrain::vegetationSpeciesToText(list), &reason);
+    if (!reason.empty()) {
+        copyReason(error, error_size, reason);
+        return CAFFEINE_ERROR;
+    }
+    if (record.empty()) return CAFFEINE_OK;
+    Terrain::TerrainCache::instance().commitVegetationEdit(target.entity, *target.component, record);
+    session->context.markDirty();
+    if (merge_into != 0) {
+        auto found = session->terrainRecords.find(merge_into);
+        if (found != session->terrainRecords.end() && found->second.entity == entityId &&
+            found->second.kind == CaffeineSession::TerrainStrokeRecord::Kind::Vegetation && found->second.vegRecord.speciesChanged &&
+            found->second.vegRecord.manual.empty() && found->second.vegRecord.overrides.empty() && record.manual.empty()) {
+            // The same edit continuing (a slider being dragged): the record keeps its first `before`, takes the new `after`.
+            session->terrainRecordBytes -= std::min(session->terrainRecordBytes, found->second.bytes());
+            found->second.vegRecord.speciesAfter = record.speciesAfter;
+            session->terrainRecordBytes += found->second.bytes();
+            if (out_record) *out_record = merge_into;
+            return CAFFEINE_OK;
+        }
+    }
+    return keepVegRecord(*session, entityId, std::move(record), out_record);
+}
+
+CaffeineResult caffeine_session_terrain_veg_paint_begin(CaffeineSession* session, CaffeineEntity entityId, const CaffeineVegBrush* brush) {
+    using namespace Caffeine;
+    if (!session || !brush) return CAFFEINE_INVALID_ARGUMENT;
+    VegTarget target;
+    if (const CaffeineResult found = vegTarget(*session, entityId, target); found != CAFFEINE_OK) return found;
+    auto& cache = Terrain::TerrainCache::instance();
+    auto* heightmap = cache.heightmapFor(target.entity);
+    if (!heightmap || heightmap->empty()) return CAFFEINE_NOT_FOUND;
+    if (brush->tool < CAFFEINE_VEG_PAINT || brush->tool > CAFFEINE_VEG_THIN) return CAFFEINE_INVALID_ARGUMENT;
+    const bool needsSpecies = brush->tool == CAFFEINE_VEG_PAINT || brush->tool == CAFFEINE_VEG_REPLACE;
+    if (needsSpecies && brush->species >= target.veg->species().size()) return CAFFEINE_INVALID_ARGUMENT;
+    if (brush->only_species >= static_cast<int32_t>(target.veg->species().size())) return CAFFEINE_INVALID_ARGUMENT;
+
+    Terrain::BrushPreset settings = presetFromC(brush->shape);
+    Assets::AssetManager& manager = session->assetManager;
+    manager.setProjectRoot(session->context.projectRootPath);
+    manager.setAssetRoot(session->assetRoot);
+    manager.setEngineAssetRoot(Assets::MeshCache::engineAssetsRoot());
+    std::string error;
+    if (!Terrain::resolveBrushStamp(
+            settings,
+            [&](const std::string& path) {
+                const Assets::AssetReference ref = manager.resolveReference(path);
+                return ref.ok() ? ref.absolutePath : std::string();
+            },
+            &error)) {
+        return CAFFEINE_ERROR;
+    }
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    Terrain::VegetationBrush vegBrush;
+    vegBrush.shape = settings.brush;
+    vegBrush.tool = static_cast<Terrain::VegetationTool>(brush->tool);
+    vegBrush.species = brush->species;
+    vegBrush.onlySpecies = brush->only_species;
+    vegBrush.per100m2 = std::clamp(brush->per_100m2, 0.0f, 1000.0f);
+    vegBrush.amount = brush->amount;
+    for (int i = 0; i < 3; ++i) vegBrush.tint[i] = std::clamp(brush->tint[i], 0.0f, 1.0f);
+    vegBrush.respectRules = brush->respect_rules != 0;
+    session->terrainStroke.veg = std::make_unique<Terrain::VegetationStroke>(*target.veg, *heightmap, *target.component, vegBrush,
+                                                                             cache.vegetationField(target.entity, *target.component));
+    session->terrainStroke.veg->setMasks(cache.masksFor(target.entity));
+    session->terrainStroke.vegRadius = std::max(settings.brush.radiusM, 0.1f);
+    session->terrainStroke.entity = entityId;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_veg_bake(CaffeineSession* session, CaffeineEntity entityId, uint32_t species, uint32_t* out_record) {
+    using namespace Caffeine;
+    if (out_record) *out_record = 0;
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    VegTarget target;
+    if (const CaffeineResult found = vegTarget(*session, entityId, target); found != CAFFEINE_OK) return found;
+    if (species >= target.veg->species().size()) return CAFFEINE_INVALID_ARGUMENT;
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    auto& cache = Terrain::TerrainCache::instance();
+    Terrain::VegetationRecord record = Terrain::bakeProcedural(*target.veg, species, cache.vegetationField(target.entity, *target.component),
+                                                              target.component->worldSizeX, target.component->worldSizeZ);
+    if (record.empty()) return CAFFEINE_OK;
+    cache.commitVegetationEdit(target.entity, *target.component, record);
+    return keepVegRecord(*session, entityId, std::move(record), out_record);
+}
+
+CaffeineResult caffeine_session_terrain_veg_rederive(CaffeineSession* session, CaffeineEntity entityId, uint32_t species, uint32_t* out_record) {
+    using namespace Caffeine;
+    if (out_record) *out_record = 0;
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    VegTarget target;
+    if (const CaffeineResult found = vegTarget(*session, entityId, target); found != CAFFEINE_OK) return found;
+    if (species >= target.veg->species().size()) return CAFFEINE_INVALID_ARGUMENT;
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    Terrain::VegetationRecord record = Terrain::rederiveProcedural(*target.veg, species);
+    if (record.empty()) return CAFFEINE_OK;
+    Terrain::TerrainCache::instance().commitVegetationEdit(target.entity, *target.component, record);
+    return keepVegRecord(*session, entityId, std::move(record), out_record);
+}
+
+CaffeineResult caffeine_session_terrain_veg_reseed(CaffeineSession* session, CaffeineEntity entityId, uint64_t seed, uint32_t* out_record) {
+    using namespace Caffeine;
+    if (out_record) *out_record = 0;
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    VegTarget target;
+    if (const CaffeineResult found = vegTarget(*session, entityId, target); found != CAFFEINE_OK) return found;
+    Terrain::VegetationRecord record = Terrain::reseed(*target.veg, seed);
+    if (record.empty()) return CAFFEINE_OK;
+    Terrain::TerrainCache::instance().commitVegetationEdit(target.entity, *target.component, record);
+    return keepVegRecord(*session, entityId, std::move(record), out_record);
+}
+
+CaffeineResult caffeine_session_terrain_veg_instances(const CaffeineSession* session, CaffeineEntity entityId, double x, double z, float radius,
+                                                      CaffeineVegInstance* out, uint32_t capacity, uint32_t* count) {
+    using namespace Caffeine;
+    if (count) *count = 0;
+    if (!session || !count || (!out && capacity > 0)) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = const_cast<CaffeineSession&>(*session);
+    ECS::Entity entity;
+    const ECS::TerrainComponent* component = terrainOf(mutableSession, entityId, entity);
+    if (!component || !component->useVegetation) return CAFFEINE_NOT_FOUND;
+    auto& cache = Terrain::TerrainCache::instance();
+    const Terrain::TerrainVegetation* veg = cache.vegetationFor(entity);
+    if (!veg) return CAFFEINE_NOT_FOUND;
+    const Mat4 world = Scene::computeWorldMatrix(mutableSession.world, entity);
+    const Vec3 local = world.inverted().transformPoint(Vec3(static_cast<f32>(x), 0.0f, static_cast<f32>(z)));
+    std::vector<Terrain::VegetationResolved> found;
+    veg->resolveArea(local.x, local.z, std::max(radius, 0.0f), cache.vegetationField(entity, *component), found);
+    *count = static_cast<uint32_t>(found.size());
+    for (uint32_t i = 0; i < found.size() && i < capacity; ++i) {
+        const Terrain::VegetationResolved& r = found[i];
+        const Vec3 w = world.transformPoint(Vec3(r.x, r.y, r.z));
+        out[i] = CaffeineVegInstance{};
+        out[i].id = r.id;
+        out[i].species = r.species;
+        out[i].variant = r.variant;
+        out[i].manual = r.manual ? 1 : 0;
+        out[i].x = w.x;
+        out[i].y = w.y;
+        out[i].z = w.z;
+        out[i].scale = r.scale;
+        out[i].yaw = r.yaw;
     }
     return CAFFEINE_OK;
 }
