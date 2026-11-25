@@ -64,6 +64,8 @@ pub struct WorldClass {
     pub first_instance: u32,
     pub instance_count: u32,
     pub unique: bool,
+    /// Nature recipe parameters the ground context drives (`adapt param.<name>`), at most 4.
+    pub params: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -86,6 +88,8 @@ pub struct WorldInstance {
     pub neighbours: f32,
     pub wetness_modifier: f32,
     pub snow_modifier: f32,
+    /// Values of the class's `params`, in order.
+    pub params: [f32; 4],
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -187,6 +191,8 @@ struct RawClass {
     first_instance: u32,
     instance_count: u32,
     unique: i32,
+    param_count: u32,
+    params: [[c_char; 32]; 4],
 }
 
 #[repr(C)]
@@ -208,6 +214,7 @@ struct RawInstance {
     neighbours: f32,
     wetness_modifier: f32,
     snow_modifier: f32,
+    params: [f32; 4],
 }
 
 #[repr(C)]
@@ -494,6 +501,8 @@ unsafe fn read_world(f: &WorldFunctions, handle: *mut c_void) -> WorldBuild {
             first_instance: 0,
             instance_count: 0,
             unique: 0,
+            param_count: 0,
+            params: [[0; 32]; 4],
         };
         if (f.class)(handle, i, &mut raw) == 0 {
             out.classes.push(WorldClass {
@@ -503,6 +512,10 @@ unsafe fn read_world(f: &WorldFunctions, handle: *mut c_void) -> WorldBuild {
                 first_instance: raw.first_instance,
                 instance_count: raw.instance_count,
                 unique: raw.unique != 0,
+                params: raw.params[..raw.param_count.min(4) as usize]
+                    .iter()
+                    .map(|p| text(p))
+                    .collect(),
             });
         }
     }
@@ -528,6 +541,7 @@ unsafe fn read_world(f: &WorldFunctions, handle: *mut c_void) -> WorldBuild {
             neighbours: r.neighbours,
             wetness_modifier: r.wetness_modifier,
             snow_modifier: r.snow_modifier,
+            params: r.params,
         })
         .collect();
     let cells = info.resolution_x as usize * info.resolution_z as usize;

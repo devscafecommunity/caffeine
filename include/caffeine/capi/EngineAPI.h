@@ -1275,6 +1275,8 @@ typedef struct CaffeineWorldClass {
     uint32_t first_instance;    /**< classes are in placement order and their instances contiguous */
     uint32_t instance_count;
     int32_t unique;             /**< hero class: bake per instance, seeded by the instance seed */
+    uint32_t param_count;       /**< nature recipe parameters the ground drives (`adapt param.<name>`) */
+    char params[4][32];
 } CaffeineWorldClass;
 
 typedef struct CaffeineWorldInstance {
@@ -1294,6 +1296,7 @@ typedef struct CaffeineWorldInstance {
     float neighbours;
     float wetness_modifier;     /**< the run-time modifiers `adapt` set */
     float snow_modifier;
+    float params[4];            /**< values of the class's bake parameters, in `CaffeineWorldClass.params` order */
 } CaffeineWorldInstance;
 
 typedef struct CaffeineWorldWaterBody {

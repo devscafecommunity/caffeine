@@ -324,6 +324,12 @@ WorldPart build(const WorldBuildRequest& request) {
                 ctx.wetnessModifier = std::clamp(amount * v, 0.0f, 1.0f);
             } else if (a.target == "snow") {
                 ctx.snowModifier = std::clamp(amount * v, 0.0f, 1.0f);
+            } else if (const std::string_view param = bakeParamName(a.target); !param.empty()) {
+                for (size_t k = 0, n = 0; k < cls.adapt.size() && n < kMaxBakeParams; ++k) {
+                    if (bakeParamName(cls.adapt[k].target).empty()) continue;
+                    if (&cls.adapt[k] == &a) ctx.params[n] = amount * v;
+                    ++n;
+                }
             }
         }
         const bool conform = tilt != cls.tilt || x != born.x || z != born.z;
@@ -340,6 +346,10 @@ WorldPart build(const WorldBuildRequest& request) {
         out.ref = cls.ref;
         out.variants = cls.variants;
         out.unique = cls.unique;
+        for (const WorldAdapt& a : cls.adapt) {
+            const std::string_view param = bakeParamName(a.target);
+            if (!param.empty() && out.params.size() < kMaxBakeParams) out.params.emplace_back(param);
+        }
         auto found = grouped.find(out.salt);
         if (found != grouped.end()) {
             auto& list = found->second;

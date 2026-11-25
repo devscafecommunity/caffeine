@@ -238,6 +238,8 @@ CaffeineResult caffeine_world_class(const CaffeineWorld* world, uint32_t index, 
     out->first_instance = first;
     out->instance_count = static_cast<uint32_t>(cls.instances.size());
     out->unique = cls.unique ? 1 : 0;
+    out->param_count = static_cast<uint32_t>(std::min<size_t>(cls.params.size(), 4));
+    for (uint32_t k = 0; k < out->param_count; ++k) copyText(out->params[k], sizeof(out->params[k]), cls.params[k]);
     return CAFFEINE_OK;
 }
 
@@ -275,6 +277,7 @@ uint32_t caffeine_world_instances(const CaffeineWorld* world, uint32_t first, Ca
         o.neighbours = ctx.neighbours;
         o.wetness_modifier = ctx.wetnessModifier;
         o.snow_modifier = ctx.snowModifier;
+        for (int k = 0; k < 4; ++k) o.params[k] = ctx.params[k];
     }
     return count;
 }

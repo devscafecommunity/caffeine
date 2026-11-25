@@ -8,10 +8,11 @@
 //
 //   header   "CINST\0\0\0", u32 format version (1), u32 generator_version, u64 cache key, u64 instance hash,
 //            f32 region[4], f32 chunk size
-//   classes  u32 count, then per class: string id, string ref, u32 salt, u32 variants, u32 unique
+//   classes  u32 count, then per class: string id, string ref, u32 salt, u32 variants, u32 unique,
+//            u32 param count, then that many strings (the bake parameter names)
 //   chunks   u32 count, then per chunk (rows of z, then x): i32 cx, i32 cz, u32 count, then `count` records
 //   record   u32 class index, u32 variant, i32 cell x, i32 cell z, f32 position[3], f32 up[3], f32 yaw, f32 scale,
-//            f32 tint[3], u64 seed, f32 wetness modifier, f32 snow modifier        (76 bytes)
+//            f32 tint[3], u64 seed, f32 wetness modifier, f32 snow modifier, f32 params[4]     (92 bytes)
 //
 // A string is a u32 byte count and the bytes. Inside a chunk, records keep placement order (class priority, then
 // cell), so the file of a build is byte-for-byte the same on every machine.
@@ -46,6 +47,7 @@ struct InstanceRecord {
     u64 seed = 0;
     f32 wetness = 0.0f;
     f32 snow = 0.0f;
+    std::array<f32, 4> params{};
 };
 
 struct InstanceFileClass {
@@ -54,6 +56,7 @@ struct InstanceFileClass {
     u32 salt = 0;
     u32 variants = 1;
     bool unique = false;
+    std::vector<std::string> params;
 };
 
 struct InstanceChunk {

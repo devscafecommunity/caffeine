@@ -56,7 +56,14 @@ bool isClassKey(const std::string& word) {
 
 }  // namespace
 
+std::string_view bakeParamName(std::string_view target) {
+    constexpr std::string_view kPrefix = "param.";
+    if (target.size() <= kPrefix.size() || target.substr(0, kPrefix.size()) != kPrefix) return {};
+    return target.substr(kPrefix.size());
+}
+
 bool isAdaptTarget(std::string_view target) {
+    if (!bakeParamName(target).empty()) return validId(std::string(bakeParamName(target)));
     return target == "size" || target == "lean" || target == "tint" || target == "wetness" || target == "snow";
 }
 
@@ -113,10 +120,16 @@ std::vector<std::string> WorldComposition::validate() const {
         if (cls.radius < 0.0f) errors.push_back(name + ": `radius` must not be negative");
         if (cls.minScale > cls.maxScale) errors.push_back(name + ": the scale range decreases");
         if (!(cls.minScale > 0.0f)) errors.push_back(name + ": the scale must be above 0");
+        size_t params = 0;
         for (const WorldAdapt& a : cls.adapt) {
             if (!isAdaptTarget(a.target)) {
-                errors.push_back(name + ": `adapt " + a.target + "` is not size, lean, tint, wetness or snow");
+                errors.push_back(name + ": `adapt " + a.target +
+                                 "` is not size, lean, tint, wetness, snow or param.<name>");
             }
+            if (!bakeParamName(a.target).empty()) ++params;
+        }
+        if (params > kMaxBakeParams) {
+            errors.push_back(name + ": at most " + std::to_string(kMaxBakeParams) + " `adapt param.<name>` lines");
         }
         const u32 salt = classSalt(cls.id);
         const auto [it, inserted] = salts.emplace(salt, cls.id);

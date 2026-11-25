@@ -80,6 +80,9 @@ struct WorldMaterial {
 ///   tint     tint *= 1 - amount * v                    (0.2)
 ///   wetness  the run-time wetness modifier = amount * v (1)
 ///   snow     the run-time snow modifier = amount * v    (1)
+///   param.<name>  an exposed parameter of the class's nature recipe = amount * v (1): the context drives the *bake*
+///                 (a tree grown for its place). At most `kMaxBakeParams` per class; the editor bakes one model per
+///                 distinct value set (quantised) or, for a `unique` class, per instance.
 /// The source is any terrain mask (`water_distance` included) or `neighbours`: how crowded the instance is, the
 /// count of other generated instances within three of its radii, over 6. Neighbours are counted before the edit
 /// layer, so moving or removing an instance never changes another one.
@@ -92,8 +95,12 @@ struct WorldAdapt {
     f32 effectiveAmount() const;
 };
 
-/// `adapt` targets, in the order the build applies them.
+inline constexpr size_t kMaxBakeParams = 4;
+
+/// `adapt` targets: size, lean, tint, wetness, snow or `param.<name>`.
 bool isAdaptTarget(std::string_view target);
+/// The parameter name of a `param.<name>` target, empty for the others.
+std::string_view bakeParamName(std::string_view target);
 
 struct WorldClass {
     /// Letters, digits, '_' and '-'; unique in the composition.

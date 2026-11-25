@@ -69,6 +69,8 @@ struct InstanceContext {
     f32 neighbours = 0.0f;
     f32 wetnessModifier = 0.0f;
     f32 snowModifier = 0.0f;
+    /// The values of the class's bake parameters (`WorldClassInstances::params`), in that order.
+    f32 params[kMaxBakeParams] = {0.0f, 0.0f, 0.0f, 0.0f};
 };
 
 struct WorldClassInstances {
@@ -78,6 +80,8 @@ struct WorldClassInstances {
     std::string ref;
     /// Size of the class's variant pool.
     u32 variants = 1;
+    /// Names of the nature recipe parameters the ground context drives (`adapt param.<name>`), at most 4.
+    std::vector<std::string> params;
     /// Hero class: bake one model per instance (seeded by `Instance::seed`) instead of using the variant pool.
     bool unique = false;
     std::vector<Scatter::Instance> instances;

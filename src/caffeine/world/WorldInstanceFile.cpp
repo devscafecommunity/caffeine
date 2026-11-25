@@ -101,7 +101,7 @@ InstanceFile bakeInstances(const WorldPart& part, f32 chunkSize) {
     std::map<std::pair<i32, i32>, InstanceChunk> chunks;  // ordered by (z, x)
     for (u32 c = 0; c < part.classes.size(); ++c) {
         const WorldClassInstances& cls = part.classes[c];
-        file.classes.push_back({cls.id, cls.ref, cls.salt, cls.variants, cls.unique});
+        file.classes.push_back({cls.id, cls.ref, cls.salt, cls.variants, cls.unique, cls.params});
         for (size_t i = 0; i < cls.instances.size(); ++i) {
             const Scatter::Instance& in = cls.instances[i];
             const i32 cx = static_cast<i32>(std::floor(in.position.x / file.chunkSize));
@@ -123,6 +123,7 @@ InstanceFile bakeInstances(const WorldPart& part, f32 chunkSize) {
             if (i < cls.context.size()) {
                 r.wetness = cls.context[i].wetnessModifier;
                 r.snow = cls.context[i].snowModifier;
+                for (size_t k = 0; k < r.params.size(); ++k) r.params[k] = cls.context[i].params[k];
             }
             chunk.instances.push_back(r);
         }
@@ -144,6 +145,7 @@ WorldPart partFromInstances(const InstanceFile& file) {
         cls.salt = c.salt;
         cls.variants = c.variants;
         cls.unique = c.unique;
+        cls.params = c.params;
         part.classes.push_back(std::move(cls));
     }
     for (const InstanceChunk& chunk : file.chunks) {
@@ -163,6 +165,7 @@ WorldPart partFromInstances(const InstanceFile& file) {
             InstanceContext ctx;
             ctx.wetnessModifier = r.wetness;
             ctx.snowModifier = r.snow;
+            for (size_t k = 0; k < r.params.size(); ++k) ctx.params[k] = r.params[k];
             cls.instances.push_back(in);
             cls.context.push_back(ctx);
             ++part.total;
@@ -204,6 +207,8 @@ std::vector<u8> encodeInstanceFile(const InstanceFile& file) {
         w.u32v(c.salt);
         w.u32v(c.variants);
         w.u32v(c.unique ? 1u : 0u);
+        w.u32v(static_cast<u32>(c.params.size()));
+        for (const std::string& name : c.params) w.text(name);
     }
     w.u32v(static_cast<u32>(file.chunks.size()));
     for (const InstanceChunk& chunk : file.chunks) {
@@ -223,6 +228,7 @@ std::vector<u8> encodeInstanceFile(const InstanceFile& file) {
             w.u64v(r.seed);
             w.f32v(r.wetness);
             w.f32v(r.snow);
+            for (const f32 v : r.params) w.f32v(v);
         }
     }
     return std::move(w.bytes());
@@ -244,7 +250,7 @@ bool decodeInstanceFile(const std::vector<u8>& bytes, InstanceFile& out, std::st
     for (f32& v : file.region) v = r.f32v();
     file.chunkSize = r.f32v();
     const u32 classCount = r.u32v();
-    if (!r.ok() || !r.has(static_cast<size_t>(classCount) * 20)) return fail("the bake is truncated");
+    if (!r.ok() || !r.has(static_cast<size_t>(classCount) * 24)) return fail("the bake is truncated");
     for (u32 i = 0; i < classCount && r.ok(); ++i) {
         InstanceFileClass c;
         c.id = r.text();
@@ -252,6 +258,9 @@ bool decodeInstanceFile(const std::vector<u8>& bytes, InstanceFile& out, std::st
         c.salt = r.u32v();
         c.variants = r.u32v();
         c.unique = r.u32v() != 0;
+        const u32 params = r.u32v();
+        if (params > kMaxBakeParams) return fail("a class has too many bake parameters");
+        for (u32 k = 0; k < params && r.ok(); ++k) c.params.push_back(r.text());
         file.classes.push_back(std::move(c));
     }
     const u32 chunkCount = r.u32v();
@@ -261,7 +270,7 @@ bool decodeInstanceFile(const std::vector<u8>& bytes, InstanceFile& out, std::st
         chunk.chunkX = r.i32v();
         chunk.chunkZ = r.i32v();
         const u32 count = r.u32v();
-        if (!r.has(static_cast<size_t>(count) * 76)) break;
+        if (!r.has(static_cast<size_t>(count) * 92)) break;
         chunk.instances.resize(count);
         for (InstanceRecord& rec : chunk.instances) {
             rec.classIndex = r.u32v();
@@ -276,6 +285,7 @@ bool decodeInstanceFile(const std::vector<u8>& bytes, InstanceFile& out, std::st
             rec.seed = r.u64v();
             rec.wetness = r.f32v();
             rec.snow = r.f32v();
+            for (f32& v : rec.params) v = r.f32v();
             if (rec.classIndex >= classCount) return fail("an instance names a class the bake does not have");
         }
         file.chunks.push_back(std::move(chunk));

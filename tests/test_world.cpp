@@ -426,6 +426,8 @@ TEST_CASE("World: adapt maps the ground context onto each instance", "[world][ad
     oak.adapt.push_back({"snow", "height", -1.0f});
     oak.adapt.push_back({"tint", "neighbours", -1.0f});
     oak.adapt.push_back({"lean", "slope", 1.0f});
+    oak.adapt.push_back({"param.crown", "wetness", 2.0f});
+    oak.unique = true;
     const WorldPart after = build(adapted.request());
     INFO((after.errors.empty() ? std::string() : after.errors[0]));
     REQUIRE(after.ok);
@@ -444,6 +446,7 @@ TEST_CASE("World: adapt maps the ground context onto each instance", "[world][ad
         CHECK(ctx.snowModifier == Approx(ctx.height));
         CHECK(a.instances[i].tint.x == Approx(b.instances[i].tint.x * (1.0f - 0.2f * ctx.neighbours)));
         crowded = crowded || ctx.neighbours > 0.0f;
+        CHECK(ctx.params[0] == Approx(2.0f * ctx.wetness));
     }
     CHECK(crowded);
     // The other classes are untouched.
@@ -467,7 +470,18 @@ TEST_CASE("World: adapt maps the ground context onto each instance", "[world][ad
 
     WorldComposition reparsed;
     REQUIRE(WorldComposition::fromText(adapted.composition.toText(), reparsed));
-    REQUIRE(reparsed.classes[1].adapt.size() == 4);
+    REQUIRE(after.classes[1].params.size() == 1);
+    CHECK(after.classes[1].params[0] == "crown");
+    CHECK(after.classes[1].unique);
+    // The bake keeps the parameters.
+    InstanceFile decoded;
+    REQUIRE(decodeInstanceFile(encodeInstanceFile(bakeInstances(after)), decoded));
+    REQUIRE(decoded.classes[1].params == std::vector<std::string>{"crown"});
+    const WorldPart back = partFromInstances(decoded);
+    CHECK(back.classes[1].context[0].params[0] == a.context[0].params[0]);
+    CHECK(instanceHash(back) == instanceHash(after));
+    REQUIRE(reparsed.classes[1].adapt.size() == 5);
+    CHECK(reparsed.classes[1].unique);
     CHECK(reparsed.classes[1].adapt[0].amount == 0.5f);
     CHECK(reparsed.classes[1].adapt[1].amount < 0.0f);
 }
