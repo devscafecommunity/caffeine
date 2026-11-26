@@ -25,3 +25,4 @@ pub mod terrain_vegetation;
 pub mod texture_generator;
 pub mod texture_set;
 pub mod water_generator;
+pub mod world_composer;

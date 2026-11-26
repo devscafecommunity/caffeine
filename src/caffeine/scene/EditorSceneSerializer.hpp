@@ -84,7 +84,8 @@ private:
     static constexpr u32 kTypeWeather              = 60;
     static constexpr u32 kTypeAcousticObstacle     = 61;
     static constexpr u32 kTypeVolumetricAudio      = 62;
-    static constexpr u32 kTypeCount                = 63;
+    static constexpr u32 kTypeWorldInstances       = 63;
+    static constexpr u32 kTypeCount                = 64;
     static constexpr u32 kPoseCurveMarker    = 0x56525543u;
     static constexpr u32 kPoseStripMarker    = 0x50525453u;
     static constexpr u32 kAnimatorEditorMarker = 0x524F5441u;

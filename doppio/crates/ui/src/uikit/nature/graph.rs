@@ -184,11 +184,44 @@ impl NatureNode {
     }
 }
 
+/// A numeric node parameter the graph lets something outside drive under a name (the World
+/// Composer's `adapt param.<name>` lines). Saved as `expose <name> <node>.<param> [min max]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Exposure {
+    pub name: String,
+    pub node: NodeId,
+    pub param: String,
+    /// A narrower range than the parameter's own; `None` uses the parameter's range.
+    pub range: Option<(f32, f32)>,
+}
+
+/// An exposed parameter as a caller sees it: the effective range and the current value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExposedParam {
+    pub name: String,
+    pub node: NodeId,
+    pub param: String,
+    pub min: f32,
+    pub max: f32,
+    /// The value in the graph (what an instance gets when nothing drives it).
+    pub default: f32,
+}
+
+/// A valid exposure name: one word of letters, digits, `_` or `-`.
+pub fn is_exposure_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct NatureGraph {
     pub nodes: Vec<NatureNode>,
     pub links: Vec<node_canvas::Link>,
     pub next_id: NodeId,
+    /// Parameters exposed by name, in declaration order.
+    pub exposed: Vec<Exposure>,
 }
 
 impl NatureGraph {
@@ -197,6 +230,7 @@ impl NatureGraph {
             nodes: Vec::new(),
             links: Vec::new(),
             next_id: 1,
+            exposed: Vec::new(),
         }
     }
 
@@ -267,6 +301,97 @@ impl NatureGraph {
     pub fn remove(&mut self, id: NodeId) {
         self.nodes.retain(|n| n.id != id);
         self.links.retain(|l| l.from != id && l.to != id);
+        self.exposed.retain(|e| e.node != id);
+    }
+
+    /// The parameter spec behind `node.param`, if both exist.
+    fn param_spec(&self, node: NodeId, param: &str) -> Option<&'static ParamSpec> {
+        self.node(node)?
+            .def()
+            .params
+            .iter()
+            .find(|spec| spec.key == param)
+    }
+
+    /// Exposes `node.param` under `name`, optionally narrowed to `range` (inside the parameter's
+    /// own range). Exposing an existing name again replaces it.
+    pub fn expose(
+        &mut self,
+        name: &str,
+        node: NodeId,
+        param: &str,
+        range: Option<(f32, f32)>,
+    ) -> Result<(), String> {
+        if !is_exposure_name(name) {
+            return Err(format!(
+                "{name:?} is not a parameter name (letters, digits, _ or -)"
+            ));
+        }
+        let spec = self
+            .param_spec(node, param)
+            .ok_or_else(|| format!("node {node} has no parameter {param}"))?;
+        if let Some((min, max)) = range {
+            if !(min.is_finite() && max.is_finite() && min <= max) {
+                return Err(format!("{name}: the range {min}..{max} is not valid"));
+            }
+        }
+        let exposure = Exposure {
+            name: name.to_owned(),
+            node,
+            param: spec.key.to_owned(),
+            range,
+        };
+        match self.exposed.iter_mut().find(|e| e.name == name) {
+            Some(existing) => *existing = exposure,
+            None => self.exposed.push(exposure),
+        }
+        Ok(())
+    }
+
+    /// Stops exposing `name`; returns whether it was exposed.
+    pub fn unexpose(&mut self, name: &str) -> bool {
+        let before = self.exposed.len();
+        self.exposed.retain(|e| e.name != name);
+        self.exposed.len() != before
+    }
+
+    /// The exposed parameters with their effective range and current value, in declaration
+    /// order. Exposures whose node or parameter no longer exists are left out.
+    pub fn exposed_parameters(&self) -> Vec<ExposedParam> {
+        self.exposed
+            .iter()
+            .filter_map(|e| {
+                let spec = self.param_spec(e.node, &e.param)?;
+                let (min, max) = e.range.unwrap_or((spec.min, spec.max));
+                Some(ExposedParam {
+                    name: e.name.clone(),
+                    node: e.node,
+                    param: e.param.clone(),
+                    min,
+                    max,
+                    default: self.get(e.node, &e.param)?,
+                })
+            })
+            .collect()
+    }
+
+    /// Sets the exposed parameter `name` to `value`, clamped to its range. Unknown names and
+    /// non-finite values are errors.
+    pub fn set_exposed(&mut self, name: &str, value: f32) -> Result<(), String> {
+        if !value.is_finite() {
+            return Err(format!("{name}: {value} is not a number"));
+        }
+        let exposed = self
+            .exposed_parameters()
+            .into_iter()
+            .find(|e| e.name == name)
+            .ok_or_else(|| format!("the graph exposes no parameter {name}"))?;
+        self.set(
+            exposed.node,
+            &exposed.param,
+            value.clamp(exposed.min, exposed.max),
+        );
+        Ok(())
     }
 
     pub fn output_node(&self) -> Option<NodeId> {
@@ -487,6 +612,15 @@ impl NatureGraph {
                 link.from, link.output, link.to, link.input
             ));
         }
+        // Only graphs that expose something gain these lines, so older graphs print (and hash)
+        // exactly as before.
+        for e in &self.exposed {
+            text.push_str(&format!("expose {} {}.{}", e.name, e.node, e.param));
+            if let Some((min, max)) = e.range {
+                text.push_str(&format!(" {min} {max}"));
+            }
+            text.push('\n');
+        }
         text
     }
 
@@ -509,6 +643,7 @@ impl NatureGraph {
             }
         };
         let mut graph = NatureGraph::new();
+        let mut exposures: Vec<Exposure> = Vec::new();
         for line in lines {
             let w: Vec<&str> = line.split_whitespace().collect();
             match w.first().copied() {
@@ -554,11 +689,30 @@ impl NatureGraph {
                     to: w[3].parse().ok()?,
                     input: w[4].parse().ok()?,
                 }),
+                Some("expose") if w.len() == 3 || w.len() == 5 => {
+                    let (node, param) = w[2].split_once('.')?;
+                    let range = if w.len() == 5 {
+                        Some((w[3].parse().ok()?, w[4].parse().ok()?))
+                    } else {
+                        None
+                    };
+                    exposures.push(Exposure {
+                        name: w[1].to_owned(),
+                        node: node.parse().ok()?,
+                        param: param.to_owned(),
+                        range,
+                    });
+                }
                 _ => {}
             }
         }
         if legacy {
             super::migrate_legacy(&mut graph, &old);
+        }
+        // Applied once every node exists; an exposure whose node or parameter is gone is dropped
+        // rather than refusing the whole graph.
+        for e in exposures {
+            let _ = graph.expose(&e.name, e.node, &e.param, e.range);
         }
         (graph.output_node().is_some()).then_some(graph)
     }

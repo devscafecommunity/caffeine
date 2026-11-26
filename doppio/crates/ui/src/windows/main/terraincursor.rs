@@ -65,6 +65,12 @@ impl App {
         self.terrain_cursor.hit = hit;
     }
 
+    /// The brush ring on the nearest terrain under `point` (a viewport position), or none.
+    pub(super) fn terrain_cursor_at(&self, point: Point) -> Option<BrushCursor> {
+        let (entity, hit) = self.terrain_hit_at(point)?;
+        self.terrain_cursor_ring(entity, hit)
+    }
+
     /// The nearest terrain the mouse's ray meets, and the world-space point it meets it at.
     fn terrain_hit_at(&self, point: Point) -> Option<(u32, [f64; 3])> {
         let engine = self.engine.as_ref()?;

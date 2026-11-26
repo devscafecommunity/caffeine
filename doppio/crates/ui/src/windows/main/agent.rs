@@ -29,6 +29,7 @@ use crate::uikit::panels::terrain_paint as terrain_paint_panel;
 use crate::uikit::panels::terrain_vegetation as terrain_vegetation_panel;
 use crate::uikit::panels::texture_generator;
 use crate::uikit::panels::texture_set as texture_set_panel;
+use crate::uikit::panels::world_composer;
 use serde_json::{json, Value};
 
 /// Runs Doppio with the MCP bridge attached when `ICED_MCP=1`.
@@ -152,6 +153,37 @@ pub fn run() -> iced::Result {
             },
         )
         .query(
+            "world",
+            "World Composer state: name, recipe path, the composition text and its classes (id, ref, variants, priority, terms, adapt), the overrides, the engine's problems, the preview counts and the last status.",
+            |app, _| {
+                let w = &app.worldgen;
+                Ok(json!({
+                    "name": w.name,
+                    "path": w.path.as_ref().map(|p| p.display().to_string()),
+                    "dirty": w.dirty,
+                    "seed": w.comp.seed,
+                    "terrain": w.comp.terrain,
+                    "text": w.comp.to_text(),
+                    "classes": w.comp.classes.iter().map(|c| json!({
+                        "id": c.id,
+                        "ref": c.reference,
+                        "variants": c.variants,
+                        "priority": c.priority,
+                        "unique": c.unique,
+                        "terms": c.terms.iter().map(|t| json!({"mask": t.mask, "values": t.values})).collect::<Vec<_>>(),
+                        "adapt": c.adapt.iter().map(|a| json!({"target": a.target, "mask": a.mask, "amount": a.effective_amount()})).collect::<Vec<_>>(),
+                    })).collect::<Vec<_>>(),
+                    "overrides": w.comp.overrides.len(),
+                    "problems": w.problems,
+                    "preview": w.preview.as_ref().map(|counts| counts.iter().map(|(id, n)| json!({"class": id, "count": n})).collect::<Vec<_>>()),
+                    "last_build_instances": w.last_build.as_ref().map(|b| b.instances.len()),
+                    "status": w.status,
+                    "brush": { "active": w.brush, "radius": w.brush_radius },
+                    "library": w.library.iter().map(|item| item.path.clone()).collect::<Vec<_>>(),
+                }))
+            },
+        )
+        .query(
             "nature",
             "Nature Generator state: name, quality, stats, every node (id, op, parameters with ranges, strings), the links, the op catalogue and the preset names.",
             |app, _| {
@@ -175,6 +207,10 @@ pub fn run() -> iced::Result {
                     }).collect::<Vec<_>>(),
                     "links": nature.graph.links.iter().map(|l| json!({
                         "from": l.from, "output": l.output, "to": l.to, "input": l.input,
+                    })).collect::<Vec<_>>(),
+                    "exposed": nature.graph.exposed_parameters().iter().map(|e| json!({
+                        "name": e.name, "node": e.node, "param": e.param,
+                        "min": e.min, "max": e.max, "value": e.default,
                     })).collect::<Vec<_>>(),
                     "ops": crate::uikit::nature::ops::NODES.iter().map(|d| json!({
                         "id": d.id, "title": d.title, "category": d.category,
@@ -1673,6 +1709,140 @@ pub fn run() -> iced::Result {
             |_| Ok(Message::NatureGen(nature_generator::Edit::AddToScatter)),
         )
         .action(
+            "world_show",
+            "Opens the World Composer tab. No args.",
+            |_| Ok(Message::ShowWorldComposer),
+        )
+        .action(
+            "world_add",
+            "Adds a project recipe to the composition by its kind: a terrain becomes the ground, a nature recipe a class, a water recipe a river, a material or texture a binding. args: { \"ref\": string (project path, e.g. \"Terrain/Hills.generator.terrain\") }",
+            |args| {
+                Ok(Message::WorldGen(world_composer::Edit::Add(
+                    required_str(args, "ref")?.to_owned(),
+                )))
+            },
+        )
+        .action(
+            "world_add_class",
+            "Adds a class (things that grow) for a nature recipe. args: { \"ref\": string (a .generator.nature path), \"id\"?: string (default: from the file name) }",
+            |args| {
+                Ok(Message::WorldGen(world_composer::Edit::AddClass {
+                    reference: required_str(args, "ref")?.to_owned(),
+                    id: optional_str(args, "id")?.map(str::to_owned),
+                }))
+            },
+        )
+        .action(
+            "world_set_rule",
+            "Sets (or adds) a where term of a class: it grows where the mask rises from rise0 to rise1 and falls from fall1 to fall0 (0..1, not decreasing). args: { \"class\": string, \"mask\": string (height, slope, curvature, flow, wetness, wear, deposit, water_distance), \"rise0\": number, \"rise1\": number, \"fall1\": number, \"fall0\": number }",
+            |args| {
+                let number = |key: &str| -> Result<f32, String> {
+                    optional_f32(args, key)?.ok_or_else(|| format!("missing \"{key}\""))
+                };
+                Ok(Message::WorldGen(world_composer::Edit::SetRule {
+                    class: required_str(args, "class")?.to_owned(),
+                    mask: required_str(args, "mask")?.to_owned(),
+                    values: [
+                        number("rise0")?,
+                        number("rise1")?,
+                        number("fall1")?,
+                        number("fall0")?,
+                    ],
+                }))
+            },
+        )
+        .action(
+            "world_set_class",
+            "Sets a numeric property of a class. args: { \"class\": string, \"field\": \"variants\"|\"priority\"|\"cell\"|\"radius\"|\"density\"|\"scale_min\"|\"scale_max\"|\"tilt\"|\"sink\"|\"tint\"|\"base\", \"value\": number }",
+            |args| {
+                let class = required_str(args, "class")?.to_owned();
+                let field = required_str(args, "field")?;
+                let field = world_composer::ClassField::from_key(field)
+                    .ok_or_else(|| format!("unknown class field \"{field}\""))?;
+                let value = optional_f32(args, "value")?.ok_or("missing \"value\"")?;
+                Ok(Message::WorldGen(world_composer::Edit::SetClassById {
+                    class,
+                    field,
+                    value,
+                }))
+            },
+        )
+        .action(
+            "world_reseed",
+            "Derives a new world seed from the current one (undoable in the World tab). No args.",
+            |_| Ok(Message::WorldGen(world_composer::Edit::Reseed)),
+        )
+        .action(
+            "world_build",
+            "Builds the world into the scene (one undo step): entities for up to 3000 instances, else World/<name>.cinst + World/<name>.models and a World Instances entity. Reports instances per class, time and cache hit. No args.",
+            |_| Ok(Message::WorldGen(world_composer::Edit::Build)),
+        )
+        .action(
+            "world_frame",
+            "Points the viewport camera at the last world build (the whole terrain in view) and shows the Viewport. No args.",
+            |_| Ok(Message::WorldGen(world_composer::Edit::Frame)),
+        )
+        .action(
+            "world_preview",
+            "Runs the coarse preview on a worker thread (terrain bake and engine build; the latest edit wins, every instance counted); read the counts with query world. No args.",
+            |_| Ok(Message::WorldGen(world_composer::Edit::Preview)),
+        )
+        .action(
+            "world_remove_in_region",
+            "Removes every instance of the last build inside a rectangle (override remove lines, undoable) and rebuilds. args: { \"x0\": number, \"z0\": number, \"x1\": number, \"z1\": number } (metres from the terrain's corner)",
+            |args| {
+                let number = |key: &str| -> Result<f32, String> {
+                    optional_f32(args, key)?.ok_or_else(|| format!("missing \"{key}\""))
+                };
+                Ok(Message::WorldGen(world_composer::Edit::RemoveIn([
+                    number("x0")?,
+                    number("z0")?,
+                    number("x1")?,
+                    number("z1")?,
+                ])))
+            },
+        )
+        .action(
+            "world_remove_in_circle",
+            "One stroke of the Remove instances brush: removes every instance of the last build within a circle (override remove lines, one undo step) and rebuilds. args: { \"x\": number, \"z\": number (metres from the terrain's corner), \"radius\": number (metres) }",
+            |args| {
+                let number = |key: &str| -> Result<f32, String> {
+                    optional_f32(args, key)?.ok_or_else(|| format!("missing \"{key}\""))
+                };
+                Ok(Message::WorldGen(world_composer::Edit::RemoveInCircle {
+                    center: [number("x")?, number("z")?],
+                    radius: number("radius")?,
+                }))
+            },
+        )
+        .action(
+            "world_brush",
+            "Turns the Viewport's Remove instances brush on or off (left-drag over the built world then removes what grows under the ring, one undo step per stroke). args: { \"active\"?: boolean (default true), \"radius\"?: number (metres; sets the radius instead when given alone with active omitted) }",
+            |args| {
+                if let (None, Some(radius)) = (args.get("active"), optional_f32(args, "radius")?) {
+                    return Ok(Message::WorldGen(world_composer::Edit::SetBrushRadius(radius)));
+                }
+                Ok(Message::WorldGen(world_composer::Edit::SetBrush(
+                    args.get("active").and_then(Value::as_bool).unwrap_or(true),
+                )))
+            },
+        )
+        .action(
+            "world_undo",
+            "Undoes the last composition edit of the World tab. No args.",
+            |_| Ok(Message::WorldGen(world_composer::Edit::Undo)),
+        )
+        .action(
+            "world_save",
+            "Saves the composition as World/<Name>.generator.world (generator version 2). No args.",
+            |_| Ok(Message::WorldGen(world_composer::Edit::Save)),
+        )
+        .action(
+            "world_save_prefab",
+            "Saves the built World <Name> tree as World/<Name>.prefab, linked to its .generator.world. No args.",
+            |_| Ok(Message::WorldGen(world_composer::Edit::SaveAsPrefab)),
+        )
+        .action(
             "terrain_scatter",
             "The Terrain tab's Scatter button: scatters the default plan on the selected terrain, else on the last placed one. args: {}",
             |_| Ok(Message::TerrainGen(terrain_generator::Edit::Scatter)),
@@ -1759,6 +1929,27 @@ pub fn run() -> iced::Result {
             "nature_place",
             "Places the Nature Generator model in the scene as a group of entities, one per part, each with its own material.",
             |_| Ok(Message::NatureGen(nature_generator::Edit::Place)),
+        )
+        // Nature Generator: exposed parameters (the World Composer drives them by name).
+        .action(
+            "nature_expose",
+            "Exposes a numeric node parameter of the Nature Generator graph so the World Composer can drive it. args: { \"node\": id, \"param\": key (e.g. \"amount\"), \"name\"?: string (default: the key, else <op>_<key>, made unique) }",
+            |args| nature_exposure_edit("nature_expose", args).map(Message::NatureGen),
+        )
+        .action(
+            "nature_unexpose",
+            "Stops exposing a Nature Generator parameter. args: { \"name\": string }",
+            |args| nature_exposure_edit("nature_unexpose", args).map(Message::NatureGen),
+        )
+        .action(
+            "nature_rename_exposed",
+            "Renames an exposed Nature Generator parameter. args: { \"name\": string, \"to\": string (letters, digits, _ or -) }",
+            |args| nature_exposure_edit("nature_rename_exposed", args).map(Message::NatureGen),
+        )
+        .action(
+            "nature_set_exposed_range",
+            "Narrows the range of an exposed Nature Generator parameter, inside the parameter's own range. args: { \"name\": string, \"min\": number, \"max\": number } (omit min and max for the parameter's full range)",
+            |args| nature_exposure_edit("nature_set_exposed_range", args).map(Message::NatureGen),
         )
         .action(
             "toggle_scene_markers",
@@ -3757,4 +3948,42 @@ fn performance_json(app: &App) -> Value {
         "settings": Value::Object(values),
         "viewport": viewport_json,
     })
+}
+
+/// The Nature Generator edit of an exposure action (`nature_expose`, `nature_unexpose`,
+/// `nature_rename_exposed`, `nature_set_exposed_range`).
+pub(super) fn nature_exposure_edit(
+    action: &str,
+    args: &Value,
+) -> Result<nature_generator::Edit, String> {
+    use nature_generator::Edit;
+    match action {
+        "nature_expose" => {
+            let node = args
+                .get("node")
+                .and_then(Value::as_u64)
+                .ok_or("expected numeric \"node\"")?;
+            Ok(Edit::Expose {
+                node,
+                param: required_str(args, "param")?.to_owned(),
+                name: optional_str(args, "name")?.map(str::to_owned),
+            })
+        }
+        "nature_unexpose" => Ok(Edit::Unexpose(required_str(args, "name")?.to_owned())),
+        "nature_rename_exposed" => Ok(Edit::RenameExposed(
+            required_str(args, "name")?.to_owned(),
+            required_str(args, "to")?.to_owned(),
+        )),
+        "nature_set_exposed_range" => {
+            let name = required_str(args, "name")?.to_owned();
+            let range = match (optional_f32(args, "min")?, optional_f32(args, "max")?) {
+                (Some(min), Some(max)) if min <= max => Some((min, max)),
+                (Some(_), Some(_)) => return Err("\"min\" must not be above \"max\"".to_owned()),
+                (None, None) => None,
+                _ => return Err("give both \"min\" and \"max\", or neither".to_owned()),
+            };
+            Ok(Edit::SetExposedRange(name, range))
+        }
+        _ => Err(format!("unknown exposure action {action}")),
+    }
 }

@@ -19,6 +19,8 @@
 #include "scene/EditorCameraMath.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/MeshGeometry.hpp"
+#include "ecs/WorldInstancesComponents.hpp"
+#include "world/WorldInstanceDraw.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/SceneComponents.hpp"
@@ -2509,6 +2511,102 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
     return static_cast<u32>(opaque.size() + translucent.size());
 }
 
+void GpuSceneRenderer::applyAuthoredMaterial(MeshDraw& draw, const std::string& materialPath,
+                                             const Mat4& worldMatrix, const std::string& projectRoot) {
+    if (materialPath.empty()) return;
+    const Assets::MaterialSurface surface =
+        Assets::MaterialCache::instance().resolve(materialPath, projectRoot);
+    if (surface.valid) {
+        draw.hasAuthoredMaterial = true;
+        const Vec3 albedo = srgbToLinear(Vec3(surface.albedo.x, surface.albedo.y, surface.albedo.z));
+        draw.albedo = Vec4(albedo.x, albedo.y, albedo.z, std::clamp(surface.albedo.w, 0.0f, 1.0f));
+        draw.metallic = std::clamp(surface.metallic, 0.0f, 1.0f);
+        draw.roughness = std::clamp(surface.roughness, 0.02f, 1.0f);
+        draw.reflectance = std::clamp(surface.reflectance, 0.0f, 1.0f);
+        draw.emission = srgbToLinear(surface.emission) * std::max(surface.emissionStrength, 0.0f);
+        if (draw.customTexturePath.empty()) draw.customTexturePath = surface.albedoMap;
+        if (draw.customNormalPath.empty()) draw.customNormalPath = surface.normalMap;
+        draw.ormMapPath = surface.ormMap;
+        draw.emissionMapPath = surface.emissionMap;
+        draw.uvTiling = surface.uvTiling;
+        draw.uvOffset = surface.uvOffset;
+        draw.uvObjectScale = surface.uvObjectScale != 0;
+        draw.normalStrength = surface.normalStrength;
+        draw.normalDirectX = surface.normalDirectX;
+        draw.aoStrength = surface.aoStrength;
+        draw.heightScale = surface.heightScale;
+        draw.parallaxSteps = surface.parallaxSteps;
+        if (surface.displacementMode == 1 && m_displacePipeline && draw.mesh &&
+            !surface.normalMap.empty() && surface.displacementScale > 0.0f) {
+            const u32 levels = std::min<u32>(surface.meshSubdivisions, 9u);
+            RHI::Texture* heightTex = GpuTextureCache::instance().acquire(
+                m_device, surface.normalMap, projectRoot, 0);
+            DisplacedMesh* dm = heightTex ? displacedMeshFor(draw.mesh, levels) : nullptr;
+            if (dm) {
+                draw.displacementTexture = heightTex;
+                const f32 sx = Vec3(worldMatrix.data()[0], worldMatrix.data()[1], worldMatrix.data()[2]).length();
+                const f32 sz = Vec3(worldMatrix.data()[8], worldMatrix.data()[9], worldMatrix.data()[10]).length();
+                const f32 avgScale = std::max(0.5f * (sx + sz), 1e-4f);
+                const f32 tile = std::max(0.5f * (surface.uvTiling.x + surface.uvTiling.y), 1e-4f);
+                draw.mesh = &dm->mesh;
+                draw.displaced = true;
+                draw.heightScale = 0.0f; // real geometry replaces parallax
+                draw.displacementScale = surface.displacementScale;
+                draw.displacementMetresPerUv = dm->metersPerUv * avgScale / tile;
+                draw.displacementEps = std::max(dm->edgeUv * tile, 1e-5f);
+            }
+        }
+        draw.alphaMode = static_cast<u8>(surface.alphaMode);
+        draw.alphaCutoff = surface.alphaCutoff;
+        draw.transmission = std::clamp(surface.transmission, 0.0f, 1.0f);
+        draw.ior = std::max(surface.ior, 1.0f);
+        draw.clearcoat = std::clamp(surface.clearcoat, 0.0f, 1.0f);
+        draw.clearcoatRoughness = std::clamp(surface.clearcoatRoughness, 0.02f, 1.0f);
+        draw.sheenColor = srgbToLinear(surface.sheenColor);
+        draw.sheenRoughness = surface.sheenRoughness;
+        draw.windStrength = surface.windStrength;
+        draw.windSpeed = surface.windSpeed;
+        draw.windFlutter = surface.windFlutter;
+        draw.translucency = surface.translucency;
+        // The material's modifiers combine with the entity's: tint multiplies, amounts add.
+        draw.modTint = Vec3(draw.modTint.x * surface.modTint.x, draw.modTint.y * surface.modTint.y,
+                            draw.modTint.z * surface.modTint.z);
+        draw.modWetness = std::clamp(draw.modWetness + surface.modWetness, 0.0f, 1.0f);
+        draw.modSnow = std::clamp(draw.modSnow + surface.modSnow, 0.0f, 1.0f);
+        draw.modAge = std::clamp(draw.modAge + surface.modAge, 0.0f, 1.0f);
+        draw.iridescence = std::clamp(surface.iridescence, 0.0f, 1.0f);
+        draw.iridescenceThickness = surface.iridescenceThickness;
+        draw.iridescenceIor = surface.iridescenceIor;
+        if (draw.alphaMode == 0 && draw.albedo.w < 1.0f) draw.albedo.w = 1.0f;
+        Effects::SurfaceShade shade;
+        shade.albedo = draw.albedo;
+        shade.emission = draw.emission;
+        shade.metallic = draw.metallic;
+        shade.roughness = draw.roughness;
+        shade.reflectance = draw.reflectance;
+        Effects::applyMaterialReflection(surface.reflection, surface.reflectionBudget, shade);
+        draw.albedo = shade.albedo;
+        draw.emission = shade.emission;
+        draw.metallic = shade.metallic;
+        draw.roughness = shade.roughness;
+        draw.reflectance = shade.reflectance;
+        draw.reflection = shade.reflection;
+        draw.ssrStepsOverride = shade.ssrSteps;
+        draw.ssrRoughnessGate = shade.ssrRoughness;
+        draw.reflectPerformance = surface.reflectionPerformance != 0;
+        draw.reflectQuality = surface.reflectionQuality != 0;
+        draw.ssrResolution = surface.ssrResolution;
+        draw.ssrMaxSteps = surface.ssrMaxSteps;
+        draw.ssrTemporalFrames = surface.ssrTemporalFrames;
+        draw.ssrDistance = surface.ssrDistance;
+        draw.ssrSamples = surface.ssrSamples;
+        draw.ssrDenoise = surface.ssrDenoise;
+        draw.ssrProbeBlend = surface.ssrProbeBlend;
+        draw.ssrBounces = surface.ssrBounces;
+        if (draw.reflectQuality && surface.reflectionPlanar) draw.planarReceiver = true;
+    }
+}
+
 std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
     ECS::World& world, const Vec3& cameraPos, const Spatial::Frustum& frustum,
     const std::string& projectRoot, const GpuSceneRenderOptions& options) {
@@ -2655,99 +2753,7 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
             draw.alphaMode = mode;
             draw.alphaCutoff = cutoff;
         }
-        if (!materialPath.empty()) {
-            const Assets::MaterialSurface surface =
-                Assets::MaterialCache::instance().resolve(materialPath, projectRoot);
-            if (surface.valid) {
-                draw.hasAuthoredMaterial = true;
-                const Vec3 albedo = srgbToLinear(Vec3(surface.albedo.x, surface.albedo.y, surface.albedo.z));
-                draw.albedo = Vec4(albedo.x, albedo.y, albedo.z, std::clamp(surface.albedo.w, 0.0f, 1.0f));
-                draw.metallic = std::clamp(surface.metallic, 0.0f, 1.0f);
-                draw.roughness = std::clamp(surface.roughness, 0.02f, 1.0f);
-                draw.reflectance = std::clamp(surface.reflectance, 0.0f, 1.0f);
-                draw.emission = srgbToLinear(surface.emission) * std::max(surface.emissionStrength, 0.0f);
-                if (draw.customTexturePath.empty()) draw.customTexturePath = surface.albedoMap;
-                if (draw.customNormalPath.empty()) draw.customNormalPath = surface.normalMap;
-                draw.ormMapPath = surface.ormMap;
-                draw.emissionMapPath = surface.emissionMap;
-                draw.uvTiling = surface.uvTiling;
-                draw.uvOffset = surface.uvOffset;
-                draw.uvObjectScale = surface.uvObjectScale != 0;
-                draw.normalStrength = surface.normalStrength;
-                draw.normalDirectX = surface.normalDirectX;
-                draw.aoStrength = surface.aoStrength;
-                draw.heightScale = surface.heightScale;
-                draw.parallaxSteps = surface.parallaxSteps;
-                if (surface.displacementMode == 1 && m_displacePipeline && draw.mesh &&
-                    !surface.normalMap.empty() && surface.displacementScale > 0.0f) {
-                    const u32 levels = std::min<u32>(surface.meshSubdivisions, 9u);
-                    RHI::Texture* heightTex = GpuTextureCache::instance().acquire(
-                        m_device, surface.normalMap, projectRoot, 0);
-                    DisplacedMesh* dm = heightTex ? displacedMeshFor(draw.mesh, levels) : nullptr;
-                    if (dm) {
-                        draw.displacementTexture = heightTex;
-                        const f32 sx = Vec3(worldMatrix.data()[0], worldMatrix.data()[1], worldMatrix.data()[2]).length();
-                        const f32 sz = Vec3(worldMatrix.data()[8], worldMatrix.data()[9], worldMatrix.data()[10]).length();
-                        const f32 avgScale = std::max(0.5f * (sx + sz), 1e-4f);
-                        const f32 tile = std::max(0.5f * (surface.uvTiling.x + surface.uvTiling.y), 1e-4f);
-                        draw.mesh = &dm->mesh;
-                        draw.displaced = true;
-                        draw.heightScale = 0.0f; // real geometry replaces parallax
-                        draw.displacementScale = surface.displacementScale;
-                        draw.displacementMetresPerUv = dm->metersPerUv * avgScale / tile;
-                        draw.displacementEps = std::max(dm->edgeUv * tile, 1e-5f);
-                    }
-                }
-                draw.alphaMode = static_cast<u8>(surface.alphaMode);
-                draw.alphaCutoff = surface.alphaCutoff;
-                draw.transmission = std::clamp(surface.transmission, 0.0f, 1.0f);
-                draw.ior = std::max(surface.ior, 1.0f);
-                draw.clearcoat = std::clamp(surface.clearcoat, 0.0f, 1.0f);
-                draw.clearcoatRoughness = std::clamp(surface.clearcoatRoughness, 0.02f, 1.0f);
-                draw.sheenColor = srgbToLinear(surface.sheenColor);
-                draw.sheenRoughness = surface.sheenRoughness;
-                draw.windStrength = surface.windStrength;
-                draw.windSpeed = surface.windSpeed;
-                draw.windFlutter = surface.windFlutter;
-                draw.translucency = surface.translucency;
-                // The material's modifiers combine with the entity's: tint multiplies, amounts add.
-                draw.modTint = Vec3(draw.modTint.x * surface.modTint.x, draw.modTint.y * surface.modTint.y,
-                                    draw.modTint.z * surface.modTint.z);
-                draw.modWetness = std::clamp(draw.modWetness + surface.modWetness, 0.0f, 1.0f);
-                draw.modSnow = std::clamp(draw.modSnow + surface.modSnow, 0.0f, 1.0f);
-                draw.modAge = std::clamp(draw.modAge + surface.modAge, 0.0f, 1.0f);
-                draw.iridescence = std::clamp(surface.iridescence, 0.0f, 1.0f);
-                draw.iridescenceThickness = surface.iridescenceThickness;
-                draw.iridescenceIor = surface.iridescenceIor;
-                if (draw.alphaMode == 0 && draw.albedo.w < 1.0f) draw.albedo.w = 1.0f;
-                Effects::SurfaceShade shade;
-                shade.albedo = draw.albedo;
-                shade.emission = draw.emission;
-                shade.metallic = draw.metallic;
-                shade.roughness = draw.roughness;
-                shade.reflectance = draw.reflectance;
-                Effects::applyMaterialReflection(surface.reflection, surface.reflectionBudget, shade);
-                draw.albedo = shade.albedo;
-                draw.emission = shade.emission;
-                draw.metallic = shade.metallic;
-                draw.roughness = shade.roughness;
-                draw.reflectance = shade.reflectance;
-                draw.reflection = shade.reflection;
-                draw.ssrStepsOverride = shade.ssrSteps;
-                draw.ssrRoughnessGate = shade.ssrRoughness;
-                draw.reflectPerformance = surface.reflectionPerformance != 0;
-                draw.reflectQuality = surface.reflectionQuality != 0;
-                draw.ssrResolution = surface.ssrResolution;
-                draw.ssrMaxSteps = surface.ssrMaxSteps;
-                draw.ssrTemporalFrames = surface.ssrTemporalFrames;
-                draw.ssrDistance = surface.ssrDistance;
-                draw.ssrSamples = surface.ssrSamples;
-                draw.ssrDenoise = surface.ssrDenoise;
-                draw.ssrProbeBlend = surface.ssrProbeBlend;
-                draw.ssrBounces = surface.ssrBounces;
-                if (draw.reflectQuality && surface.reflectionPlanar) draw.planarReceiver = true;
-            }
-        }
+        applyAuthoredMaterial(draw, materialPath, worldMatrix, projectRoot);
         if (filter.primitive == ECS::MeshPrimitive::Custom) {
             const std::string& resolved = Assets::MeshCache::getInstance().getResolvedPath();
             draw.meshPath = resolved.empty() ? filter.customMeshPath : resolved;
@@ -2884,7 +2890,136 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
         }
     });
 
+    gatherWorldInstanceDraws(world, cameraPos, frustum, projectRoot, options, draws);
     return draws;
+}
+
+void GpuSceneRenderer::gatherWorldInstanceDraws(ECS::World& world, const Vec3& cameraPos,
+                                                const Spatial::Frustum& frustum, const std::string& projectRoot,
+                                                const GpuSceneRenderOptions& options,
+                                                std::vector<MeshDraw>& draws) {
+    namespace CW = Caffeine::World;
+    const std::vector<Vec3>& viewers = options.textureQualityViewers;
+    ECS::ComponentQuery q;
+    q.with<ECS::WorldInstancesComponent>();
+    world.forEach<ECS::WorldInstancesComponent>(q, [&](ECS::Entity entity, ECS::WorldInstancesComponent& component) {
+        if (Scene::isEffectivelyDisabled(world, entity)) return;
+        if (options.excludeEntity.isValid() && entity == options.excludeEntity) return;
+        const CW::WorldInstanceSet& set =
+            CW::WorldInstanceCache::instance().get(component.bakePath, component.modelsPath, projectRoot);
+        if (set.bake.chunks.empty() || set.models.empty()) return;
+
+        const Mat4 worldMatrix = entityMatrix(world, entity);
+        const f32 entityScale =
+            std::max({Vec3(worldMatrix(0, 0), worldMatrix(1, 0), worldMatrix(2, 0)).length(),
+                      Vec3(worldMatrix(0, 1), worldMatrix(1, 1), worldMatrix(2, 1)).length(),
+                      Vec3(worldMatrix(0, 2), worldMatrix(1, 2), worldMatrix(2, 2)).length()});
+
+        // The draws of one model part, one per material slot, made once per entity and frame and copied per
+        // instance: the same fields a Mesh Filter draw gets from its mesh and materials.
+        struct PartDraws {
+            std::vector<MeshDraw> slots;
+            f32 radius = 0.0f;  ///< pivot to the farthest corner of the mesh bounds
+        };
+        std::unordered_map<const CW::InstanceModelPart*, PartDraws> parts;
+        f32& modelRadius = m_worldInstanceRadius[entity.id()];
+        auto partDraws = [&](const CW::InstanceModelPart& part) -> const PartDraws& {
+            auto found = parts.find(&part);
+            if (found != parts.end()) return found->second;
+            PartDraws& out = parts[&part];
+            Assets::Mesh3D* mesh = Assets::MeshCache::getInstance().getMesh(part.meshPath, projectRoot);
+            if (!mesh || mesh->vertices.empty()) return out;
+            const std::string resolved = Assets::MeshCache::getInstance().getResolvedPath();
+            for (int i = 0; i < 8; ++i) {
+                const Vec3 corner((i & 1) ? mesh->bounds.max.x : mesh->bounds.min.x,
+                                  (i & 2) ? mesh->bounds.max.y : mesh->bounds.min.y,
+                                  (i & 4) ? mesh->bounds.max.z : mesh->bounds.min.z);
+                out.radius = std::max(out.radius, corner.length());
+            }
+            modelRadius = std::max(modelRadius, out.radius);
+            u8 alphaMode = 0;
+            f32 alphaCutoff = 0.5f;
+            for (const Assets::MeshSurfaceMaterial& material : mesh->materials) {
+                if (material.alphaMode > alphaMode) alphaMode = material.alphaMode;
+                if (material.alphaMode != 0) alphaCutoff = material.alphaCutoff;
+            }
+            auto make = [&](const std::string& materialPath, i32 onlySubMesh) {
+                MeshDraw draw;
+                draw.entity = entity;
+                draw.mesh = mesh;
+                draw.onlySubMesh = onlySubMesh;
+                draw.worldMatrix = worldMatrix;
+                draw.castShadows = component.castShadows && !part.cutout;
+                draw.receiveShadows = true;
+                draw.alphaMode = alphaMode;
+                draw.alphaCutoff = alphaCutoff;
+                applyAuthoredMaterial(draw, materialPath, worldMatrix, projectRoot);
+                draw.meshPath = resolved.empty() ? part.meshPath : resolved;
+                out.slots.push_back(std::move(draw));
+            };
+            // Multi-material meshes draw one sub-mesh per draw so each part still batches (see
+            // assignInstanceBatches: only single sub-mesh draws are instanced).
+            const std::vector<std::string> slots = ECS::splitMaterialSlots(part.slots);
+            if (mesh->subMeshes.size() < 2) {
+                make(slots.empty() ? std::string() : slots.front(), -1);
+            } else {
+                for (u32 s = 0; s < mesh->subMeshes.size(); ++s) {
+                    make(s < slots.size() ? slots[s] : std::string(), static_cast<i32>(s));
+                }
+            }
+            return out;
+        };
+        // The shared models first: their radius bounds the chunks before any instance is looked at.
+        for (const auto& [key, list] : set.models.variants) {
+            for (const CW::InstanceModelPart& part : list) partDraws(part);
+        }
+
+        for (usize c = 0; c < set.bake.chunks.size(); ++c) {
+            if (c >= set.chunkBounds.size() ||
+                !CW::chunkVisible(set.chunkBounds[c], worldMatrix, modelRadius, &frustum, cameraPos,
+                                  component.drawDistance)) {
+                ++m_building.frustumCulled;
+                continue;
+            }
+            for (const CW::InstanceRecord& record : set.bake.chunks[c].instances) {
+                const std::vector<CW::InstanceModelPart>* model = set.models.partsFor(record);
+                if (!model) continue;
+                const Mat4 instanceWorld = worldMatrix * CW::instanceLocalMatrix(record);
+                const Vec3 center = instanceWorld.transformPoint(Vec3(0.0f, 0.0f, 0.0f));
+                // Quantised (1/32 steps): the modifiers are part of the instancing batch key, so neighbouring
+                // tints must compare equal for the instances to keep sharing one instanced draw.
+                const Vec3 tint = CW::quantisedInstanceTint(record);
+                const f32 wetness = std::clamp(CW::quantiseInstanceModifier(record.wetness), 0.0f, 1.0f);
+                const f32 snow = std::clamp(CW::quantiseInstanceModifier(record.snow), 0.0f, 1.0f);
+                const f32 viewerDistance =
+                    viewers.empty() ? (center - cameraPos).length() : distanceToNearestViewer(center, viewers);
+                for (const CW::InstanceModelPart& part : *model) {
+                    const PartDraws& source = partDraws(part);
+                    if (source.slots.empty()) continue;
+                    const f32 r = source.radius * std::abs(record.scale) * entityScale;
+                    Spatial::AABB3D box;
+                    box.min = center - Vec3(r, r, r);
+                    box.max = center + Vec3(r, r, r);
+                    if (!frustum.intersects(box)) {
+                        ++m_building.frustumCulled;
+                        continue;
+                    }
+                    for (const MeshDraw& slot : source.slots) {
+                        MeshDraw draw = slot;
+                        draw.worldMatrix = instanceWorld;
+                        draw.modTint = Vec3(draw.modTint.x * tint.x, draw.modTint.y * tint.y, draw.modTint.z * tint.z);
+                        draw.modWetness = std::clamp(draw.modWetness + wetness, 0.0f, 1.0f);
+                        draw.modSnow = std::clamp(draw.modSnow + snow, 0.0f, 1.0f);
+                        draw.viewerDistance = viewerDistance;
+                        draw.hasAabb = true;
+                        draw.aabbMin = box.min;
+                        draw.aabbMax = box.max;
+                        draws.push_back(std::move(draw));
+                    }
+                }
+            }
+        }
+    });
 }
 
 namespace {

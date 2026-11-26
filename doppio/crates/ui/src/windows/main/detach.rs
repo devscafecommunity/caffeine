@@ -70,6 +70,7 @@ impl PaneKind {
             PaneKind::NatureGenerator => "nature",
             PaneKind::WaterGenerator => "water",
             PaneKind::TerrainGenerator => "terrain",
+            PaneKind::World => "world",
             PaneKind::Inspector => "inspector",
             PaneKind::Photon => "photon",
             PaneKind::Environment => "environment",
@@ -100,7 +101,7 @@ impl PaneKind {
     }
 
     /// Every kind of tab.
-    pub(super) const ALL: [PaneKind; 26] = [
+    pub(super) const ALL: [PaneKind; 27] = [
         PaneKind::Hierarchy,
         PaneKind::Assets,
         PaneKind::Viewport,
@@ -109,6 +110,7 @@ impl PaneKind {
         PaneKind::NatureGenerator,
         PaneKind::WaterGenerator,
         PaneKind::TerrainGenerator,
+        PaneKind::World,
         PaneKind::Inspector,
         PaneKind::Photon,
         PaneKind::Environment,

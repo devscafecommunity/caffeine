@@ -40,15 +40,18 @@ pub enum Kind {
     Nature,
     Water,
     Terrain,
+    /// A World Composer composition (`Valley.generator.world`): terrain, water and classes of things.
+    World,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 5] = [
+    pub const ALL: [Kind; 6] = [
         Kind::Material,
         Kind::Texture,
         Kind::Nature,
         Kind::Water,
         Kind::Terrain,
+        Kind::World,
     ];
 
     /// Last extension segment: `material` in `Rock.generator.material`.
@@ -59,6 +62,7 @@ impl Kind {
             Kind::Nature => "nature",
             Kind::Water => "water",
             Kind::Terrain => "terrain",
+            Kind::World => "world",
         }
     }
 
@@ -69,6 +73,7 @@ impl Kind {
             Kind::Nature => "Nature Generator",
             Kind::Water => "Water Generator",
             Kind::Terrain => "Terrain Generator",
+            Kind::World => "World Composer",
         }
     }
 
@@ -86,6 +91,7 @@ impl Kind {
             Kind::Nature => &["nature"],
             Kind::Water => &["water"],
             Kind::Terrain => &["terrain-graph"],
+            Kind::World => &[],
         }
     }
 }

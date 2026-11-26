@@ -32,6 +32,7 @@ pub mod texture_set;
 pub mod theme;
 pub mod vegetation_recipe;
 pub mod water;
+pub mod world;
 
 /// A UI-side view of an engine entity. The engine crate owns the real data;
 /// panels consume this plain struct so they stay testable without the C++ lib.

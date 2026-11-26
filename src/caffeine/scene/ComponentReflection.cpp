@@ -5,6 +5,7 @@
 #include "ecs/Components3D.hpp"
 #include "ecs/LightComponents.hpp"
 #include "ecs/MeshComponents.hpp"
+#include "ecs/WorldInstancesComponents.hpp"
 #include "ecs/World.hpp"
 #include "caffeine/photon/Photon.hpp"
 #include "physics/PhysicsComponents2D.hpp"
@@ -446,6 +447,11 @@ const std::vector<ComponentDesc>& componentRegistry() {
              stringField<ECS::MeshFilterComponent>("Material", &ECS::MeshFilterComponent::customMaterialPath),
              stringField<ECS::MeshFilterComponent>("Material slots", &ECS::MeshFilterComponent::slotMaterials),
              f32Field<ECS::MeshFilterComponent>("Shininess", &ECS::MeshFilterComponent::shininess, 0.0f, 1024.0f, 1.0f)}),
+        component<ECS::WorldInstancesComponent>(17, "World Instances",
+            {stringField<ECS::WorldInstancesComponent>("Bake", &ECS::WorldInstancesComponent::bakePath),
+             stringField<ECS::WorldInstancesComponent>("Models", &ECS::WorldInstancesComponent::modelsPath),
+             f32Field<ECS::WorldInstancesComponent>("Draw distance", &ECS::WorldInstancesComponent::drawDistance, 0.0f, 100000.0f, 1.0f),
+             boolField<ECS::WorldInstancesComponent>("Cast shadows", &ECS::WorldInstancesComponent::castShadows)}),
         component<Caffeine::Script::ScriptComponent>(12, "Script",
             {stringField<Caffeine::Script::ScriptComponent>("Script", &Caffeine::Script::ScriptComponent::scriptPath),
              boolField<Caffeine::Script::ScriptComponent>("Enabled", &Caffeine::Script::ScriptComponent::enabled),

@@ -509,6 +509,36 @@ pub const WATERGEN_NAME: UiId = UiId::fixed("watergen.name");
 pub const WATERGEN_EXPORT: UiId = UiId::fixed("watergen.export");
 pub const WATERGEN_PLACE: UiId = UiId::fixed("watergen.place");
 pub const WATERGEN_STATS: UiId = UiId::fixed("watergen.stats");
+pub const PANE_WORLD: UiId = UiId::fixed("editor.pane.world");
+pub const PANE_TAB_WORLD: UiId = UiId::fixed("editor.pane.tab.world");
+pub const SHOW_WORLD: UiId = UiId::fixed("editor.menu.view.world");
+pub const WORLD_NAME: UiId = UiId::fixed("world.toolbar.name");
+pub const WORLD_UNDO: UiId = UiId::fixed("world.toolbar.undo");
+pub const WORLD_REDO: UiId = UiId::fixed("world.toolbar.redo");
+pub const WORLD_NEW: UiId = UiId::fixed("world.toolbar.new");
+pub const WORLD_SAVE: UiId = UiId::fixed("world.toolbar.save");
+pub const WORLD_PREVIEW: UiId = UiId::fixed("world.toolbar.preview");
+pub const WORLD_SAVE_PREFAB: UiId = UiId::fixed("world.toolbar.save_prefab");
+pub const WORLD_BUILD: UiId = UiId::fixed("world.toolbar.build");
+pub const WORLD_FRAME: UiId = UiId::fixed("world.toolbar.frame");
+pub const WORLD_LIBRARY_SEARCH: UiId = UiId::fixed("world.library.search");
+pub const WORLD_TERRAIN: UiId = UiId::fixed("world.composition.terrain");
+pub const WORLD_TERRAIN_SIZE_X: UiId = UiId::fixed("world.composition.terrain_size_x");
+pub const WORLD_TERRAIN_SIZE_Z: UiId = UiId::fixed("world.composition.terrain_size_z");
+pub const WORLD_PREVIEW_NOTE: UiId = UiId::fixed("world.composition.preview");
+pub const WORLD_SEED: UiId = UiId::fixed("world.rules.seed");
+pub const WORLD_RESEED: UiId = UiId::fixed("world.rules.reseed");
+pub const WORLD_UNIQUE: UiId = UiId::fixed("world.rules.unique");
+pub const WORLD_ADD_TERM: UiId = UiId::fixed("world.rules.add_term");
+pub const WORLD_ADD_ADAPT: UiId = UiId::fixed("world.rules.add_adapt");
+pub const WORLD_ADD_PIN: UiId = UiId::fixed("world.rules.add_pin");
+pub const WORLD_ADD_MOVE: UiId = UiId::fixed("world.rules.add_move");
+pub const WORLD_REMOVE_IN_REGION: UiId = UiId::fixed("world.rules.remove_in_region");
+pub const WORLD_STATUS: UiId = UiId::fixed("world.status");
+pub const WORLD_DROP: UiId = UiId::fixed("world.composition.drop");
+pub const WORLD_GRAPH: UiId = UiId::fixed("world.composition.graph");
+pub const WORLD_BRUSH: UiId = UiId::fixed("world.rules.brush");
+pub const WORLD_BRUSH_RADIUS: UiId = UiId::fixed("world.rules.brush_radius");
 pub const PANE_TERRAIN_GENERATOR: UiId = UiId::fixed("editor.pane.terrain_generator");
 pub const PANE_TAB_TERRAIN_GENERATOR: UiId = UiId::fixed("editor.pane.tab.terrain_generator");
 pub const SHOW_TERRAIN_GENERATOR: UiId = UiId::fixed("editor.menu.view.terrain_generator");
@@ -739,6 +769,33 @@ pub fn naturegen_param(key: &str) -> UiId {
     UiId::dynamic(format!("naturegen.param.{key}"))
 }
 
+// Nature Generator: exposed parameters (the World Composer drives them by name).
+
+/// The Expose toggle beside a numeric node parameter (`naturegen.expose.<param>`).
+pub fn naturegen_expose(key: &str) -> UiId {
+    UiId::dynamic(format!("naturegen.expose.{key}"))
+}
+
+/// The name field of an exposed parameter (`naturegen.exposed.name.N`, N = its place in the list).
+pub fn naturegen_exposed_name(index: usize) -> UiId {
+    UiId::dynamic(format!("naturegen.exposed.name.{index}"))
+}
+
+/// The range minimum of an exposed parameter (`naturegen.exposed.min.N`).
+pub fn naturegen_exposed_min(index: usize) -> UiId {
+    UiId::dynamic(format!("naturegen.exposed.min.{index}"))
+}
+
+/// The range maximum of an exposed parameter (`naturegen.exposed.max.N`).
+pub fn naturegen_exposed_max(index: usize) -> UiId {
+    UiId::dynamic(format!("naturegen.exposed.max.{index}"))
+}
+
+/// Stops exposing a parameter (`naturegen.exposed.remove.N`).
+pub fn naturegen_exposed_remove(index: usize) -> UiId {
+    UiId::dynamic(format!("naturegen.exposed.remove.{index}"))
+}
+
 /// One row of the profiler's table (`profiler.table.row.N`).
 pub fn profiler_row(index: usize) -> UiId {
     UiId::dynamic(format!("profiler.table.row.{index}"))
@@ -757,6 +814,66 @@ pub fn watergen_add(op: &str) -> UiId {
 
 pub fn watergen_param(key: &str) -> UiId {
     UiId::dynamic(format!("watergen.param.{key}"))
+}
+
+/// A recipe of the World tab's Library (`world.library.item.N`).
+pub fn world_library_item(index: usize) -> UiId {
+    UiId::dynamic(format!("world.library.item.{index}"))
+}
+
+/// A class row of the composition (`world.composition.class_row.N`, N = the class's place in the file).
+pub fn world_class_row(index: usize) -> UiId {
+    UiId::dynamic(format!("world.composition.class_row.{index}"))
+}
+
+pub fn world_class_remove(index: usize) -> UiId {
+    UiId::dynamic(format!("world.composition.class_remove.{index}"))
+}
+
+pub fn world_water_row(index: usize) -> UiId {
+    UiId::dynamic(format!("world.composition.water_row.{index}"))
+}
+
+pub fn world_water_remove(index: usize) -> UiId {
+    UiId::dynamic(format!("world.composition.water_remove.{index}"))
+}
+
+/// A slider of a water row: `world.composition.water.N.<min|level|carve>`.
+pub fn world_water_value(index: usize, key: &str) -> UiId {
+    UiId::dynamic(format!("world.composition.water.{index}.{key}"))
+}
+
+pub fn world_material_slot(index: usize) -> UiId {
+    UiId::dynamic(format!("world.composition.material_slot.{index}"))
+}
+
+pub fn world_material_remove(index: usize) -> UiId {
+    UiId::dynamic(format!("world.composition.material_remove.{index}"))
+}
+
+/// A slider of the selected class: `world.rules.class.<variants|priority|cell|...>`.
+pub fn world_class_field(key: &str) -> UiId {
+    UiId::dynamic(format!("world.rules.class.{key}"))
+}
+
+/// A control of a `where` term: `world.rules.term.N.<mask|rise0|rise1|fall1|fall0|remove>`.
+pub fn world_term(index: usize, key: &str) -> UiId {
+    UiId::dynamic(format!("world.rules.term.{index}.{key}"))
+}
+
+/// A control of an `adapt` line: `world.rules.adapt.N.<target|mask|amount|remove>`.
+pub fn world_adapt(index: usize, key: &str) -> UiId {
+    UiId::dynamic(format!("world.rules.adapt.{index}.{key}"))
+}
+
+/// A slider of the edit region: `world.rules.region.N` (x0, z0, x1, z1).
+pub fn world_region(index: usize) -> UiId {
+    UiId::dynamic(format!("world.rules.region.{index}"))
+}
+
+/// A control of an override row: `world.rules.override.N.<row|remove|cell_x|cell_z|x|z|variant>`.
+pub fn world_override(index: usize, key: &str) -> UiId {
+    UiId::dynamic(format!("world.rules.override.{index}.{key}"))
 }
 
 pub fn terraingen_group(name: &str) -> UiId {
@@ -1130,6 +1247,32 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: NATUREGEN_DELETE_NODE,
         description: "Deletes the selected node.",
+        kind: "button",
+    },
+    // Nature Generator: exposed parameters.
+    UiMeta {
+        id: UiId::fixed("naturegen.expose"),
+        description: "Exposes a numeric parameter of the selected node under a name the World Composer can drive (press again to stop); uses the .<param> suffix.",
+        kind: "chip",
+    },
+    UiMeta {
+        id: UiId::fixed("naturegen.exposed.name"),
+        description: "Name of an exposed parameter (letters, digits, _ or -), as the World Composer's adapt param.<name> lines use it; uses the .N suffix.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: UiId::fixed("naturegen.exposed.min"),
+        description: "Lowest value the World Composer may give an exposed parameter; uses the .N suffix.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: UiId::fixed("naturegen.exposed.max"),
+        description: "Highest value the World Composer may give an exposed parameter; uses the .N suffix.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: UiId::fixed("naturegen.exposed.remove"),
+        description: "Stops exposing a parameter; uses the .N suffix.",
         kind: "button",
     },
     UiMeta {
@@ -2621,6 +2764,221 @@ pub const CATALOG: &[UiMeta] = &[
         id: WATERGEN_STATS,
         description: "Waves, size and depth of the evaluated water.",
         kind: "text",
+    },
+    UiMeta {
+        id: PANE_WORLD,
+        description: "World Composer: a world made of recipes (terrain, water, materials and classes of trees, rocks and plants), built deterministically by the engine into the scene or an instance bake.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_WORLD,
+        description: "Tab of the World Composer pane.",
+        kind: "pane_tab",
+    },
+    UiMeta {
+        id: SHOW_WORLD,
+        description: "Opens the World Composer tab (compose a world from terrain, water and nature recipes).",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: WORLD_NAME,
+        description: "Name of the world: the recipe is saved as World/<Name>.generator.world and the build as the World <Name> entity.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: WORLD_UNDO,
+        description: "Undoes the last composition edit.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_REDO,
+        description: "Redoes the composition edit that was undone.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_NEW,
+        description: "Starts an empty composition (on the terrain of the current one).",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_SAVE,
+        description: "Saves the composition as World/<Name>.generator.world.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_PREVIEW,
+        description: "Runs the coarse preview on a worker thread (terrain bake and engine build, the latest edit wins) and shows the count per class.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_SAVE_PREFAB,
+        description: "Saves the built World <Name> entity tree as World/<Name>.prefab, linked to its .generator.world recipe.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_BUILD,
+        description: "Builds the world: resolves every recipe, bakes the terrain, places the classes and writes the scene (entities for a small world, a .cinst instance bake for a large one). One undo step.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_FRAME,
+        description: "Points the viewport camera at the last build (the whole terrain in view) and brings the Viewport tab to the front.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_LIBRARY_SEARCH,
+        description: "Filters the Library's recipes by path.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: WORLD_TERRAIN,
+        description: "The terrain recipe the world grows on.",
+        kind: "text",
+    },
+    UiMeta {
+        id: WORLD_TERRAIN_SIZE_X,
+        description: "Width of the terrain in metres (0: the terrain recipe's own size).",
+        kind: "slider",
+    },
+    UiMeta {
+        id: WORLD_TERRAIN_SIZE_Z,
+        description: "Depth of the terrain in metres (0: the terrain recipe's own size).",
+        kind: "slider",
+    },
+    UiMeta {
+        id: WORLD_PREVIEW_NOTE,
+        description: "What the coarse preview counted, per class.",
+        kind: "text",
+    },
+    UiMeta {
+        id: WORLD_SEED,
+        description: "The world seed: the same seed, composition and terrain always give the same world.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: WORLD_RESEED,
+        description: "Derives a new seed from the current one (undoable).",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_UNIQUE,
+        description: "Bakes this class per instance (a hero object) instead of picking from its variant pool.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: WORLD_ADD_TERM,
+        description: "Adds a where term (a trapezoid over a mask) to the selected class.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_ADD_ADAPT,
+        description: "Adds an adapt line: the ground context at an instance drives its size, lean, tint, wetness or snow.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_ADD_PIN,
+        description: "Adds an override pin row (keep one variant at a cell) for the selected class.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_ADD_MOVE,
+        description: "Adds an override move row (move the instance of a cell) for the selected class.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_REMOVE_IN_REGION,
+        description: "Removes every instance of the last build inside the region (override remove lines, undoable) and rebuilds.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WORLD_DROP,
+        description: "Drop target of the Composition: release a recipe dragged from the Library here to add it.",
+        kind: "tree_row",
+    },
+    UiMeta {
+        id: WORLD_GRAPH,
+        description: "Node graph of the composition: terrain, water, material and class building blocks wired into the World output. Click a class node to select it below; drag to rearrange (layout only, not saved).",
+        kind: "node_canvas",
+    },
+    UiMeta {
+        id: WORLD_BRUSH,
+        description: "The Viewport's Remove instances brush: dragging over the built world removes what grows under the ring (override remove lines, one undo step per stroke) and rebuilds.",
+        kind: "chip",
+    },
+    UiMeta {
+        id: WORLD_BRUSH_RADIUS,
+        description: "Radius of the Remove instances brush, in metres.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: WORLD_STATUS,
+        description: "Status of the composition: the engine's problems, or what the last build or save did.",
+        kind: "status",
+    },
+    UiMeta {
+        id: UiId::fixed("world.library.item"),
+        description: "A recipe of the World tab's Library; click it, or drag it onto the Composition, to add it. Rows use the .N suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("world.composition.class_row"),
+        description: "A class of the composition (ref, variants, priority, density hint, preview count); click to edit its rules. Rows use the .N suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("world.composition.class_remove"),
+        description: "Removes a class from the composition; uses the .N suffix.",
+        kind: "button",
+    },
+    UiMeta {
+        id: UiId::fixed("world.composition.water_row"),
+        description: "A water body of the composition (river or lake); uses the .N suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("world.composition.water_remove"),
+        description: "Removes a water body; uses the .N suffix.",
+        kind: "button",
+    },
+    UiMeta {
+        id: UiId::fixed("world.composition.water"),
+        description: "Sliders of a water body (.N.min, .N.level, .N.carve).",
+        kind: "slider",
+    },
+    UiMeta {
+        id: UiId::fixed("world.composition.material_slot"),
+        description: "The slot a material binding fills (terrain.layer0, ...); uses the .N suffix.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: UiId::fixed("world.composition.material_remove"),
+        description: "Removes a material binding; uses the .N suffix.",
+        kind: "button",
+    },
+    UiMeta {
+        id: UiId::fixed("world.rules.class"),
+        description: "Sliders of the selected class (.variants, .priority, .cell, .radius, .density, .scale_min, .scale_max, .tilt, .sink, .tint, .base).",
+        kind: "slider",
+    },
+    UiMeta {
+        id: UiId::fixed("world.rules.term"),
+        description: "Controls of a where term (.N.mask, .N.rise0, .N.rise1, .N.fall1, .N.fall0, .N.remove).",
+        kind: "slider",
+    },
+    UiMeta {
+        id: UiId::fixed("world.rules.adapt"),
+        description: "Controls of an adapt line (.N.target, .N.mask, .N.amount, .N.remove).",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: UiId::fixed("world.rules.region"),
+        description: "The edit region in metres from the terrain's corner (.0 x0, .1 z0, .2 x1, .3 z1).",
+        kind: "slider",
+    },
+    UiMeta {
+        id: UiId::fixed("world.rules.override"),
+        description: "Controls of an override row (.N.row, .N.remove, .N.cell_x, .N.cell_z, .N.x, .N.z, .N.variant).",
+        kind: "list_row",
     },
     UiMeta {
         id: PANE_TERRAIN_GENERATOR,

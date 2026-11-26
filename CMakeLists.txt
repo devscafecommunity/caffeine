@@ -133,6 +133,11 @@ add_library(caffeine-core
     src/caffeine/procedural/ProceduralNoise.cpp
     src/caffeine/scatter/Scatter.cpp
     src/caffeine/scatter/TerrainScatter.cpp
+    src/caffeine/world/WorldComposition.cpp
+    src/caffeine/world/WorldBuild.cpp
+    src/caffeine/world/WorldWater.cpp
+    src/caffeine/world/WorldInstanceFile.cpp
+    src/caffeine/world/WorldInstanceDraw.cpp
     src/caffeine/micromesh/Micromesh.cpp
     src/caffeine/procedural/ProceduralProfiles.cpp
     src/caffeine/procedural/ProceduralGenerator.cpp
@@ -145,6 +150,7 @@ add_library(caffeine-core
     src/caffeine/engine/AssetLoader.cpp
     src/caffeine/core/DebugHookRegistry.cpp
     src/caffeine/capi/EngineAPI.cpp
+    src/caffeine/capi/WorldAPI.cpp
     src/caffeine/project/ProjectManager.cpp
     src/caffeine/scene/EditorContext.cpp
     src/caffeine/scene/EditorSceneSerializer.cpp
@@ -344,6 +350,7 @@ add_library(Caffeine::Core ALIAS caffeine-core)
 # engine directly. The ABI is versioned in include/caffeine/capi/EngineAPI.h.
 add_library(caffeine-capi SHARED
     src/caffeine/capi/EngineAPI.cpp
+    src/caffeine/capi/WorldAPI.cpp
 )
 target_include_directories(caffeine-capi PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

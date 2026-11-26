@@ -30,6 +30,7 @@ use crate::uikit::panels::terrain_generator as terrain_generator_panel;
 use crate::uikit::panels::texture_generator as texture_generator_panel;
 use crate::uikit::panels::texture_set as texture_set_panel;
 use crate::uikit::panels::water_generator as water_generator_panel;
+use crate::uikit::panels::world_composer as world_composer_panel;
 use crate::uikit::prefabs;
 use crate::uikit::project;
 use crate::uikit::script;
@@ -451,6 +452,7 @@ enum PaneKind {
     NatureGenerator,
     WaterGenerator,
     TerrainGenerator,
+    World,
     Inspector,
     Photon,
     Environment,
@@ -651,6 +653,9 @@ enum Message {
     ShowNatureGenerator,
     WaterGen(water_generator_panel::Edit),
     ShowWaterGenerator,
+    /// An edit of the World Composer tab (composition, rules, build, preview, edit layer).
+    WorldGen(world_composer_panel::Edit),
+    ShowWorldComposer,
     Photon(photon_panel::Edit),
     ShowPhoton,
     Environment(environment_panel::Edit),
@@ -996,6 +1001,7 @@ struct App {
     texgen: texturegen::TextureGen,
     nature: naturegen::NatureGen,
     watergen: watergen::WaterGen,
+    worldgen: worldgen::WorldGen,
     photon: photon::PhotonState,
     environment: environment::EnvironmentState,
     audio: audio::AudioState,
@@ -1047,6 +1053,7 @@ impl PaneKind {
             PaneKind::NatureGenerator => "Nature",
             PaneKind::WaterGenerator => "Water",
             PaneKind::TerrainGenerator => "Terrain",
+            PaneKind::World => "World",
             PaneKind::Inspector => "Inspector",
             PaneKind::Photon => "Photon",
             PaneKind::Environment => "Environment",
@@ -1078,6 +1085,7 @@ impl PaneKind {
             PaneKind::NatureGenerator => id::PANE_TAB_NATURE_GENERATOR,
             PaneKind::WaterGenerator => id::PANE_TAB_WATER_GENERATOR,
             PaneKind::TerrainGenerator => id::PANE_TAB_TERRAIN_GENERATOR,
+            PaneKind::World => id::PANE_TAB_WORLD,
             PaneKind::Inspector => id::PANE_TAB_INSPECTOR,
             PaneKind::Photon => id::PANE_TAB_PHOTON,
             PaneKind::Environment => id::PANE_TAB_ENVIRONMENT,
@@ -1133,6 +1141,7 @@ impl App {
                         PaneKind::TerrainGenerator,
                         PaneKind::WaterGenerator,
                         PaneKind::NatureGenerator,
+                        PaneKind::World,
                         PaneKind::Script,
                         PaneKind::DryadNodes,
                     ]))),
@@ -1407,6 +1416,7 @@ impl App {
             texgen: texturegen::TextureGen::new(),
             nature: naturegen::NatureGen::new(),
             watergen: watergen::WaterGen::new(),
+            worldgen: worldgen::WorldGen::new(),
             photon: photon::PhotonState::default(),
             environment: environment::EnvironmentState::default(),
             audio: audio::AudioState::default(),
@@ -7297,6 +7307,7 @@ impl App {
             &message,
             Message::NatureGen(_)
                 | Message::WaterGen(_)
+                | Message::WorldGen(_)
                 | Message::TerrainGen(_)
                 | Message::TextureGen(_)
                 | Message::ScatterOnTerrain(_)
@@ -7486,6 +7497,7 @@ impl App {
                 self.finish_tab_drag();
                 self.finish_hierarchy_drag();
                 self.asset_drag = None;
+                self.worldgen.drag = None;
             }
             Message::TogglePrefabPalette => {
                 self.prefab_open = !self.prefab_open;
@@ -7743,6 +7755,8 @@ impl App {
             Message::ShowNatureGenerator => self.show_nature_pane(),
             Message::WaterGen(edit) => self.edit_water(edit),
             Message::ShowWaterGenerator => self.show_water_pane(),
+            Message::WorldGen(edit) => self.edit_world(edit),
+            Message::ShowWorldComposer => self.show_world_pane(),
             Message::Photon(edit) => self.edit_photon(edit),
             Message::ShowPhoton => self.show_photon_pane(),
             Message::Environment(edit) => self.edit_environment(edit),
@@ -8106,6 +8120,7 @@ impl App {
                 }
                 self.advance_game();
                 self.pump_water_preview(dt);
+                self.pump_world_preview(false);
                 self.tick_engine_water(dt);
                 // Two rounds: when one picture's frame comes back, the next one's can start in the same tick,
                 // so the editor viewport and the scene views take turns without idling in between.
@@ -8191,6 +8206,12 @@ impl App {
                     last: None,
                     distance: 0.0,
                 });
+                // The World tab's Remove brush: a press is the first dab of a stroke.
+                if button == mouse::Button::Left && self.worldgen.brush {
+                    if let Some(center) = self.terrain_cursor.cursor.as_ref().map(|c| c.center) {
+                        self.world_brush_dab(center);
+                    }
+                }
             }
             Message::ViewportReleased(button) => {
                 if button == mouse::Button::Left {
@@ -8202,6 +8223,9 @@ impl App {
                 {
                     self.finish_texture_set_stroke();
                 }
+                if button == mouse::Button::Left && self.worldgen.brush {
+                    self.finish_world_stroke();
+                }
                 if let Some(drag) = self.viewport_drag.take() {
                     if button == mouse::Button::Right && drag.distance < 4.0 {
                         self.focus_selection();
@@ -8211,6 +8235,21 @@ impl App {
             Message::ViewportMoved(point) => {
                 self.viewport_hovered = true;
                 self.update_terrain_cursor(point);
+                // The World tab's Remove brush paints instead of orbiting.
+                let left_drag = self
+                    .viewport_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.button == mouse::Button::Left);
+                if left_drag && self.worldgen.brush {
+                    if let Some(cursor) = self.terrain_cursor_at(point) {
+                        self.world_brush_dab(cursor.center);
+                    }
+                    if let Some(drag) = self.viewport_drag.as_mut() {
+                        drag.distance += 1.0;
+                        drag.last = Some(point);
+                    }
+                    return;
+                }
                 if self.terrain_editor.stroke.is_some() {
                     self.extend_terrain_stroke();
                     if let Some(drag) = self.viewport_drag.as_mut() {
@@ -8509,6 +8548,12 @@ impl App {
                         label: "Water Generator",
                         shortcut: None,
                         message: Message::ShowWaterGenerator,
+                    },
+                    menu::Item {
+                        id: id::SHOW_WORLD,
+                        label: "World Composer",
+                        shortcut: None,
+                        message: Message::ShowWorldComposer,
                     },
                     menu::Item {
                         id: id::SHOW_NATURE_GENERATOR,
@@ -9980,6 +10025,16 @@ impl App {
                     )
                 },
             ),
+            PaneKind::World => (
+                id::PANE_WORLD,
+                "World Composer",
+                Some(format!(
+                    "{} · {} classes",
+                    self.worldgen.name,
+                    self.worldgen.comp.classes.len()
+                )),
+                world_composer_panel::view(self.worldgen.view_state(), Message::WorldGen),
+            ),
             PaneKind::TerrainGenerator => (
                 id::PANE_TERRAIN_GENERATOR,
                 "Terrain Generator",
@@ -10768,6 +10823,7 @@ mod terrainvegetation;
 mod texturegen;
 mod watergen;
 mod workspace;
+mod worldgen;
 
 #[cfg(test)]
 mod tests;
