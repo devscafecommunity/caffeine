@@ -302,6 +302,19 @@ pub fn nature_variants_with(
     cache_dir: &Path,
     mut materials: Option<&mut dyn PartMaterials>,
 ) -> Result<Vec<Baked>, String> {
+    // Explicit reborrow (not `as_deref_mut()`): that helper ties its output's
+    // lifetime to the `&mut self` borrow rather than reborrowing the trait
+    // object, so each loop iteration would hold onto the previous one
+    // (NLL limitation, "problem case #3").
+    fn reborrow<'a>(
+        materials: &'a mut Option<&mut dyn PartMaterials>,
+    ) -> Option<&'a mut dyn PartMaterials> {
+        match materials {
+            Some(materials) => Some(&mut **materials),
+            None => None,
+        }
+    }
+
     let mut variants = Vec::new();
     for index in 0..count {
         let seed = (derive_seed(base_seed, 0xBA5E, index as i32, 0) % 9_999) as u32 + 1;
@@ -311,7 +324,7 @@ pub fn nature_variants_with(
             quality,
             &[],
             cache_dir,
-            materials.as_deref_mut(),
+            reborrow(&mut materials),
         )?);
     }
     Ok(variants)

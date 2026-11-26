@@ -8,6 +8,7 @@
 //!
 //! The panel is a pure view: `windows/main/worldgen.rs` owns the composition and handles every `Edit`.
 
+use crate::uikit::components::node_canvas::{self, Port, PortKind};
 use crate::uikit::components::{
     button, checkbox, dropdown, list_row, scroll, slider, status, text_field, toggle_chip,
     tree_view,
@@ -18,8 +19,68 @@ use crate::uikit::recipe::Kind;
 use crate::uikit::theme;
 use crate::uikit::world::{self, Composition, OverrideOp};
 use iced::widget::{column, container, row, text, Column};
-use iced::{Element, Length};
+use iced::{Element, Length, Point, Vector};
+use std::collections::HashMap;
 use std::rc::Rc;
+
+/// A building block of the composition, as a node of the graph (`world.composition.graph`): terrain, a water
+/// body, a material binding or a class, all wired into the `World` output. Purely a view over `Composition`;
+/// node positions are UI layout state (`WorldGen::graph_positions`), not part of the saved recipe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphNode {
+    Terrain,
+    Water(usize),
+    Material(usize),
+    Class(usize),
+    World,
+}
+
+const GRAPH_WATER_BASE: node_canvas::NodeId = 0x1_0000;
+const GRAPH_MATERIAL_BASE: node_canvas::NodeId = 0x2_0000;
+const GRAPH_CLASS_BASE: node_canvas::NodeId = 0x3_0000;
+
+impl GraphNode {
+    pub fn id(self) -> node_canvas::NodeId {
+        match self {
+            GraphNode::Terrain => 0,
+            GraphNode::World => 1,
+            GraphNode::Water(i) => GRAPH_WATER_BASE + i as u64,
+            GraphNode::Material(i) => GRAPH_MATERIAL_BASE + i as u64,
+            GraphNode::Class(i) => GRAPH_CLASS_BASE + i as u64,
+        }
+    }
+
+    pub fn from_id(id: node_canvas::NodeId) -> Option<GraphNode> {
+        match id {
+            0 => Some(GraphNode::Terrain),
+            1 => Some(GraphNode::World),
+            id if (GRAPH_WATER_BASE..GRAPH_MATERIAL_BASE).contains(&id) => {
+                Some(GraphNode::Water((id - GRAPH_WATER_BASE) as usize))
+            }
+            id if (GRAPH_MATERIAL_BASE..GRAPH_CLASS_BASE).contains(&id) => {
+                Some(GraphNode::Material((id - GRAPH_MATERIAL_BASE) as usize))
+            }
+            id if id >= GRAPH_CLASS_BASE => {
+                Some(GraphNode::Class((id - GRAPH_CLASS_BASE) as usize))
+            }
+            _ => None,
+        }
+    }
+
+    /// Where the node sits when the user has not dragged it yet: terrain, then water and materials sharing one
+    /// column (they do not depend on each other), classes in the next, the `World` output on the right.
+    pub fn default_position(self) -> Point {
+        const COL: f32 = 210.0;
+        const ROW: f32 = 95.0;
+        match self {
+            GraphNode::Terrain => Point::new(20.0, 20.0),
+            GraphNode::Water(i) => Point::new(20.0 + COL, 20.0 + i as f32 * ROW),
+            GraphNode::Material(i) => Point::new(20.0 + COL, 20.0 + 280.0 + i as f32 * 85.0),
+            GraphNode::Class(i) => Point::new(20.0 + COL * 2.0, 20.0 + i as f32 * ROW),
+            GraphNode::World => Point::new(20.0 + COL * 3.0, 140.0),
+        }
+    }
+}
 
 /// A numeric property of a class (the `class` line).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,6 +311,15 @@ pub enum Edit {
     AddOverride(usize, OverrideKind),
     RemoveOverride(usize),
     SetOverride(usize, OverrideField, f32),
+    /// A node of the graph was clicked: selects its class (terrain/water/material/World nodes just highlight).
+    GraphSelect(Option<node_canvas::NodeId>),
+    /// A node was dragged by this much (graph units): layout only, not saved with the composition.
+    GraphMove(node_canvas::NodeId, Vector),
+    /// The graph's pan and zoom changed (mouse-wheel zoom, background drag).
+    GraphViewport {
+        pan: Vector,
+        zoom: f32,
+    },
     Noop,
 }
 
@@ -281,6 +351,11 @@ pub struct View<'a> {
     pub brush_radius: f32,
     /// A Library recipe is being dragged.
     pub dragging: bool,
+    /// Node positions of the graph the user has dragged, keyed by `GraphNode::id`; nodes not here use their
+    /// default layout.
+    pub graph_positions: &'a HashMap<node_canvas::NodeId, (f32, f32)>,
+    pub graph_pan: Vector,
+    pub graph_zoom: f32,
 }
 
 fn heading<'a, Message: 'a>(label: &'a str) -> Element<'a, Message> {
@@ -314,6 +389,220 @@ fn kind_label(kind: Kind) -> &'static str {
         Kind::Texture => "TEXTURE",
         Kind::World => "WORLD",
     }
+}
+
+/// The project path's last component, without its `.generator.*` suffix (`Nature/Oak.generator.nature` → `Oak`).
+fn stem(reference: &str) -> String {
+    reference
+        .rsplit('/')
+        .next()
+        .unwrap_or(reference)
+        .split(".generator")
+        .next()
+        .unwrap_or(reference)
+        .to_owned()
+}
+
+/// The composition as a graph: terrain, water, material and class building blocks, each wired into the `World`
+/// output. A pure projection of `Composition` plus the user's node layout; rewiring is not supported (the shape
+/// of a composition comes from what kind of recipe was added, not from drawing wires), so `Connect`/`Detach` on
+/// the canvas are no-ops.
+fn graph_nodes_and_links(view: &View) -> (Vec<node_canvas::Node>, Vec<node_canvas::Link>) {
+    let comp = view.comp;
+    let position = |node: GraphNode| {
+        view.graph_positions
+            .get(&node.id())
+            .map(|&(x, y)| Point::new(x, y))
+            .unwrap_or_else(|| node.default_position())
+    };
+    let mut nodes = Vec::new();
+    let mut links = Vec::new();
+    let mut world_inputs = Vec::new();
+    let mut world_sources: Vec<(node_canvas::NodeId, usize)> = Vec::new();
+
+    nodes.push(node_canvas::Node {
+        id: GraphNode::Terrain.id(),
+        title: "Terrain".to_owned(),
+        subtitle: if comp.terrain.is_empty() {
+            "—".to_owned()
+        } else {
+            stem(&comp.terrain)
+        },
+        position: position(GraphNode::Terrain),
+        inputs: Vec::new(),
+        outputs: vec![Port {
+            label: "height".to_owned(),
+            kind: PortKind::Height,
+        }],
+        accent: theme::ICON_ORANGE,
+        selected: false,
+        output: false,
+        preview: None,
+    });
+    if !comp.terrain.is_empty() {
+        world_inputs.push(Port {
+            label: "ground".to_owned(),
+            kind: PortKind::Height,
+        });
+        world_sources.push((GraphNode::Terrain.id(), 0));
+    }
+
+    for (index, water) in comp.water.iter().enumerate() {
+        let node = GraphNode::Water(index);
+        nodes.push(node_canvas::Node {
+            id: node.id(),
+            title: if water.fill_basins {
+                "Lake".to_owned()
+            } else {
+                "River".to_owned()
+            },
+            subtitle: stem(&water.reference),
+            position: position(node),
+            inputs: vec![Port {
+                label: "height".to_owned(),
+                kind: PortKind::Height,
+            }],
+            outputs: vec![Port {
+                label: "height".to_owned(),
+                kind: PortKind::Height,
+            }],
+            accent: theme::ICON_CYAN,
+            selected: false,
+            output: false,
+            preview: None,
+        });
+        links.push(node_canvas::Link {
+            from: GraphNode::Terrain.id(),
+            output: 0,
+            to: node.id(),
+            input: 0,
+        });
+        world_inputs.push(Port {
+            label: if water.fill_basins { "lake" } else { "river" }.to_owned(),
+            kind: PortKind::Height,
+        });
+        world_sources.push((node.id(), 0));
+    }
+
+    for (index, material) in comp.materials.iter().enumerate() {
+        let node = GraphNode::Material(index);
+        nodes.push(node_canvas::Node {
+            id: node.id(),
+            title: "Material".to_owned(),
+            subtitle: material.slot.clone(),
+            position: position(node),
+            inputs: Vec::new(),
+            outputs: vec![Port {
+                label: "material".to_owned(),
+                kind: PortKind::Material,
+            }],
+            accent: theme::ICON_PINK,
+            selected: false,
+            output: false,
+            preview: None,
+        });
+        world_inputs.push(Port {
+            label: material.slot.clone(),
+            kind: PortKind::Material,
+        });
+        world_sources.push((node.id(), 0));
+    }
+
+    for (index, class) in comp.classes.iter().enumerate() {
+        let node = GraphNode::Class(index);
+        let inputs = if comp.terrain.is_empty() {
+            Vec::new()
+        } else {
+            vec![Port {
+                label: "ground".to_owned(),
+                kind: PortKind::Height,
+            }]
+        };
+        nodes.push(node_canvas::Node {
+            id: node.id(),
+            title: class.id.clone(),
+            subtitle: format!("x{}", class.variants),
+            position: position(node),
+            inputs: inputs.clone(),
+            outputs: vec![Port {
+                label: "grows".to_owned(),
+                kind: PortKind::Mesh,
+            }],
+            accent: theme::SUCCESS,
+            selected: view.selected == Some(index),
+            output: false,
+            preview: None,
+        });
+        if !inputs.is_empty() {
+            links.push(node_canvas::Link {
+                from: GraphNode::Terrain.id(),
+                output: 0,
+                to: node.id(),
+                input: 0,
+            });
+        }
+        world_inputs.push(Port {
+            label: class.id.clone(),
+            kind: PortKind::Mesh,
+        });
+        world_sources.push((node.id(), 0));
+    }
+
+    let world_subtitle = match view.preview {
+        Some(counts) if !counts.is_empty() => {
+            let total: u32 = counts.iter().map(|(_, n)| *n).sum();
+            format!("{total} instances")
+        }
+        _ => String::new(),
+    };
+    nodes.push(node_canvas::Node {
+        id: GraphNode::World.id(),
+        title: "World".to_owned(),
+        subtitle: world_subtitle,
+        position: position(GraphNode::World),
+        inputs: world_inputs,
+        outputs: Vec::new(),
+        accent: theme::ACCENT,
+        selected: false,
+        output: true,
+        preview: None,
+    });
+    for (input, (from, output)) in world_sources.into_iter().enumerate() {
+        links.push(node_canvas::Link {
+            from,
+            output,
+            to: GraphNode::World.id(),
+            input,
+        });
+    }
+
+    (nodes, links)
+}
+
+/// The graph canvas: terrain, water, material and class building blocks wired into `World`. Clicking a class
+/// node selects it (the Rules panel then shows its properties); dragging rearranges the layout only.
+fn graph<'a, Message: Clone + 'a>(
+    view: &View<'a>,
+    emit: Rc<dyn Fn(Edit) -> Message + 'a>,
+) -> Element<'a, Message> {
+    let (nodes, links) = graph_nodes_and_links(view);
+    node_canvas::view_owned(
+        id::WORLD_GRAPH,
+        nodes,
+        links,
+        view.graph_pan,
+        view.graph_zoom,
+        None,
+        move |event| match event {
+            node_canvas::Event::Select(selected) => emit(Edit::GraphSelect(selected)),
+            node_canvas::Event::MoveNode(id, delta) => emit(Edit::GraphMove(id, delta)),
+            node_canvas::Event::Viewport { pan, zoom } => emit(Edit::GraphViewport { pan, zoom }),
+            node_canvas::Event::SelectLink(..)
+            | node_canvas::Event::Detach(..)
+            | node_canvas::Event::InsertDot(..)
+            | node_canvas::Event::Connect { .. } => emit(Edit::Noop),
+        },
+    )
 }
 
 pub fn view<'a, Message: Clone + 'a>(
@@ -531,6 +820,16 @@ fn composition<'a, Message: Clone + 'a>(
         on_exit: emit(Edit::Noop),
         on_context: emit(Edit::Noop),
     }]));
+
+    // The graph: every building block wired into the World output.
+    column = column.push(heading("GRAPH"));
+    column = column.push(
+        container(graph(view, emit.clone()))
+            .width(Length::Fill)
+            .height(Length::Fixed(280.0))
+            .padding(2)
+            .style(theme::surface),
+    );
 
     // Terrain.
     let mut terrain = Column::new().spacing(3);

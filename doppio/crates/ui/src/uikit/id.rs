@@ -428,6 +428,7 @@ pub const WORLD_ADD_MOVE: UiId = UiId::fixed("world.rules.add_move");
 pub const WORLD_REMOVE_IN_REGION: UiId = UiId::fixed("world.rules.remove_in_region");
 pub const WORLD_STATUS: UiId = UiId::fixed("world.status");
 pub const WORLD_DROP: UiId = UiId::fixed("world.composition.drop");
+pub const WORLD_GRAPH: UiId = UiId::fixed("world.composition.graph");
 pub const WORLD_BRUSH: UiId = UiId::fixed("world.rules.brush");
 pub const WORLD_BRUSH_RADIUS: UiId = UiId::fixed("world.rules.brush_radius");
 pub const PANE_TERRAIN_GENERATOR: UiId = UiId::fixed("editor.pane.terrain_generator");
@@ -2150,6 +2151,11 @@ pub const CATALOG: &[UiMeta] = &[
         id: WORLD_DROP,
         description: "Drop target of the Composition: release a recipe dragged from the Library here to add it.",
         kind: "tree_row",
+    },
+    UiMeta {
+        id: WORLD_GRAPH,
+        description: "Node graph of the composition: terrain, water, material and class building blocks wired into the World output. Click a class node to select it below; drag to rearrange (layout only, not saved).",
+        kind: "node_canvas",
     },
     UiMeta {
         id: WORLD_BRUSH,

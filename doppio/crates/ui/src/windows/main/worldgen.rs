@@ -9,13 +9,14 @@
 
 use super::{App, LogLevel, PaneKind};
 use crate::uikit::panels::world_composer::{
-    self as panel, Edit, LibraryItem, OverrideField, OverrideKind, WaterField,
+    self as panel, Edit, GraphNode, LibraryItem, OverrideField, OverrideKind, WaterField,
 };
 use crate::uikit::recipe::{self, Kind, Recipe};
 use crate::uikit::recipe_ref::{self, Baked};
 use crate::uikit::world::{self, Composition, Override, OverrideOp, Term};
 use crate::uikit::{asset_folders, nature, terrain};
 use doppio_engine::{WorldBuild, WorldBuildDesc, WorldMask, WorldRecipe, WorldRecipeKind};
+use iced::Vector;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -105,6 +106,11 @@ pub(super) struct WorldGen {
     pub drag: Option<String>,
     /// The terrain's size in metres, once known (the region sliders' range).
     pub size: [f32; 2],
+    /// Positions the user has dragged in the composition graph, keyed by `GraphNode::id` (layout only, not
+    /// saved with the composition).
+    pub graph_positions: HashMap<u64, (f32, f32)>,
+    pub graph_pan: Vector,
+    pub graph_zoom: f32,
 }
 
 impl WorldGen {
@@ -138,6 +144,9 @@ impl WorldGen {
             stroke: Vec::new(),
             drag: None,
             size: [256.0, 256.0],
+            graph_positions: HashMap::new(),
+            graph_pan: Vector::new(20.0, 10.0),
+            graph_zoom: 1.0,
         }
     }
 
@@ -247,6 +256,9 @@ impl WorldGen {
             brush: self.brush,
             brush_radius: self.brush_radius,
             dragging: self.drag.is_some(),
+            graph_positions: &self.graph_positions,
+            graph_pan: self.graph_pan,
+            graph_zoom: self.graph_zoom,
         }
     }
 
@@ -1024,6 +1036,29 @@ impl App {
                     }
                     w.push(Some(format!("override:{index}:{field:?}")));
                 }
+            }
+            Edit::GraphSelect(id) => {
+                if let Some(GraphNode::Class(index)) = id.and_then(GraphNode::from_id) {
+                    if index < w.comp.classes.len() {
+                        w.selected = Some(index);
+                    }
+                }
+            }
+            Edit::GraphMove(id, delta) => {
+                let entry = w.graph_positions.entry(id).or_insert_with(|| {
+                    GraphNode::from_id(id)
+                        .map(|node| {
+                            let p = node.default_position();
+                            (p.x, p.y)
+                        })
+                        .unwrap_or((0.0, 0.0))
+                });
+                entry.0 += delta.x;
+                entry.1 += delta.y;
+            }
+            Edit::GraphViewport { pan, zoom } => {
+                w.graph_pan = pan;
+                w.graph_zoom = zoom;
             }
             Edit::Noop => {}
         }
