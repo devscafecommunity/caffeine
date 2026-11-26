@@ -567,7 +567,7 @@ pub const ACTIONS: &[ActionDoc] = &[
                 name: "fixture",
                 ty: "string",
                 required: false,
-                doc: "`empty`, `entities`, `material`, `texture`, `scene3d` (an engine-backed scene with lights, a camera and meshes; needs libcaffeine-capi) `nature` (the same, filled with generated rocks, trees and plants) `water` (the Water Generator tab in front) or `terrain` (the Terrain Generator tab in front). Default `entities`.",
+                doc: "`empty`, `entities`, `material`, `texture`, `scene3d` (an engine-backed scene with lights, a camera and meshes; needs libcaffeine-capi) `nature` (the same, filled with generated rocks, trees and plants) `water` (the Water Generator tab in front) `terrain` (the Terrain Generator tab in front) `world` (the World Composer tab on a scratch project: a hills terrain, two rock recipes and `World/Valley.generator.world`; needs libcaffeine-capi) or `world_showcase` (the same tab on `World/Highlands.generator.world`: hills round a valley, a river, a lake, oaks and pines, boulders, shrubs and grass; Build makes a few thousand instances, Frame points the Viewport at them). Default `entities`.",
             },
             Param {
                 name: "size",

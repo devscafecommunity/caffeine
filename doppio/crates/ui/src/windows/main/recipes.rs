@@ -122,6 +122,7 @@ impl App {
                 }
                 None => false,
             },
+            Kind::World => self.open_world_recipe(path, &recipe),
             Kind::Material => {
                 let product = path
                     .parent()

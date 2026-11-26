@@ -132,3 +132,72 @@ impl Water {
         }
     }
 }
+
+/// `caffeine_session_set_water_surface` (heights, coverage, flow over the water's grid).
+pub(crate) type SetWaterSurfaceFn = unsafe extern "C" fn(
+    *mut std::ffi::c_void,
+    u32,
+    u32,
+    u32,
+    *const f32,
+    *const u8,
+    *const f32,
+) -> i32;
+
+impl super::Engine {
+    /// True when the engine library can shape a water surface (`caffeine_session_set_water_surface`).
+    pub fn has_water_surface(&self) -> bool {
+        self.functions.set_water_surface.is_some()
+    }
+
+    /// Gives a water entity (it must already have water, `set_water`) a shaped surface: `heights` in metres relative
+    /// to the entity over its `size`, `resolution[0] * resolution[1]` values, row 0 at `-size_z / 2`; `coverage` 0 dry
+    /// to 255 wet (`None`: wet everywhere); `flow` two floats per vertex in m/s along x and z (`None`: still). Empty
+    /// `heights` clears the shape (a flat plane again).
+    pub fn set_water_surface(
+        &mut self,
+        entity: u32,
+        resolution: [u32; 2],
+        heights: &[f32],
+        coverage: Option<&[u8]>,
+        flow: Option<&[f32]>,
+    ) -> super::EngineResult<()> {
+        let set = self
+            .functions
+            .set_water_surface
+            .ok_or(super::EngineError::Error)?;
+        let cells = resolution[0] as usize * resolution[1] as usize;
+        if heights.is_empty() {
+            return super::result(unsafe {
+                set(
+                    self.session,
+                    entity,
+                    0,
+                    0,
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                )
+            });
+        }
+        if resolution[0] < 2
+            || resolution[1] < 2
+            || heights.len() != cells
+            || coverage.is_some_and(|c| c.len() != cells)
+            || flow.is_some_and(|f| f.len() != cells * 2)
+        {
+            return Err(super::EngineError::InvalidArgument);
+        }
+        super::result(unsafe {
+            set(
+                self.session,
+                entity,
+                resolution[0],
+                resolution[1],
+                heights.as_ptr(),
+                coverage.map_or(std::ptr::null(), <[u8]>::as_ptr),
+                flow.map_or(std::ptr::null(), <[f32]>::as_ptr),
+            )
+        })
+    }
+}

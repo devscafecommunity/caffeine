@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define CAFFEINE_CAPI_VERSION 27
+#define CAFFEINE_CAPI_VERSION 28
 #define CAFFEINE_ENTITY_NONE UINT32_MAX
 
 typedef struct CaffeineSession CaffeineSession;
@@ -1202,6 +1202,158 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_scatter_terrain(const Caffeine
 /** Parses a biome table without a session: OK, or INVALID_ARGUMENT with the reason (line number included) in `error`. */
 CAFFEINE_CAPI_API CaffeineResult caffeine_biome_check(const char* biome_text, char* error,
                                                       uint32_t error_size);
+
+/**
+ * World Composer (v28): builds a `.generator.world` composition (see doppio/world-composition.md and
+ * src/caffeine/world/WorldBuild.hpp). Needs no session: the caller passes the composition's graph text, the baked
+ * terrain it names (normalised heights and stored masks), what the project knows about every referenced recipe and a
+ * region. The result is a pure function of those inputs: same desc, same world, on any machine and for any split of
+ * the region. Positions are metres from the terrain's corner (the caller applies the terrain entity's transform).
+ */
+typedef struct CaffeineWorld CaffeineWorld;
+
+typedef enum CaffeineRecipeKind {
+    CAFFEINE_RECIPE_TERRAIN = 0,
+    CAFFEINE_RECIPE_NATURE = 1,
+    CAFFEINE_RECIPE_WATER = 2,
+    CAFFEINE_RECIPE_MATERIAL = 3,
+    CAFFEINE_RECIPE_TEXTURE = 4,
+} CaffeineRecipeKind;
+
+/** One referenced recipe as the project sees it. A reference missing from the list is "not found". */
+typedef struct CaffeineWorldRecipe {
+    const char* ref;            /**< the project path, exactly as the composition writes it */
+    uint32_t kind;              /**< CaffeineRecipeKind */
+    uint32_t generator_version;
+    uint64_t content_hash;      /**< hash of the recipe file (part of the cache key) */
+} CaffeineWorldRecipe;
+
+typedef struct CaffeineWorldMask {
+    const char* name;
+    uint32_t resolution_x;
+    uint32_t resolution_z;
+    const uint8_t* data;        /**< resolution_x * resolution_z bytes, row-major, row 0 at z = 0 */
+} CaffeineWorldMask;
+
+typedef struct CaffeineWorldBuildDesc {
+    const char* graph_text;           /**< the recipe's `graph` */
+    uint32_t generator_version;       /**< the recipe's `generator_version` */
+    const CaffeineWorldRecipe* recipes;
+    uint32_t recipe_count;
+    int32_t check_refs;               /**< 0: references are not checked (a composition outside a project) */
+    const float* heights;             /**< normalised 0..1, resolution_x * resolution_z, row-major */
+    uint32_t resolution_x;
+    uint32_t resolution_z;
+    float size_x;                     /**< metres */
+    float size_z;
+    float max_height;                 /**< metres at a normalised height of 1 */
+    const CaffeineWorldMask* masks;
+    uint32_t mask_count;
+    float region[4];                  /**< x0, z0, x1, z1 metres; x1 <= x0 or z1 <= z0 is the whole terrain */
+    uint32_t max_instances;           /**< 0: no limit */
+} CaffeineWorldBuildDesc;
+
+typedef struct CaffeineWorldInfo {
+    int32_t ok;                 /**< 0: nothing was built, see caffeine_world_error */
+    uint32_t error_count;
+    uint32_t class_count;
+    uint32_t instance_count;    /**< instances returned (after the budget) */
+    uint32_t total;             /**< instances the region holds after the edits */
+    int32_t truncated;
+    uint64_t cache_key;
+    uint64_t instance_hash;
+    uint32_t water_body_count;
+    int32_t carved;             /**< a river lowered the terrain: read caffeine_world_heights */
+    uint32_t resolution_x;      /**< the grid of the heights, the water bodies and water_distance */
+    uint32_t resolution_z;
+} CaffeineWorldInfo;
+
+typedef struct CaffeineWorldClass {
+    char id[64];
+    char ref[256];
+    uint32_t salt;              /**< the class_id the instances carry */
+    uint32_t first_instance;    /**< classes are in placement order and their instances contiguous */
+    uint32_t instance_count;
+    int32_t unique;             /**< hero class: bake per instance, seeded by the instance seed */
+    uint32_t param_count;       /**< nature recipe parameters the ground drives (`adapt param.<name>`) */
+    char params[4][32];
+} CaffeineWorldClass;
+
+typedef struct CaffeineWorldInstance {
+    uint32_t class_index;
+    uint32_t variant;
+    int32_t cell[2];            /**< with the class, the instance's identity (the key of `override`) */
+    float position[3];          /**< metres from the terrain's corner */
+    float up[3];
+    float yaw;                  /**< radians about `up` */
+    float scale;
+    float tint[3];
+    uint64_t seed;
+    float slope;                /**< the ground context, 0..1 */
+    float height;
+    float wetness;
+    float water_distance;
+    float neighbours;
+    float wetness_modifier;     /**< the run-time modifiers `adapt` set */
+    float snow_modifier;
+    float params[4];            /**< values of the class's bake parameters, in `CaffeineWorldClass.params` order */
+} CaffeineWorldInstance;
+
+typedef struct CaffeineWorldWaterBody {
+    char ref[256];
+    int32_t lake;
+    uint32_t cells;
+} CaffeineWorldWaterBody;
+
+/**
+ * Builds a world. OK with a handle in `out_world` whenever `desc` is well formed, also when the composition does not
+ * build (read caffeine_world_info().ok and the errors); INVALID_ARGUMENT for a NULL or malformed desc. Free the handle
+ * with caffeine_world_free.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_build(const CaffeineWorldBuildDesc* desc, CaffeineWorld** out_world);
+CAFFEINE_CAPI_API void caffeine_world_free(CaffeineWorld* world);
+CAFFEINE_CAPI_API void caffeine_world_info(const CaffeineWorld* world, CaffeineWorldInfo* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_error(const CaffeineWorld* world, uint32_t index, char* out,
+                                                      uint32_t size);
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_class(const CaffeineWorld* world, uint32_t index,
+                                                      CaffeineWorldClass* out);
+/** Copies instances [first, first + capacity) in placement order; returns how many were written. */
+CAFFEINE_CAPI_API uint32_t caffeine_world_instances(const CaffeineWorld* world, uint32_t first,
+                                                    CaffeineWorldInstance* out, uint32_t capacity);
+/** A water body; `coverage` (bytes) and `surface` (metres) hold resolution_x * resolution_z values or are NULL. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_water_body(const CaffeineWorld* world, uint32_t index,
+                                                           CaffeineWorldWaterBody* out, uint8_t* coverage,
+                                                           float* surface);
+/** The water_distance mask, resolution_x * resolution_z bytes. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_water_distance(const CaffeineWorld* world, uint8_t* out);
+/** The (possibly carved) normalised heights, resolution_x * resolution_z floats. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_heights(const CaffeineWorld* world, float* out);
+/**
+ * The instance bake (`.cinst`, see src/caffeine/world/WorldInstanceFile.hpp): a world's instances in chunks of
+ * `chunk_size` metres (<= 0: 64), for a renderer or a streamer. ERROR when the world did not build or the file cannot
+ * be written.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_write_cinst(const CaffeineWorld* world, const char* path,
+                                                            float chunk_size);
+/** Opens a `.cinst` as a world handle (classes and instances; no water, no heights). INVALID_ARGUMENT with the reason
+ * in `error` for a file that does not read. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_read_cinst(const char* path, CaffeineWorld** out_world, char* error,
+                                                           uint32_t error_size);
+/** The cache key a build of `desc` would have, without building (0 when a reference or the terrain is missing). */
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_cache_key(const CaffeineWorldBuildDesc* desc, uint64_t* out_key);
+/**
+ * caffeine_world_build through a persistent bake cache in `cache_dir` (`<key>.cinst` files): a hit opens the stored
+ * bake (`*out_hit` = 1; no water or heights in the handle), a miss builds, stores a successful bake and returns the
+ * build. Same results as caffeine_world_build for classes and instances.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_build_cached(const CaffeineWorldBuildDesc* desc, const char* cache_dir,
+                                                             CaffeineWorld** out_world, int32_t* out_hit);
+
+/**
+ * Parses and validates a composition's graph text without building it: OK, or INVALID_ARGUMENT with every problem,
+ * one per line, in `error`.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_world_check(const char* graph_text, char* error, uint32_t error_size);
 
 /** Advance frame bookkeeping; systems will be wired here incrementally. */
 CAFFEINE_CAPI_API void caffeine_session_tick(CaffeineSession* session, float delta_time);

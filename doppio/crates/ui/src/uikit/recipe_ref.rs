@@ -9,7 +9,8 @@
 //!   `Caffeine::Core::deriveSeed` / `toUnit` in the engine (`src/caffeine/core/Hash.hpp`);
 //!   the golden tests of both languages pin the same numbers.
 //! * [`bake_nature_variant`] reseeds every node of a nature recipe from a variant seed and bakes
-//!   the OBJ parts into a cache folder named by the content hash.
+//!   the OBJ parts into a cache folder named by the content hash; with a [`PartMaterials`] the
+//!   parts also get their materials (`.mat` assets, recorded beside the OBJs in `.materials`).
 //! * [`resolve_product`] gives a material or texture slot the finished file of a recipe,
 //!   baking a texture recipe when its picture is missing.
 
@@ -71,6 +72,35 @@ pub fn cache_key(recipe: &Recipe, seed: u32, quality: Quality) -> u64 {
     hash_combine(key, quality.index() as u64)
 }
 
+/// Cache key of a baked instance: [`cache_key`] plus the exposed-parameter values, sorted by name
+/// and compared bit for bit. With no parameters it is exactly [`cache_key`], so variants baked
+/// before parameters existed keep their cache folders.
+pub fn cache_key_with_params(
+    recipe: &Recipe,
+    seed: u32,
+    quality: Quality,
+    params: &[(String, f32)],
+) -> u64 {
+    let mut key = cache_key(recipe, seed, quality);
+    let mut sorted: Vec<&(String, f32)> = params.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, value) in sorted {
+        key = hash_combine(key, content_hash(name.as_bytes()));
+        key = hash_combine(key, u64::from(value.to_bits()));
+    }
+    key
+}
+
+/// Rounds `value` to the nearest multiple of `1 / steps` (`round(value * steps) / steps`), so
+/// driven values fall into a small pool of bakes. `steps == 0` leaves the value as it is.
+pub fn quantize_param(value: f32, steps: u32) -> f32 {
+    if steps == 0 || !value.is_finite() {
+        return value;
+    }
+    let steps = steps as f32;
+    (value * steps).round() / steps
+}
+
 /// One baked variant in the cache.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Baked {
@@ -79,8 +109,41 @@ pub struct Baked {
     pub directory: PathBuf,
     /// OBJ files (one per part), in part order.
     pub files: Vec<String>,
+    /// The material of each file, in the same order: `;`-joined per sub-mesh (one per part file today), empty
+    /// when the bake was asked without [`PartMaterials`] and none was recorded, or when making it failed.
+    pub materials: Vec<String>,
     /// True when the files already existed.
     pub cached: bool,
+}
+
+/// Gives the parts of a baked nature model their materials. The Nature Generator's own writer is behind it in the
+/// editor, so a baked tree uses the same `.mat` assets (bark, leaf cards, rock surfaces) as one placed by hand.
+pub trait PartMaterials {
+    /// The material of `part` (a path the scene and a models file can use), written when missing.
+    fn material(&mut self, part: &nature::mesh::Part) -> Result<String, String>;
+    /// True when a material an earlier bake recorded is still there.
+    fn exists(&self, material: &str) -> bool;
+}
+
+/// The file beside `.baked` that lists the materials, one line per OBJ.
+const MATERIALS_MARKER: &str = ".materials";
+
+fn read_materials(directory: &Path, files: usize) -> Option<Vec<String>> {
+    let text = std::fs::read_to_string(directory.join(MATERIALS_MARKER)).ok()?;
+    let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    (lines.len() == files).then_some(lines)
+}
+
+/// The material of every part, `""` for a part whose material could not be made.
+fn part_materials(
+    model: &nature::mesh::NatureModel,
+    materials: &mut dyn PartMaterials,
+) -> Vec<String> {
+    model
+        .parts
+        .iter()
+        .map(|part| materials.material(part).unwrap_or_default())
+        .collect()
 }
 
 /// Reseeds a nature graph for a variant. Seed `0` keeps the authored seeds; any other value moves
@@ -106,6 +169,33 @@ pub fn bake_nature_variant(
     quality: Option<Quality>,
     cache_dir: &Path,
 ) -> Result<Baked, String> {
+    bake_nature_instance(recipe_path, seed, quality, &[], cache_dir)
+}
+
+/// Bakes variant `seed` of a nature recipe with its exposed parameters set to `params`
+/// (`(name, value)`, each clamped to the parameter's range), or returns the cached files. Names
+/// the recipe does not expose, or names given twice, are an error.
+pub fn bake_nature_instance(
+    recipe_path: &Path,
+    seed: u32,
+    quality: Option<Quality>,
+    params: &[(String, f32)],
+    cache_dir: &Path,
+) -> Result<Baked, String> {
+    bake_nature_instance_with(recipe_path, seed, quality, params, cache_dir, None)
+}
+
+/// [`bake_nature_instance`], and with `materials` every part also gets its material. The cache key and folder do not
+/// change: the materials are recorded beside the OBJs (`.materials`), and a cached bake whose record is missing or
+/// names a material that is gone rebuilds the model (not the files) to make them again.
+pub fn bake_nature_instance_with(
+    recipe_path: &Path,
+    seed: u32,
+    quality: Option<Quality>,
+    params: &[(String, f32)],
+    cache_dir: &Path,
+    materials: Option<&mut dyn PartMaterials>,
+) -> Result<Baked, String> {
     let recipe = recipe::read(recipe_path)?;
     if recipe.kind() != Some(Kind::Nature) {
         return Err(format!("{} is not a nature recipe", recipe_path.display()));
@@ -113,32 +203,81 @@ pub fn bake_nature_variant(
     let (name, mut graph, authored) = nature::from_text(&recipe.graph)
         .ok_or_else(|| format!("{}: the nature graph is unreadable", recipe_path.display()))?;
     let quality = quality.unwrap_or(authored);
-    let key = cache_key(&recipe, seed, quality);
+    let exposed = graph.exposed_parameters();
+    let unknown: Vec<&str> = params
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .filter(|name| !exposed.iter().any(|e| e.name == *name))
+        .collect();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "{} exposes no parameter {}",
+            recipe_path.display(),
+            unknown.join(", ")
+        ));
+    }
+    for (i, (name, _)) in params.iter().enumerate() {
+        if params[..i].iter().any(|(other, _)| other == name) {
+            return Err(format!("the parameter {name} is given twice"));
+        }
+    }
+    let key = cache_key_with_params(&recipe, seed, quality, params);
     let directory = cache_dir.join(format!("{}_{key:016x}", nature::slug(&name)));
     let marker = directory.join(".baked");
+    reseed_nature(&mut graph, seed);
+    for (name, value) in params {
+        graph.set_exposed(name, *value)?;
+    }
     if marker.is_file() {
-        let files = std::fs::read_to_string(&marker)
+        let files: Vec<String> = std::fs::read_to_string(&marker)
             .map_err(|error| error.to_string())?
             .lines()
             .map(str::to_owned)
             .collect();
+        let recorded = read_materials(&directory, files.len());
+        let materials = match (materials, recorded) {
+            (None, recorded) => recorded.unwrap_or_else(|| vec![String::new(); files.len()]),
+            (Some(writer), Some(recorded))
+                if recorded
+                    .iter()
+                    .all(|m| !m.is_empty() && m.split(';').all(|one| writer.exists(one))) =>
+            {
+                recorded
+            }
+            (Some(writer), _) => {
+                let made = part_materials(&graph.build(quality)?, writer);
+                std::fs::write(directory.join(MATERIALS_MARKER), made.join("\n"))
+                    .map_err(|error| error.to_string())?;
+                made
+            }
+        };
         return Ok(Baked {
             key,
             seed,
             directory,
             files,
+            materials,
             cached: true,
         });
     }
-    reseed_nature(&mut graph, seed);
     let model = graph.build(quality)?;
     let files = nature::write_obj_files(&model, &directory, &name)?;
+    let made = match materials {
+        Some(writer) => {
+            let made = part_materials(&model, writer);
+            std::fs::write(directory.join(MATERIALS_MARKER), made.join("\n"))
+                .map_err(|error| error.to_string())?;
+            made
+        }
+        None => vec![String::new(); files.len()],
+    };
     std::fs::write(&marker, files.join("\n")).map_err(|error| error.to_string())?;
     Ok(Baked {
         key,
         seed,
         directory,
         files,
+        materials: made,
         cached: false,
     })
 }
@@ -151,10 +290,42 @@ pub fn nature_variants(
     quality: Option<Quality>,
     cache_dir: &Path,
 ) -> Result<Vec<Baked>, String> {
+    nature_variants_with(recipe_path, base_seed, count, quality, cache_dir, None)
+}
+
+/// [`nature_variants`] with the parts' materials (see [`bake_nature_instance_with`]).
+pub fn nature_variants_with(
+    recipe_path: &Path,
+    base_seed: u64,
+    count: u32,
+    quality: Option<Quality>,
+    cache_dir: &Path,
+    mut materials: Option<&mut dyn PartMaterials>,
+) -> Result<Vec<Baked>, String> {
+    // Explicit reborrow (not `as_deref_mut()`): that helper ties its output's
+    // lifetime to the `&mut self` borrow rather than reborrowing the trait
+    // object, so each loop iteration would hold onto the previous one
+    // (NLL limitation, "problem case #3").
+    fn reborrow<'a>(
+        materials: &'a mut Option<&mut dyn PartMaterials>,
+    ) -> Option<&'a mut dyn PartMaterials> {
+        match materials {
+            Some(materials) => Some(&mut **materials),
+            None => None,
+        }
+    }
+
     let mut variants = Vec::new();
     for index in 0..count {
         let seed = (derive_seed(base_seed, 0xBA5E, index as i32, 0) % 9_999) as u32 + 1;
-        variants.push(bake_nature_variant(recipe_path, seed, quality, cache_dir)?);
+        variants.push(bake_nature_instance_with(
+            recipe_path,
+            seed,
+            quality,
+            &[],
+            cache_dir,
+            reborrow(&mut materials),
+        )?);
     }
     Ok(variants)
 }
@@ -342,6 +513,172 @@ mod tests {
             resolve_product(&dir, "Rock.generator.material", Kind::Material).unwrap(),
             "Rock.mat"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The rock recipe with its first Noise Displace amount exposed as `rough`.
+    fn rough_rock_recipe(dir: &Path) -> PathBuf {
+        let preset = nature::presets()
+            .into_iter()
+            .find(|preset| preset.name == "Low-poly Rock")
+            .expect("the low-poly rock preset");
+        let mut graph = preset.graph();
+        let displace = graph
+            .nodes
+            .iter()
+            .find(|node| node.op == "noise_displace")
+            .expect("a noise displace node")
+            .id;
+        graph
+            .expose("rough", displace, "amount", Some((0.0, 1.5)))
+            .expect("expose");
+        let text = nature::to_text(preset.name, &graph, preset.quality);
+        let path = dir.join(recipe::file_name("RoughRock", Kind::Nature));
+        recipe::write(&path, &Recipe::new(Kind::Nature, "RoughRock", "", text)).expect("write");
+        path
+    }
+
+    #[test]
+    fn parameter_values_are_part_of_the_cache_key() {
+        let dir = temp("param-key");
+        let recipe = recipe::read(&rough_rock_recipe(&dir)).expect("recipe");
+        let q = Quality::Balanced;
+        let p = |pairs: &[(&str, f32)]| -> Vec<(String, f32)> {
+            pairs.iter().map(|(n, v)| ((*n).to_owned(), *v)).collect()
+        };
+        assert_eq!(
+            cache_key_with_params(&recipe, 3, q, &[]),
+            cache_key(&recipe, 3, q)
+        );
+        let a = cache_key_with_params(&recipe, 3, q, &p(&[("rough", 0.5), ("b", 1.0)]));
+        let same = cache_key_with_params(&recipe, 3, q, &p(&[("b", 1.0), ("rough", 0.5)]));
+        assert_eq!(a, same, "order does not matter");
+        let other = cache_key_with_params(&recipe, 3, q, &p(&[("rough", 0.75), ("b", 1.0)]));
+        assert_ne!(a, other);
+        let swapped = cache_key_with_params(&recipe, 3, q, &p(&[("rough", 1.0), ("b", 0.5)]));
+        assert_ne!(a, swapped, "values stay with their names");
+        assert_ne!(
+            cache_key_with_params(&recipe, 3, q, &p(&[("rough", 0.5)])),
+            cache_key(&recipe, 3, q)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quantize_rounds_to_steps() {
+        assert_eq!(quantize_param(0.26, 4), 0.25);
+        assert_eq!(quantize_param(0.38, 4), 0.5);
+        assert_eq!(quantize_param(1.6, 2), 1.5);
+        assert_eq!(quantize_param(-0.3, 4), -0.25);
+        assert_eq!(quantize_param(0.123, 0), 0.123);
+    }
+
+    #[test]
+    fn an_instance_bake_follows_its_parameters() {
+        let dir = temp("instance");
+        let recipe = rough_rock_recipe(&dir);
+        let cache = dir.join("cache");
+        let plain = bake_nature_variant(&recipe, 5, None, &cache).expect("variant");
+        let empty = bake_nature_instance(&recipe, 5, None, &[], &cache).expect("no params");
+        assert!(empty.cached, "no parameters is the plain variant");
+        assert_eq!(empty.key, plain.key);
+        assert_eq!(empty.directory, plain.directory);
+        assert_eq!(empty.files, plain.files);
+
+        let smooth = vec![("rough".to_owned(), 0.1)];
+        let rough = vec![("rough".to_owned(), 1.2)];
+        let a = bake_nature_instance(&recipe, 5, None, &smooth, &cache).expect("smooth");
+        let b = bake_nature_instance(&recipe, 5, None, &rough, &cache).expect("rough");
+        assert!(!a.cached && !b.cached);
+        assert_ne!(a.key, b.key);
+        assert_ne!(a.directory, b.directory);
+        let obj =
+            |baked: &Baked| std::fs::read(baked.directory.join(&baked.files[0])).expect("obj");
+        assert_ne!(obj(&a), obj(&b), "another value gives another model");
+        let again = bake_nature_instance(&recipe, 5, None, &smooth, &cache).expect("cached");
+        assert!(again.cached);
+        assert_eq!(again.key, a.key);
+
+        let error = bake_nature_instance(
+            &recipe,
+            5,
+            None,
+            &[
+                ("crown".to_owned(), 0.5),
+                ("rough".to_owned(), 0.5),
+                ("tilt".to_owned(), 1.0),
+            ],
+            &cache,
+        )
+        .unwrap_err();
+        assert!(error.contains("crown, tilt"), "{error}");
+        let twice = vec![("rough".to_owned(), 0.2), ("rough".to_owned(), 0.3)];
+        assert!(bake_nature_instance(&recipe, 5, None, &twice, &cache).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Writes a stand-in `.mat` per part name into a folder and counts what it made.
+    struct FakeMaterials {
+        dir: PathBuf,
+        made: usize,
+    }
+
+    impl PartMaterials for FakeMaterials {
+        fn material(&mut self, part: &nature::mesh::Part) -> Result<String, String> {
+            let path = self.dir.join(format!("{}.mat", part.name));
+            std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
+            std::fs::write(&path, format!("{:?}", part.material)).map_err(|e| e.to_string())?;
+            self.made += 1;
+            Ok(path.to_string_lossy().into_owned())
+        }
+
+        fn exists(&self, material: &str) -> bool {
+            Path::new(material).is_file()
+        }
+    }
+
+    #[test]
+    fn a_baked_tree_carries_a_material_per_part_and_records_them_in_its_cache() {
+        let dir = temp("materials");
+        let preset = nature::presets()
+            .into_iter()
+            .find(|preset| preset.name == "Oak")
+            .expect("the oak preset");
+        let text = nature::to_text("Oak", &preset.graph(), preset.quality);
+        let path = dir.join(recipe::file_name("Oak", Kind::Nature));
+        recipe::write(&path, &Recipe::new(Kind::Nature, "Oak", "", text)).expect("write");
+        let cache = dir.join("cache");
+        let mut writer = FakeMaterials {
+            dir: dir.join("mats"),
+            made: 0,
+        };
+        let plain = bake_nature_variant(&path, 3, None, &cache).expect("plain");
+        assert!(plain.materials.iter().all(String::is_empty));
+        // The same cache folder: the materials are added to it, the key does not move.
+        let baked = bake_nature_instance_with(&path, 3, None, &[], &cache, Some(&mut writer))
+            .expect("with materials");
+        assert!(baked.cached);
+        assert_eq!(baked.key, plain.key);
+        assert_eq!(baked.materials.len(), baked.files.len());
+        assert!(baked.materials.iter().all(|m| m.ends_with(".mat")));
+        assert!(baked.files.iter().any(|f| f.contains("leaves")), "{:?}", baked.files);
+        let made = writer.made;
+        assert_eq!(made, baked.files.len());
+        // Recorded: a second bake reuses them, also without a writer.
+        let again = bake_nature_instance_with(&path, 3, None, &[], &cache, Some(&mut writer))
+            .expect("again");
+        assert_eq!(again.materials, baked.materials);
+        assert_eq!(writer.made, made);
+        assert_eq!(bake_nature_variant(&path, 3, None, &cache).unwrap().materials, baked.materials);
+        // A material that is gone is made again.
+        std::fs::remove_file(&baked.materials[0]).unwrap();
+        let healed = bake_nature_instance_with(&path, 3, None, &[], &cache, Some(&mut writer))
+            .expect("healed");
+        assert!(Path::new(&healed.materials[0]).is_file());
+        assert_eq!(writer.made, made * 2);
+        // A fresh bake makes them together with the files.
+        let fresh = nature_variants_with(&path, 8, 1, None, &cache, Some(&mut writer)).expect("fresh");
+        assert!(!fresh[0].cached && fresh[0].materials.iter().all(|m| !m.is_empty()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

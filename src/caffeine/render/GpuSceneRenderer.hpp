@@ -460,6 +460,14 @@ private:
                                           const Spatial::Frustum& frustum,
                                           const std::string& projectRoot,
                                           const GpuSceneRenderOptions& options);
+    /// The draws of every `World Instances` entity: the visible chunks of its `.cinst` bake, one draw per
+    /// instance and model part (world/WorldInstanceDraw.hpp), batched like any mesh draw.
+    void gatherWorldInstanceDraws(ECS::World& world, const Vec3& cameraPos, const Spatial::Frustum& frustum,
+                                  const std::string& projectRoot, const GpuSceneRenderOptions& options,
+                                  std::vector<MeshDraw>& draws);
+    /// A `.mat`'s surface on a draw (albedo, maps, alpha, modifiers, displacement); nothing for an empty path.
+    void applyAuthoredMaterial(MeshDraw& draw, const std::string& materialPath, const Mat4& worldMatrix,
+                               const std::string& projectRoot);
     void applyCoarseOcclusion(std::vector<MeshDraw>& draws, const GpuSceneCamera& camera,
                               const GpuSceneRenderOptions& options) const;
     void assignInstanceBatches(std::vector<MeshDraw>& draws, const GpuSceneRenderOptions& options,
@@ -637,6 +645,8 @@ private:
     std::map<std::pair<const Assets::Mesh3D*, u32>, DisplacedMesh> m_displacedMeshes;
     DisplacedMesh* displacedMeshFor(const Assets::Mesh3D* source, u32 levels);
     std::unordered_map<u32, u32> m_entityLod;
+    /// The largest model radius seen per World Instances entity (pivot to farthest vertex): grows chunk bounds.
+    std::unordered_map<u32, f32> m_worldInstanceRadius;
     bool m_ready = false;
 };
 

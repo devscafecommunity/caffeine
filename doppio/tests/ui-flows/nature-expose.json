@@ -1,0 +1,35 @@
+{
+  "name": "Nature Generator: expose node parameters to the World Composer",
+  "description": "Opens the Nature Generator from the View menu, adds a Noise Displace node and exposes its Amount with the Expose toggle beside the slider. The Exposed parameters section lists it with a name field, a range and a remove button; removing it and undoing brings it back, and pressing the toggle again stops exposing it.",
+  "fixture": "empty",
+  "size": [1600, 900],
+  "steps": [
+    { "action": "click", "target": "id:editor.menu.view", "label": "open the View menu" },
+    { "action": "click", "target": "id:editor.menu.view.nature_generator", "label": "show the Nature Generator" },
+    { "action": "expect", "exists": "id:naturegen.canvas" },
+    { "action": "expect", "exists": { "text": "EXPOSED PARAMETERS" } },
+    { "action": "click", "target": "id:naturegen.add.noise_displace", "label": "add a Noise Displace node" },
+    { "action": "expect", "exists": ["id:naturegen.param.amount", "id:naturegen.expose.amount", "id:naturegen.expose.seed"] },
+    { "action": "click", "target": "id:naturegen.expose.amount", "label": "expose Amount" },
+    { "action": "expect", "exists": { "text": "Exposed amount" } },
+    {
+      "action": "expect",
+      "exists": [
+        "id:naturegen.exposed.name.0",
+        "id:naturegen.exposed.min.0",
+        "id:naturegen.exposed.max.0",
+        "id:naturegen.exposed.remove.0"
+      ]
+    },
+    { "action": "expect", "text": { "target": "id:naturegen.exposed.name.0", "equals": "amount" } },
+    { "action": "click", "target": "id:naturegen.expose.frequency", "label": "expose Frequency too" },
+    { "action": "expect", "exists": "id:naturegen.exposed.name.1" },
+    { "action": "click", "target": "id:naturegen.exposed.remove.0", "label": "stop exposing Amount" },
+    { "action": "expect", "missing": "id:naturegen.exposed.name.1" },
+    { "action": "click", "target": "id:naturegen.toolbar.undo", "label": "undo the removal" },
+    { "action": "expect", "exists": "id:naturegen.exposed.name.1" },
+    { "action": "click", "target": "id:naturegen.expose.frequency", "label": "toggle Frequency off" },
+    { "action": "expect", "missing": "id:naturegen.exposed.name.1" },
+    { "action": "expect", "exists": { "text": "Stopped exposing frequency" } }
+  ]
+}

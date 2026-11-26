@@ -32,7 +32,7 @@ impl Notice {
 }
 
 /// The generators' status lines, to see which one changed.
-pub(super) type StatusSnapshot = [Option<String>; 5];
+pub(super) type StatusSnapshot = [Option<String>; 6];
 
 /// Where the scratch project lives: `$CAFFEINE_SCRATCH`, else the user's data directory.
 pub(super) fn default_scratch_dir() -> PathBuf {
@@ -109,6 +109,7 @@ impl App {
             self.terraingen.status.clone(),
             self.texgen.status.clone(),
             self.scatter_status.clone(),
+            self.worldgen.status.clone(),
         ]
     }
 

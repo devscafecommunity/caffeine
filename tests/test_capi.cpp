@@ -1903,3 +1903,145 @@ TEST_CASE("C API terrain cursor: a ray meets the terrain and the brush outline h
     CHECK(caffeine_session_terrain_brush_outline(session, 9999u, hit, 5.0f, 48, ring.data()) == CAFFEINE_NOT_FOUND);
     caffeine_session_destroy(session);
 }
+
+TEST_CASE("C API builds a World Composer composition without a session", "[capi][world]") {
+    CHECK(caffeine_capi_version() >= 28);
+    constexpr uint32_t N = 65;
+    std::vector<float> heights(N * N);
+    std::vector<uint8_t> wetness(N * N);
+    for (uint32_t z = 0; z < N; ++z) {
+        for (uint32_t x = 0; x < N; ++x) {
+            const float fx = static_cast<float>(x) - 20.0f, fz = static_cast<float>(z) - 40.0f;
+            heights[z * N + x] = std::min(0.1f + 0.0002f * (fx * fx + fz * fz), 1.0f);
+            wetness[z * N + x] = static_cast<uint8_t>(255.0f * (1.0f - heights[z * N + x]));
+        }
+    }
+    const char* graph =
+        "seed 9\n"
+        "terrain Terrain/Hill.generator.terrain\n"
+        "water Water/Lake.generator.water fill basins level 0.3\n"
+        "class rock ref Nature/Rock.generator.nature priority 30 cell 6 radius 1.5 variants 3\n"
+        "class tree ref Nature/Tree.generator.nature priority 20 cell 4 radius 1.2\n"
+        "  wetness 0.1 0.2 1 1\n"
+        "  adapt size wetness\n";
+    CaffeineWorldMask mask{"wetness", N, N, wetness.data()};
+    CaffeineWorldRecipe recipes[] = {
+        {"Terrain/Hill.generator.terrain", CAFFEINE_RECIPE_TERRAIN, 2, 11},
+        {"Water/Lake.generator.water", CAFFEINE_RECIPE_WATER, 2, 12},
+        {"Nature/Rock.generator.nature", CAFFEINE_RECIPE_NATURE, 2, 13},
+        {"Nature/Tree.generator.nature", CAFFEINE_RECIPE_NATURE, 2, 14},
+    };
+    CaffeineWorldBuildDesc desc{};
+    desc.graph_text = graph;
+    desc.generator_version = 2;
+    desc.recipes = recipes;
+    desc.recipe_count = 4;
+    desc.check_refs = 1;
+    desc.heights = heights.data();
+    desc.resolution_x = N;
+    desc.resolution_z = N;
+    desc.size_x = 128.0f;
+    desc.size_z = 128.0f;
+    desc.max_height = 20.0f;
+    desc.masks = &mask;
+    desc.mask_count = 1;
+
+    CaffeineWorld* world = nullptr;
+    REQUIRE(caffeine_world_build(&desc, &world) == CAFFEINE_OK);
+    REQUIRE(world);
+    CaffeineWorldInfo info{};
+    caffeine_world_info(world, &info);
+    char error[256] = {};
+    if (info.error_count) caffeine_world_error(world, 0, error, sizeof(error));
+    INFO(error);
+    REQUIRE(info.ok == 1);
+    CHECK(info.class_count == 2);
+    CHECK(info.instance_count > 0);
+    CHECK(info.total == info.instance_count);
+    CHECK(info.water_body_count == 1);
+    CHECK(info.resolution_x == N);
+
+    CaffeineWorldClass first{}, second{};
+    REQUIRE(caffeine_world_class(world, 0, &first) == CAFFEINE_OK);
+    REQUIRE(caffeine_world_class(world, 1, &second) == CAFFEINE_OK);
+    CHECK(std::string(first.id) == "rock");
+    CHECK(second.first_instance == first.instance_count);
+    CHECK(first.instance_count + second.instance_count == info.instance_count);
+    CHECK(caffeine_world_class(world, 2, &first) == CAFFEINE_NOT_FOUND);
+
+    std::vector<CaffeineWorldInstance> instances(info.instance_count);
+    CHECK(caffeine_world_instances(world, 0, instances.data(), info.instance_count) == info.instance_count);
+    for (const CaffeineWorldInstance& i : instances) {
+        CHECK(i.position[0] >= 0.0f);
+        CHECK(i.position[0] < 128.0f);
+        CHECK(i.scale > 0.0f);
+    }
+    CaffeineWorldWaterBody body{};
+    std::vector<uint8_t> coverage(N * N), distance(N * N);
+    REQUIRE(caffeine_world_water_body(world, 0, &body, coverage.data(), nullptr) == CAFFEINE_OK);
+    CHECK(body.lake == 1);
+    CHECK(body.cells > 0);
+    CHECK(caffeine_world_water_distance(world, distance.data()) == CAFFEINE_OK);
+
+    // The same desc gives the same world.
+    CaffeineWorld* again = nullptr;
+    REQUIRE(caffeine_world_build(&desc, &again) == CAFFEINE_OK);
+    CaffeineWorldInfo againInfo{};
+    caffeine_world_info(again, &againInfo);
+    CHECK(againInfo.instance_hash == info.instance_hash);
+    CHECK(againInfo.cache_key == info.cache_key);
+    caffeine_world_free(again);
+    caffeine_world_free(world);
+
+    // A reference of the wrong kind builds nothing and says why.
+    recipes[3].kind = CAFFEINE_RECIPE_MATERIAL;
+    REQUIRE(caffeine_world_build(&desc, &world) == CAFFEINE_OK);
+    caffeine_world_info(world, &info);
+    CHECK(info.ok == 0);
+    REQUIRE(info.error_count == 1);
+    REQUIRE(caffeine_world_error(world, 0, error, sizeof(error)) == CAFFEINE_OK);
+    CHECK(std::string(error).find("Tree.generator.nature") != std::string::npos);
+    caffeine_world_free(world);
+
+    // The bake: written, read back as a world, and served by the cache on the second build.
+    recipes[3].kind = CAFFEINE_RECIPE_NATURE;
+    const std::string dir = (std::filesystem::temp_directory_path() / "caffeine-capi-world").string();
+    std::filesystem::remove_all(dir);
+    REQUIRE(caffeine_world_build(&desc, &world) == CAFFEINE_OK);
+    caffeine_world_info(world, &info);
+    REQUIRE(info.ok == 1);
+    const std::string bake = dir + "/valley.cinst";
+    CHECK(caffeine_world_write_cinst(world, bake.c_str(), 32.0f) == CAFFEINE_OK);
+    CaffeineWorld* read = nullptr;
+    REQUIRE(caffeine_world_read_cinst(bake.c_str(), &read, error, sizeof(error)) == CAFFEINE_OK);
+    CaffeineWorldInfo readInfo{};
+    caffeine_world_info(read, &readInfo);
+    CHECK(readInfo.ok == 1);
+    CHECK(readInfo.instance_count == info.instance_count);
+    CHECK(readInfo.cache_key == info.cache_key);
+    caffeine_world_free(read);
+    CHECK(caffeine_world_read_cinst((dir + "/missing.cinst").c_str(), &read, error, sizeof(error)) ==
+          CAFFEINE_INVALID_ARGUMENT);
+
+    uint64_t key = 0;
+    REQUIRE(caffeine_world_cache_key(&desc, &key) == CAFFEINE_OK);
+    CHECK(key == info.cache_key);
+    int32_t hit = -1;
+    CaffeineWorld* cached = nullptr;
+    REQUIRE(caffeine_world_build_cached(&desc, dir.c_str(), &cached, &hit) == CAFFEINE_OK);
+    CHECK(hit == 0);
+    caffeine_world_free(cached);
+    REQUIRE(caffeine_world_build_cached(&desc, dir.c_str(), &cached, &hit) == CAFFEINE_OK);
+    CHECK(hit == 1);
+    CaffeineWorldInfo cachedInfo{};
+    caffeine_world_info(cached, &cachedInfo);
+    CHECK(cachedInfo.instance_hash == info.instance_hash);
+    caffeine_world_free(cached);
+    caffeine_world_free(world);
+    std::filesystem::remove_all(dir);
+
+    CHECK(caffeine_world_build(nullptr, &world) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_world_check(graph, error, sizeof(error)) == CAFFEINE_OK);
+    CHECK(caffeine_world_check("class oak\n", error, sizeof(error)) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(std::string(error).find("no `terrain`") != std::string::npos);
+}

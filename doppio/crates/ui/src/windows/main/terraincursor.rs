@@ -57,7 +57,7 @@ impl App {
         self.terrain_cursor.cursor = self.terrain_cursor_at(point);
     }
 
-    fn terrain_cursor_at(&self, point: Point) -> Option<BrushCursor> {
+    pub(super) fn terrain_cursor_at(&self, point: Point) -> Option<BrushCursor> {
         let engine = self.engine.as_ref()?;
         let camera = self.viewport_frame_camera.as_ref().unwrap_or(&self.camera);
         let basis = Basis::new(

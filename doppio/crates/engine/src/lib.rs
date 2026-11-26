@@ -13,6 +13,7 @@ mod animation;
 mod material;
 mod terrain;
 mod water;
+mod world;
 pub use animation::{
     ConditionOp, PhaseShiftCondition, PhaseShiftKind, PhaseShiftParameter, PhaseShiftSnapshot,
     PhaseShiftState, PhaseShiftTransition, Rig2dBinding, Rig2dBone, Rig2dParameter, Rig2dSnapshot,
@@ -24,6 +25,10 @@ use terrain::RawTerrain;
 pub use terrain::{ScatterClass, ScatterInstance, ScatterResult, Terrain, TerrainMaskInfo};
 use water::RawWater;
 pub use water::{Water, WaterWave, MAX_WATER_WAVES};
+pub use world::{
+    WaterSurfaceGrid, WorldBuild, WorldBuildDesc, WorldBuilder, WorldClass, WorldInstance,
+    WorldMask, WorldRecipe, WorldRecipeKind, WorldWaterBody,
+};
 
 pub const ENTITY_NONE: u32 = u32::MAX;
 
@@ -1282,6 +1287,7 @@ struct Functions {
     set_simulating: Option<SetSimulatingFn>,
     simulating: Option<SimulatingFn>,
     set_water: Option<SetWaterFn>,
+    set_water_surface: Option<water::SetWaterSurfaceFn>,
     set_terrain: Option<SetTerrainFn>,
     terrain_raycast: Option<TerrainRaycastFn>,
     terrain_outline: Option<TerrainOutlineFn>,
@@ -1302,6 +1308,7 @@ struct Functions {
     terrain_normal: Option<TerrainNormalFn>,
     scatter_terrain: Option<ScatterTerrainFn>,
     biome_check: Option<BiomeCheckFn>,
+    world: Option<world::WorldFunctions>,
     get_water: Option<GetWaterFn>,
     water_height: Option<WaterHeightFn>,
     phase_shift_counts: Option<animation::PhaseShiftCountsFn>,
@@ -1565,6 +1572,7 @@ impl Engine {
             terrain_normal: unsafe { load_symbol(library, b"caffeine_session_terrain_normal\0") },
             scatter_terrain: unsafe { load_symbol(library, b"caffeine_session_scatter_terrain\0") },
             biome_check: unsafe { load_symbol(library, b"caffeine_biome_check\0") },
+            world: world::WorldFunctions::load(library),
             scene_camera: unsafe { load_symbol(library, b"caffeine_session_scene_camera\0") },
             set_preview_camera: unsafe {
                 load_symbol(library, b"caffeine_session_set_preview_camera\0")
@@ -1588,6 +1596,9 @@ impl Engine {
             set_simulating: unsafe { load_symbol(library, b"caffeine_session_set_simulating\0") },
             simulating: unsafe { load_symbol(library, b"caffeine_session_simulating\0") },
             set_water: unsafe { load_symbol(library, b"caffeine_session_set_water\0") },
+            set_water_surface: unsafe {
+                load_symbol(library, b"caffeine_session_set_water_surface\0")
+            },
             get_water: unsafe { load_symbol(library, b"caffeine_session_water\0") },
             water_height: unsafe { load_symbol(library, b"caffeine_session_water_height\0") },
             phase_shift_counts: unsafe {
