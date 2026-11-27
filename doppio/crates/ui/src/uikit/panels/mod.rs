@@ -21,6 +21,7 @@ pub mod script;
 pub mod terrain_brush;
 pub mod terrain_generator;
 pub mod terrain_paint;
+pub mod terrain_path;
 pub mod terrain_vegetation;
 pub mod texture_generator;
 pub mod texture_set;

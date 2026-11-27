@@ -52,6 +52,8 @@
 #ifdef CF_HAS_SDL3
 #include "render/TerrainVegetationGpu.hpp"
 #endif
+#include "terrain/paint/TerrainMaskPaint.hpp"
+#include "terrain/spline/TerrainSpline.hpp"
 #include "terrain/paint/TerrainPaintStroke.hpp"
 #include "terrain/paint/TerrainPalette.hpp"
 #include "assets/MaterialCache.hpp"
@@ -113,6 +115,8 @@ struct CaffeineSession {
         // A paint stroke (terrain layers) lives in the same slot: only one stroke is open at a time.
         std::unique_ptr<Caffeine::Terrain::TerrainPaintStroke> paint;
         std::unique_ptr<Caffeine::Terrain::VegetationStroke> veg;
+        // A painted mask stroke lives in the same slot too.
+        std::unique_ptr<Caffeine::Terrain::TerrainMaskStroke> mask;
         float vegRadius = 0.0f;  // the brush's reach, to mark the chunks a point changes
         CaffeineEntity entity = 0;
         const Caffeine::Terrain::TerrainHeightmap* heightmap = nullptr;  // to notice a terrain that was replaced
@@ -121,15 +125,17 @@ struct CaffeineSession {
     // What a record undoes: a height stroke, a layer stroke, or an edit of the palette (with the renumbering of the
     // layer map it caused, when there was one).
     struct TerrainStrokeRecord {
-        enum class Kind { Height, Layers, Palette, Vegetation };
+        enum class Kind { Height, Layers, Palette, Vegetation, Mask, Spline };
         CaffeineEntity entity = 0;
         Kind kind = Kind::Height;
         Caffeine::Terrain::StrokeRecord record;
         Caffeine::Terrain::LayerStrokeRecord layerRecord;
         Caffeine::Terrain::VegetationRecord vegRecord;
+        Caffeine::Terrain::MaskRecord maskRecord;
+        Caffeine::Terrain::SplineRecord splineRecord;
         std::string paletteBefore, paletteAfter;
         size_t bytes() const {
-            return record.bytes() + layerRecord.bytes() + vegRecord.bytes() + paletteBefore.size() + paletteAfter.size();
+            return record.bytes() + layerRecord.bytes() + vegRecord.bytes() + maskRecord.bytes() + splineRecord.bytes() + paletteBefore.size() + paletteAfter.size();
         }
     };
     std::unordered_map<uint32_t, TerrainStrokeRecord> terrainRecords;
@@ -3482,8 +3488,15 @@ CaffeineResult caffeine_session_set_terrain_mask(CaffeineSession* session, Caffe
     TerrainMaskView view;
     if (CaffeineResult r = terrainMaskView(session, entityId, view); r != CAFFEINE_OK) return r;
     const std::string key(name);
-    if (!data) return view.masks->remove(key) ? CAFFEINE_OK : CAFFEINE_NOT_FOUND;
-    if (!view.masks->set(key, resolution_x, resolution_z, data)) return CAFFEINE_INVALID_ARGUMENT;
+    const Caffeine::ECS::Entity maskEntity = entityOf(*const_cast<CaffeineSession*>(session), entityId);
+    auto* maskComponent = const_cast<CaffeineSession*>(session)->world.get<Caffeine::ECS::TerrainComponent>(maskEntity);
+    if (!data) {
+        if (!view.masks->remove(key)) return CAFFEINE_NOT_FOUND;
+    } else if (!view.masks->set(key, resolution_x, resolution_z, data)) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    // Species read masks: the vegetation is resolved again.
+    if (maskComponent) Caffeine::Terrain::TerrainCache::instance().commitMaskEdit(maskEntity, *maskComponent);
     session->context.markDirty();
     return CAFFEINE_OK;
 }
@@ -3750,13 +3763,39 @@ CaffeineResult endTerrainStroke(CaffeineSession& session, CaffeineTerrainStrokeR
     using namespace Caffeine;
     if (out) *out = CaffeineTerrainStrokeResult{};
     auto& slot = session.terrainStroke;
-    if (!slot.stroke && !slot.paint && !slot.veg) return CAFFEINE_NOT_FOUND;
+    if (!slot.stroke && !slot.paint && !slot.veg && !slot.mask) return CAFFEINE_NOT_FOUND;
     const CaffeineEntity entityId = slot.entity;
     CaffeineSession::TerrainStrokeRecord kept;
     kept.entity = entityId;
     uint32_t stamps = 0;
     bool empty = true;
-    if (slot.veg) {
+    if (slot.mask) {
+        kept.kind = CaffeineSession::TerrainStrokeRecord::Kind::Mask;
+        kept.maskRecord = slot.mask->finish();
+        slot.mask.reset();
+        stamps = kept.maskRecord.stamps;
+        empty = kept.maskRecord.empty();
+        if (out) {
+            out->stamps = stamps;
+            out->tiles_changed = static_cast<uint32_t>(kept.maskRecord.blocks.size());
+            out->bytes = kept.maskRecord.bytes();
+            out->has_region = kept.maskRecord.region.valid ? 1 : 0;
+            out->region_min_x = kept.maskRecord.region.minX;
+            out->region_min_z = kept.maskRecord.region.minZ;
+            out->region_max_x = kept.maskRecord.region.maxX;
+            out->region_max_z = kept.maskRecord.region.maxZ;
+        }
+        if (!empty && entityAlive(session, entityId)) {
+            const ECS::Entity entity = entityOf(session, entityId);
+            auto& cache = Terrain::TerrainCache::instance();
+            const Terrain::TerrainMasks* masks = cache.masksFor(entity);
+            if (auto* component = session.world.get<ECS::TerrainComponent>(entity); component && masks) {
+                if (const auto* stored = masks->findStored(kept.maskRecord.mask)) {
+                    cache.commitMaskEdit(entity, *component, kept.maskRecord.region, stored->resolutionX, stored->resolutionZ);
+                }
+            }
+        }
+    } else if (slot.veg) {
         kept.kind = CaffeineSession::TerrainStrokeRecord::Kind::Vegetation;
         kept.vegRecord = slot.veg->finish();
         slot.veg.reset();
@@ -3837,9 +3876,37 @@ CaffeineResult applyTerrainRecord(CaffeineSession& session, uint32_t id, bool re
     const ECS::Entity entity = entityOf(session, it->second.entity);
     auto* component = session.world.get<ECS::TerrainComponent>(entity);
     if (!component) return CAFFEINE_NOT_FOUND;
-    if (session.terrainStroke.stroke || session.terrainStroke.paint || session.terrainStroke.veg) endTerrainStroke(session, nullptr);
+    if (session.terrainStroke.stroke || session.terrainStroke.paint || session.terrainStroke.veg || session.terrainStroke.mask) endTerrainStroke(session, nullptr);
     auto& cache = Terrain::TerrainCache::instance();
     CaffeineSession::TerrainStrokeRecord& record = it->second;
+    if (record.kind == CaffeineSession::TerrainStrokeRecord::Kind::Spline) {
+        auto* heightmap = cache.heightmapFor(entity);
+        if (!heightmap || heightmap->empty()) return CAFFEINE_NOT_FOUND;
+        Terrain::TerrainLayerMap* layerMap = cache.layerMapFor(entity);
+        Terrain::TerrainMasks* masks = cache.masksFor(entity);
+        const Terrain::SplineRegions regions =
+            revert ? Terrain::revertSpline(record.splineRecord, *heightmap, layerMap, masks)
+                   : Terrain::reapplySpline(record.splineRecord, *heightmap, layerMap, masks);
+        if (regions.height.valid) cache.commitHeightEdit(entity, *component, regions.height, true);
+        if (regions.layers.valid) cache.commitLayerEdit(entity, *component, regions.layers);
+        if (!record.splineRecord.mask.empty() && masks) {
+            const auto* stored = masks->findStored(record.splineRecord.mask.mask);
+            cache.commitMaskEdit(entity, *component, regions.maskWhole ? Terrain::LayerBounds{} : regions.mask, stored ? stored->resolutionX : 0,
+                                 stored ? stored->resolutionZ : 0);
+        }
+        session.context.markDirty();
+        return CAFFEINE_OK;
+    }
+    if (record.kind == CaffeineSession::TerrainStrokeRecord::Kind::Mask) {
+        Terrain::TerrainMasks* masks = cache.masksFor(entity);
+        if (!masks) return CAFFEINE_NOT_FOUND;
+        if (!(revert ? record.maskRecord.applyBefore(*masks) : record.maskRecord.applyAfter(*masks))) return CAFFEINE_ERROR;
+        const auto* stored = masks->findStored(record.maskRecord.mask);
+        cache.commitMaskEdit(entity, *component, record.maskRecord.whole ? Terrain::LayerBounds{} : record.maskRecord.region,
+                             stored ? stored->resolutionX : 0, stored ? stored->resolutionZ : 0);
+        session.context.markDirty();
+        return CAFFEINE_OK;
+    }
     if (record.kind == CaffeineSession::TerrainStrokeRecord::Kind::Vegetation) {
         Terrain::TerrainVegetation* veg = cache.vegetationFor(entity);
         if (!veg) return CAFFEINE_NOT_FOUND;
@@ -3901,7 +3968,7 @@ CaffeineResult caffeine_session_terrain_convert_native(CaffeineSession* session,
     const ECS::Entity entity = entityOf(*session, entityId);
     auto* terrain = session->world.get<ECS::TerrainComponent>(entity);
     if (!terrain) return CAFFEINE_NOT_FOUND;
-    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
     const std::filesystem::path root(session->context.projectRootPath);
     if (!Terrain::TerrainCache::instance().convertToNative(entity, *terrain, root)) return CAFFEINE_ERROR;
     if (out_path && out_path_size > 0) copyText(out_path, out_path_size, terrain->terrainDataPath);
@@ -4134,7 +4201,7 @@ CaffeineResult caffeine_session_terrain_stroke_begin_preset(CaffeineSession* ses
         return CAFFEINE_ERROR;
     }
 
-    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
     session->terrainStroke.stroke = std::make_unique<Terrain::TerrainStroke>(*heightmap, *component, settings.brush);
     session->terrainStroke.stroke->setMasks(Terrain::TerrainCache::instance().masksFor(entity));
     session->terrainStroke.entity = entityId;
@@ -4154,7 +4221,7 @@ CaffeineResult caffeine_session_terrain_stroke_begin(CaffeineSession* session, C
     if (!component || !heightmap || heightmap->empty()) return CAFFEINE_NOT_FOUND;
     if (stamp_alpha && (stamp_size < 2 || stamp_size > 1024)) return CAFFEINE_INVALID_ARGUMENT;
 
-    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
 
     Terrain::StrokeBrush settings;
     settings.mode = static_cast<Terrain::TerrainBrushMode>(std::clamp(brush->mode, 0, 15));
@@ -4182,9 +4249,26 @@ CaffeineResult caffeine_session_terrain_stroke_point(CaffeineSession* session, d
     if (out_stamps) *out_stamps = 0;
     if (!session) return CAFFEINE_INVALID_ARGUMENT;
     auto& slot = session->terrainStroke;
-    if (!slot.stroke && !slot.paint && !slot.veg) return CAFFEINE_NOT_FOUND;
+    if (!slot.stroke && !slot.paint && !slot.veg && !slot.mask) return CAFFEINE_NOT_FOUND;
     const ECS::Entity entity = entityAlive(*session, slot.entity) ? entityOf(*session, slot.entity) : ECS::Entity::INVALID;
     auto* component = entity.isValid() ? session->world.get<ECS::TerrainComponent>(entity) : nullptr;
+    if (slot.mask) {
+        auto* masks = component ? Terrain::TerrainCache::instance().masksFor(entity) : nullptr;
+        if (!masks || !masks->findStored(slot.mask->mask())) {
+            slot.mask.reset();
+            return CAFFEINE_NOT_FOUND;
+        }
+        const Mat4 maskWorld = Scene::computeWorldMatrix(session->world, entity);
+        const Vec3 maskLocal = maskWorld.inverted().transformPoint(Vec3(static_cast<f32>(x), static_cast<f32>(y), static_cast<f32>(z)));
+        const uint32_t laidMask = slot.mask->addPoint(Terrain::StrokePoint{maskLocal.x, maskLocal.z, std::clamp(pressure, 0.0f, 1.0f)});
+        if (out_stamps) *out_stamps = laidMask;
+        if (slot.mask->dirty().valid) {
+            const auto* stored = masks->findStored(slot.mask->mask());
+            Terrain::TerrainCache::instance().commitMaskEdit(entity, *component, slot.mask->dirty(), stored->resolutionX, stored->resolutionZ);
+            slot.mask->clearDirty();
+        }
+        return CAFFEINE_OK;
+    }
     if (slot.veg) {
         if (!component || !Terrain::TerrainCache::instance().vegetationFor(entity)) {
             slot.veg.reset();
@@ -4326,7 +4410,7 @@ CaffeineResult caffeine_session_terrain_layers_enable(CaffeineSession* session, 
     if (!component) return CAFFEINE_NOT_FOUND;
     auto& cache = Terrain::TerrainCache::instance();
     cache.syncEntity(session->world, entity);
-    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
     if (enabled) {
         if (!cache.enableLayers(entity, *component)) return CAFFEINE_ERROR;
     } else {
@@ -4461,7 +4545,7 @@ CaffeineResult renumberingEdit(CaffeineSession& session, CaffeineEntity entityId
     if (out_record) *out_record = 0;
     PaintTarget target;
     if (const CaffeineResult found = paintTarget(session, entityId, target); found != CAFFEINE_OK) return found;
-    if (session.terrainStroke.stroke || session.terrainStroke.paint || session.terrainStroke.veg) endTerrainStroke(session, nullptr);
+    if (session.terrainStroke.stroke || session.terrainStroke.paint || session.terrainStroke.veg || session.terrainStroke.mask) endTerrainStroke(session, nullptr);
     CaffeineSession::TerrainStrokeRecord record;
     record.entity = entityId;
     record.kind = CaffeineSession::TerrainStrokeRecord::Kind::Palette;
@@ -4527,7 +4611,7 @@ CaffeineResult caffeine_session_terrain_paint_begin(CaffeineSession* session, Ca
             &error)) {
         return CAFFEINE_ERROR;
     }
-    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
     syncLayerLocks(*target.palette, *target.map);
     Terrain::PaintBrush paint;
     paint.shape = settings.brush;
@@ -4539,6 +4623,197 @@ CaffeineResult caffeine_session_terrain_paint_begin(CaffeineSession* session, Ca
     session->terrainStroke.entity = entityId;
     session->terrainStroke.heightmap = heightmap;
     session->terrainStroke.layers = target.map;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_mask_paint_begin(CaffeineSession* session, CaffeineEntity entityId, const CaffeineMaskBrush* brush) {
+    using namespace Caffeine;
+    if (!session || !brush) return CAFFEINE_INVALID_ARGUMENT;
+    TerrainMaskView view;
+    if (const CaffeineResult found = terrainMaskView(session, entityId, view); found != CAFFEINE_OK) return found;
+    if (brush->mode < CAFFEINE_MASK_PAINT || brush->mode > CAFFEINE_MASK_SMOOTH) return CAFFEINE_INVALID_ARGUMENT;
+    const std::string name(brush->mask, strnlen(brush->mask, sizeof(brush->mask)));
+    if (Terrain::TerrainMasks::isBuiltin(name)) return CAFFEINE_INVALID_ARGUMENT;  // derived from the ground, not painted
+    if (!view.masks->findStored(name)) return CAFFEINE_NOT_FOUND;
+
+    Terrain::BrushPreset settings = presetFromC(brush->shape);
+    Assets::AssetManager& manager = session->assetManager;
+    manager.setProjectRoot(session->context.projectRootPath);
+    manager.setAssetRoot(session->assetRoot);
+    manager.setEngineAssetRoot(Assets::MeshCache::engineAssetsRoot());
+    std::string error;
+    if (!Terrain::resolveBrushStamp(
+            settings,
+            [&](const std::string& path) {
+                const Assets::AssetReference ref = manager.resolveReference(path);
+                return ref.ok() ? ref.absolutePath : std::string();
+            },
+            &error)) {
+        return CAFFEINE_ERROR;
+    }
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
+    Terrain::MaskPaintBrush paint;
+    paint.shape = settings.brush;
+    paint.mode = static_cast<Terrain::MaskPaintMode>(brush->mode);
+    paint.value = brush->value;
+    session->terrainStroke.mask = std::make_unique<Terrain::TerrainMaskStroke>(*view.masks, name, *view.map, *view.component, paint);
+    session->terrainStroke.entity = entityId;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_mask_create(CaffeineSession* session, CaffeineEntity entityId, const char* name, uint32_t resolution_x,
+                                                    uint32_t resolution_z, float value, const char* from, uint32_t* out_record,
+                                                    char* error, size_t error_size) {
+    using namespace Caffeine;
+    if (out_record) *out_record = 0;
+    if (!session || !name) return CAFFEINE_INVALID_ARGUMENT;
+    TerrainMaskView view;
+    if (const CaffeineResult found = terrainMaskView(session, entityId, view); found != CAFFEINE_OK) return found;
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
+    if (resolution_x == 0) resolution_x = view.component->resolutionX;
+    if (resolution_z == 0) resolution_z = view.component->resolutionZ;
+    CaffeineSession::TerrainStrokeRecord kept;
+    kept.entity = entityId;
+    kept.kind = CaffeineSession::TerrainStrokeRecord::Kind::Mask;
+    std::string reason;
+    if (!Terrain::createMask(*view.masks, view.frame, name, resolution_x, resolution_z, std::clamp(value, 0.0f, 1.0f), from ? from : "",
+                             kept.maskRecord, &reason)) {
+        copyReason(error, error_size, reason);
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    const Terrain::LayerBounds all;
+    Terrain::TerrainCache::instance().commitMaskEdit(entityOf(*session, entityId), *const_cast<ECS::TerrainComponent*>(view.component), all);
+    session->context.markDirty();
+    const uint32_t id = keepTerrainRecord(*session, std::move(kept));
+    if (out_record) *out_record = id;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_mask_edit(CaffeineSession* session, CaffeineEntity entityId, const char* name, int32_t op, float value,
+                                                  uint32_t* out_record) {
+    using namespace Caffeine;
+    if (out_record) *out_record = 0;
+    if (!session || !name || op < CAFFEINE_MASK_OP_FILL || op > CAFFEINE_MASK_OP_DELETE) return CAFFEINE_INVALID_ARGUMENT;
+    TerrainMaskView view;
+    if (const CaffeineResult found = terrainMaskView(session, entityId, view); found != CAFFEINE_OK) return found;
+    const std::string key(name);
+    if (Terrain::TerrainMasks::isBuiltin(key)) return CAFFEINE_INVALID_ARGUMENT;
+    if (!view.masks->findStored(key)) return CAFFEINE_NOT_FOUND;
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
+    CaffeineSession::TerrainStrokeRecord kept;
+    kept.entity = entityId;
+    kept.kind = CaffeineSession::TerrainStrokeRecord::Kind::Mask;
+    if (!Terrain::editMask(*view.masks, key, static_cast<Terrain::MaskOp>(op), std::clamp(value, 0.0f, 1.0f), kept.maskRecord, nullptr)) {
+        return CAFFEINE_ERROR;
+    }
+    if (kept.maskRecord.empty()) return CAFFEINE_OK;  // nothing changed: no undo step
+    Terrain::TerrainCache::instance().commitMaskEdit(entityOf(*session, entityId), *const_cast<ECS::TerrainComponent*>(view.component));
+    session->context.markDirty();
+    const uint32_t id = keepTerrainRecord(*session, std::move(kept));
+    if (out_record) *out_record = id;
+    return CAFFEINE_OK;
+}
+
+namespace {
+
+Caffeine::Terrain::SplineDesc splineFromC(const CaffeineSplineDesc& in, const CaffeineSplinePoint* points, uint32_t count,
+                                          const Caffeine::Mat4& inverseWorld, float halfX, float halfZ) {
+    using namespace Caffeine;
+    Terrain::SplineDesc desc;
+    desc.kind = in.kind == CAFFEINE_SPLINE_RIVER ? Terrain::SplineKind::River : Terrain::SplineKind::Road;
+    desc.widthM = in.width_m;
+    desc.shoulderM = in.shoulder_m;
+    desc.depthM = in.depth_m;
+    desc.smoothM = in.smooth_m;
+    desc.maxGrade = in.max_grade;
+    desc.layer = in.layer;
+    desc.layerStrength = in.layer_strength;
+    desc.mask.assign(in.mask, strnlen(in.mask, sizeof(in.mask)));
+    for (uint32_t i = 0; i < count; ++i) {
+        // World space to the terrain's own space (metres from its centre), then to metres from its corner.
+        const Vec3 local = inverseWorld.transformPoint(Vec3(static_cast<f32>(points[i].x), static_cast<f32>(points[i].y), static_cast<f32>(points[i].z)));
+        desc.points.push_back({local.x + halfX, local.z + halfZ, points[i].width_m});
+    }
+    return desc;
+}
+
+}  // namespace
+
+CaffeineResult caffeine_session_terrain_spline_apply(CaffeineSession* session, CaffeineEntity entityId, const CaffeineSplineDesc* desc,
+                                                     const CaffeineSplinePoint* points, uint32_t point_count, uint32_t* out_record,
+                                                     float* out_length_m, char* error, size_t error_size) {
+    using namespace Caffeine;
+    if (out_record) *out_record = 0;
+    if (out_length_m) *out_length_m = 0.0f;
+    if (!session || !desc || !points || point_count == 0 || point_count > Terrain::kMaxSplinePoints) return CAFFEINE_INVALID_ARGUMENT;
+    if (desc->kind < CAFFEINE_SPLINE_ROAD || desc->kind > CAFFEINE_SPLINE_RIVER) return CAFFEINE_INVALID_ARGUMENT;
+    ECS::Entity entity;
+    ECS::TerrainComponent* component = terrainOf(*session, entityId, entity);
+    if (!component) return CAFFEINE_NOT_FOUND;
+    auto& cache = Terrain::TerrainCache::instance();
+    cache.syncEntity(session->world, entity);
+    auto* heightmap = cache.heightmapFor(entity);
+    if (!heightmap || heightmap->empty()) return CAFFEINE_NOT_FOUND;
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
+
+    Terrain::TerrainLayerMap* layerMap = nullptr;
+    if (desc->layer >= 0) {
+        layerMap = component->useLayers ? cache.layerMapFor(entity) : nullptr;
+        if (Terrain::TerrainPalette* palette = cache.paletteFor(entity); palette && layerMap) {
+            syncLayerLocks(*palette, *layerMap);
+            if (static_cast<size_t>(desc->layer) >= palette->size()) {
+                copyReason(error, error_size, "that palette layer does not exist");
+                return CAFFEINE_INVALID_ARGUMENT;
+            }
+        }
+    }
+    const Mat4 world = Scene::computeWorldMatrix(session->world, entity);
+    const Terrain::SplineDesc spline = splineFromC(*desc, points, point_count, world.inverted(), component->worldSizeX * 0.5f, component->worldSizeZ * 0.5f);
+    CaffeineSession::TerrainStrokeRecord kept;
+    kept.entity = entityId;
+    kept.kind = CaffeineSession::TerrainStrokeRecord::Kind::Spline;
+    std::string reason;
+    if (!Terrain::applySpline(*heightmap, layerMap, cache.masksFor(entity), *component, spline, kept.splineRecord, &reason)) {
+        copyReason(error, error_size, reason);
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    if (out_length_m) *out_length_m = kept.splineRecord.lengthM;
+    if (kept.splineRecord.empty()) return CAFFEINE_OK;  // nothing changed: no undo step
+    if (kept.splineRecord.height.region.valid) cache.commitHeightEdit(entity, *component, kept.splineRecord.height.region, true);
+    if (kept.splineRecord.layers.region.valid) cache.commitLayerEdit(entity, *component, kept.splineRecord.layers.region);
+    if (!kept.splineRecord.mask.empty()) {
+        const auto* stored = cache.masksFor(entity)->findStored(kept.splineRecord.mask.mask);
+        cache.commitMaskEdit(entity, *component, kept.splineRecord.mask.whole ? Terrain::LayerBounds{} : kept.splineRecord.mask.region,
+                             stored ? stored->resolutionX : 0, stored ? stored->resolutionZ : 0);
+    }
+    session->context.markDirty();
+    const uint32_t id = keepTerrainRecord(*session, std::move(kept));
+    if (out_record) *out_record = id;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_spline_sample(const CaffeineSession* session, CaffeineEntity entityId, const CaffeineSplineDesc* desc,
+                                                      const CaffeineSplinePoint* points, uint32_t point_count, float step_m,
+                                                      CaffeineSplineSample* out, uint32_t capacity, uint32_t* out_count) {
+    using namespace Caffeine;
+    if (out_count) *out_count = 0;
+    if (!session || !desc || !points || !out_count || point_count == 0 || point_count > Terrain::kMaxSplinePoints || !(step_m > 0.0f)) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    CaffeineSession& mutableSession = const_cast<CaffeineSession&>(*session);
+    TerrainMaskView view;
+    if (const CaffeineResult found = terrainMaskView(session, entityId, view); found != CAFFEINE_OK) return found;
+    const ECS::Entity entity = entityOf(mutableSession, entityId);
+    const Mat4 world = Scene::computeWorldMatrix(mutableSession.world, entity);
+    const Terrain::SplineDesc spline = splineFromC(*desc, points, point_count, world.inverted(), view.component->worldSizeX * 0.5f, view.component->worldSizeZ * 0.5f);
+    std::string reason;
+    if (!Terrain::validateSpline(spline, view.frame, &reason)) return CAFFEINE_INVALID_ARGUMENT;
+    const std::vector<Terrain::SplineSample> samples = Terrain::sampleSpline(spline, view.frame, step_m);
+    *out_count = static_cast<uint32_t>(samples.size());
+    for (size_t i = 0; out && i < samples.size() && i < capacity; ++i) {
+        const Vec3 at = world.transformPoint(Vec3(samples[i].x - view.component->worldSizeX * 0.5f, samples[i].height, samples[i].z - view.component->worldSizeZ * 0.5f));
+        out[i] = CaffeineSplineSample{at.x, at.y, at.z, samples[i].width, samples[i].along};
+    }
     return CAFFEINE_OK;
 }
 
@@ -4568,7 +4843,7 @@ CaffeineResult caffeine_session_terrain_autolayer(CaffeineSession* session, Caff
             return CAFFEINE_INVALID_ARGUMENT;
         }
     }
-    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
     syncLayerLocks(*target.palette, *target.map);
     Terrain::AutoLayerOptions options;
     options.fallbackLayer = fallback;
@@ -4758,7 +5033,7 @@ CaffeineResult caffeine_session_terrain_vegetation_enable(CaffeineSession* sessi
     if (!component) return CAFFEINE_NOT_FOUND;
     auto& cache = Terrain::TerrainCache::instance();
     cache.syncEntity(session->world, entity);
-    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
     if (enabled) {
         if (!cache.enableVegetation(entity, *component)) return CAFFEINE_ERROR;
     } else {
@@ -4821,7 +5096,7 @@ CaffeineResult caffeine_session_terrain_veg_species_apply(CaffeineSession* sessi
     if (count > CAFFEINE_VEG_SPECIES_MAX) return CAFFEINE_INVALID_ARGUMENT;
     VegTarget target;
     if (const CaffeineResult found = vegTarget(*session, entityId, target); found != CAFFEINE_OK) return found;
-    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
     std::vector<Terrain::VegetationSpecies> list;
     for (uint32_t i = 0; i < count; ++i) list.push_back(vegSpeciesFromC(species[i], target.veg->speciesByUid(species[i].uid)));
     std::string reason;
@@ -4877,7 +5152,7 @@ CaffeineResult caffeine_session_terrain_veg_paint_begin(CaffeineSession* session
             &error)) {
         return CAFFEINE_ERROR;
     }
-    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
     Terrain::VegetationBrush vegBrush;
     vegBrush.shape = settings.brush;
     vegBrush.tool = static_cast<Terrain::VegetationTool>(brush->tool);
@@ -4902,7 +5177,7 @@ CaffeineResult caffeine_session_terrain_veg_bake(CaffeineSession* session, Caffe
     VegTarget target;
     if (const CaffeineResult found = vegTarget(*session, entityId, target); found != CAFFEINE_OK) return found;
     if (species >= target.veg->species().size()) return CAFFEINE_INVALID_ARGUMENT;
-    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
     auto& cache = Terrain::TerrainCache::instance();
     Terrain::VegetationRecord record = Terrain::bakeProcedural(*target.veg, species, cache.vegetationField(target.entity, *target.component),
                                                               target.component->worldSizeX, target.component->worldSizeZ);
@@ -4918,7 +5193,7 @@ CaffeineResult caffeine_session_terrain_veg_rederive(CaffeineSession* session, C
     VegTarget target;
     if (const CaffeineResult found = vegTarget(*session, entityId, target); found != CAFFEINE_OK) return found;
     if (species >= target.veg->species().size()) return CAFFEINE_INVALID_ARGUMENT;
-    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg) endTerrainStroke(*session, nullptr);
+    if (session->terrainStroke.stroke || session->terrainStroke.paint || session->terrainStroke.veg || session->terrainStroke.mask) endTerrainStroke(*session, nullptr);
     Terrain::VegetationRecord record = Terrain::rederiveProcedural(*target.veg, species);
     if (record.empty()) return CAFFEINE_OK;
     Terrain::TerrainCache::instance().commitVegetationEdit(target.entity, *target.component, record);

@@ -31,6 +31,8 @@ pub(super) struct OpenStroke {
     pub paint: bool,
     /// A vegetation stroke (Terrain Vegetation).
     pub vegetation: bool,
+    /// A stroke that paints this stored mask (Terrain Paint), `paint` is set too.
+    pub mask: Option<String>,
 }
 
 #[derive(Default)]
@@ -314,6 +316,7 @@ impl App {
             if self.terrain_paint.active {
                 self.terrain_paint.active = false;
             }
+            self.terrain_path.active = false;
             if self.terrain_vegetation.active {
                 self.terrain_vegetation.active = false;
             }
@@ -552,6 +555,7 @@ impl App {
                     points: 0,
                     paint: false,
                     vegetation: false,
+                    mask: None,
                 });
                 true
             }
@@ -610,6 +614,8 @@ impl App {
                     "Vegetation {}",
                     self.terrain_vegetation.tool.label().to_lowercase()
                 )
+            } else if let Some(mask) = &stroke.mask {
+                format!("Paint mask {mask}")
             } else if stroke.paint {
                 let layer = self
                     .terrain_paint

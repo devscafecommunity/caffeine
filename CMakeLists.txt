@@ -116,6 +116,8 @@ add_library(caffeine-core
     src/caffeine/terrain/paint/TerrainPalette.cpp
     src/caffeine/terrain/paint/TerrainLayerMap.cpp
     src/caffeine/terrain/paint/TerrainPaintStroke.cpp
+    src/caffeine/terrain/paint/TerrainMaskPaint.cpp
+    src/caffeine/terrain/spline/TerrainSpline.cpp
     src/caffeine/terrain/paint/TerrainAutoLayer.cpp
     src/caffeine/terrain/vegetation/VegetationSpecies.cpp
     src/caffeine/terrain/vegetation/TerrainVegetation.cpp

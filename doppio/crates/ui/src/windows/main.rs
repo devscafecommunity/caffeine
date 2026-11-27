@@ -5,8 +5,8 @@ use crate::uikit::asset_kind::AssetKind;
 use crate::uikit::asset_wizard;
 use crate::uikit::behaviour;
 use crate::uikit::components::{
-    behaviour_picker, button, dock_overlay, gizmo, menu, panel, prefab_palette, scene_markers,
-    status, tabs, toolbar, transport, viewport_shader,
+    behaviour_picker, button, dock_overlay, gizmo, menu, panel, panel_palette, prefab_palette,
+    scene_markers, status, tabs, toolbar, transport, viewport_shader,
 };
 use crate::uikit::dryad;
 use crate::uikit::generators::{self, MaterialGraph};
@@ -276,6 +276,13 @@ fn keyboard_event_message(event: iced::keyboard::Event) -> Option<Message> {
                     Some(Message::OpenDryadNodes)
                 }
                 iced::keyboard::Key::Character(character)
+                    if character.eq_ignore_ascii_case("p")
+                        && modifiers.control()
+                        && !modifiers.shift() =>
+                {
+                    Some(Message::TogglePanelPalette)
+                }
+                iced::keyboard::Key::Character(character)
                     if character.eq_ignore_ascii_case("o") && modifiers.control() =>
                 {
                     Some(Message::Project(project_manager::Edit::Open))
@@ -331,6 +338,11 @@ fn keyboard_event_message(event: iced::keyboard::Event) -> Option<Message> {
                 iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
                     Some(Message::TogglePlay)
                 }
+                iced::keyboard::Key::Named(
+                    iced::keyboard::key::Named::Backspace | iced::keyboard::key::Named::Delete,
+                ) => Some(Message::TerrainPath(
+                    crate::uikit::panels::terrain_path::Edit::RemoveLast,
+                )),
                 iced::keyboard::Key::Named(iced::keyboard::key::Named::F5) => {
                     Some(Message::AssetRefresh)
                 }
@@ -461,6 +473,7 @@ enum PaneKind {
     TerrainBrush,
     TerrainPaint,
     TerrainVegetation,
+    TerrainPath,
     PhaseShift,
     Rig2d,
     Profiler,
@@ -556,6 +569,9 @@ enum Message {
     #[cfg_attr(not(feature = "agent"), allow(dead_code))]
     CloseScene,
     ToggleMenu(MenuId),
+    TogglePanelPalette,
+    PanelPaletteSearch(String),
+    GoToPane(PaneKind),
     CloseMenu,
     ToggleConsoleFilter(LogLevel),
     Layout(LayoutPreset),
@@ -689,6 +705,8 @@ enum Message {
     /// An edit of the Terrain Vegetation panel (species, brush, procedural source, the tool's switch).
     TerrainVegetation(crate::uikit::panels::terrain_vegetation::Edit),
     ShowTerrainVegetation,
+    TerrainPath(crate::uikit::panels::terrain_path::Edit),
+    ShowTerrainPath,
     /// Bakes the selected species' recipe (the `terrain_vegetation_bake_recipe` agent action).
     #[cfg_attr(not(feature = "agent"), allow(dead_code))]
     TerrainVegetationBakeRecipe {
@@ -893,6 +911,7 @@ struct App {
     terrain_editor: terraineditor::State,
     terrain_paint: terrainpaint::State,
     terrain_vegetation: terrainvegetation::State,
+    terrain_path: terrainpath::State,
     /// The scene holds a water surface, so the editor keeps stepping the engine for it.
     has_water: bool,
     water_scan: u32,
@@ -957,6 +976,8 @@ struct App {
     material_environment_search: String,
     /// Script picker opened by the inspector's "Add Behaviour".
     behaviour_picker: bool,
+    /// The Go to panel list: the search text while it is open.
+    panel_palette: Option<String>,
     behaviour_search: String,
     material_asset_picker: bool,
     material_asset_search: String,
@@ -1062,6 +1083,7 @@ impl PaneKind {
             PaneKind::TerrainBrush => "Terrain Brush",
             PaneKind::TerrainPaint => "Terrain Paint",
             PaneKind::TerrainVegetation => "Terrain Vegetation",
+            PaneKind::TerrainPath => "Terrain Path",
             PaneKind::PhaseShift => "PhaseShift",
             PaneKind::Rig2d => "Rig 2D",
             PaneKind::Profiler => "Profiler",
@@ -1094,6 +1116,7 @@ impl PaneKind {
             PaneKind::TerrainBrush => id::PANE_TAB_TERRAIN_BRUSH,
             PaneKind::TerrainPaint => id::PANE_TAB_TERRAIN_PAINT,
             PaneKind::TerrainVegetation => id::PANE_TAB_TERRAIN_VEGETATION,
+            PaneKind::TerrainPath => id::PANE_TAB_TERRAIN_PATH,
             PaneKind::PhaseShift => id::PANE_TAB_PHASESHIFT,
             PaneKind::Rig2d => id::PANE_TAB_RIG2D,
             PaneKind::Profiler => id::PANE_TAB_PROFILER,
@@ -1152,6 +1175,7 @@ impl App {
                         PaneKind::TerrainBrush,
                         PaneKind::TerrainPaint,
                         PaneKind::TerrainVegetation,
+                        PaneKind::TerrainPath,
                         PaneKind::Photon,
                         PaneKind::Environment,
                         PaneKind::Audio,
@@ -1309,6 +1333,7 @@ impl App {
             terrain_editor: terraineditor::State::default(),
             terrain_paint: terrainpaint::State::default(),
             terrain_vegetation: terrainvegetation::State::default(),
+            terrain_path: terrainpath::State::default(),
             has_water: false,
             water_scan: 0,
             viewport_last_tick: None,
@@ -1370,6 +1395,7 @@ impl App {
             material_environment_picker: false,
             material_environment_search: String::new(),
             behaviour_picker: false,
+            panel_palette: None,
             behaviour_search: String::new(),
             material_asset_picker: false,
             material_asset_search: String::new(),
@@ -7786,6 +7812,8 @@ impl App {
             Message::ShowTerrainPaint => self.show_terrain_paint_pane(),
             Message::TerrainVegetation(edit) => self.edit_terrain_vegetation(edit),
             Message::ShowTerrainVegetation => self.show_terrain_vegetation_pane(),
+            Message::TerrainPath(edit) => self.edit_terrain_path(edit),
+            Message::ShowTerrainPath => self.show_terrain_path_pane(),
             Message::TerrainVegetationBakeRecipe { variants } => {
                 self.refresh_vegetation_state();
                 if let Some(count) = variants {
@@ -8023,7 +8051,14 @@ impl App {
                     }
                 }
             }
-            Message::TogglePlay => self.toggle_play(),
+            Message::TogglePlay => {
+                // With the path tool on and a path drawn, Enter applies it instead of starting the game.
+                if self.terrain_path.active && self.terrain_path.points.len() >= 2 {
+                    self.apply_path();
+                } else {
+                    self.toggle_play();
+                }
+            }
             Message::StopPlay => self.stop_play(),
             Message::ShowGameplay => self.show_gameplay_pane(),
             Message::ShowCameraPreview => self.show_camera_preview_pane(),
@@ -8199,7 +8234,12 @@ impl App {
                 self.viewport_hovered = true;
                 if button == mouse::Button::Left {
                     // With the sculpting tool on, a press on the terrain starts a stroke instead of an orbit.
-                    self.begin_terrain_stroke();
+                    // The path tool takes the press first: it drops or grabs a point.
+                    if !self.path_press() {
+                        self.begin_terrain_stroke();
+                    }
+                } else if button == mouse::Button::Right {
+                    self.path_right_press();
                 }
                 self.viewport_drag = Some(ViewportDrag {
                     button,
@@ -8215,6 +8255,7 @@ impl App {
             }
             Message::ViewportReleased(button) => {
                 if button == mouse::Button::Left {
+                    self.path_release();
                     self.finish_terrain_stroke();
                 }
                 if button == mouse::Button::Left
@@ -8227,7 +8268,10 @@ impl App {
                     self.finish_world_stroke();
                 }
                 if let Some(drag) = self.viewport_drag.take() {
-                    if button == mouse::Button::Right && drag.distance < 4.0 {
+                    if button == mouse::Button::Right
+                        && drag.distance < 4.0
+                        && !std::mem::take(&mut self.terrain_path.swallow_right)
+                    {
                         self.focus_selection();
                     }
                 }
@@ -8235,6 +8279,14 @@ impl App {
             Message::ViewportMoved(point) => {
                 self.viewport_hovered = true;
                 self.update_terrain_cursor(point);
+                // A grabbed path handle follows the ground under the mouse instead of orbiting.
+                if self.path_move(point) {
+                    if let Some(drag) = self.viewport_drag.as_mut() {
+                        drag.distance += 1.0;
+                        drag.last = Some(point);
+                    }
+                    return;
+                }
                 // The World tab's Remove brush paints instead of orbiting.
                 let left_drag = self
                     .viewport_drag
@@ -8338,8 +8390,33 @@ impl App {
                 };
             }
             Message::CloseMenu => {
+                let menu_was_open = self.open_menu.is_some()
+                    || self.hierarchy_menu.is_some()
+                    || self.panel_palette.is_some();
+                self.panel_palette = None;
                 self.open_menu = None;
                 self.hierarchy_menu = None;
+                // Escape with nothing to close starts a path over.
+                if !menu_was_open {
+                    self.cancel_path();
+                }
+            }
+            Message::TogglePanelPalette => {
+                self.panel_palette = if self.panel_palette.is_some() {
+                    None
+                } else {
+                    self.open_menu = None;
+                    Some(String::new())
+                };
+            }
+            Message::PanelPaletteSearch(text) => {
+                if self.panel_palette.is_some() {
+                    self.panel_palette = Some(text);
+                }
+            }
+            Message::GoToPane(kind) => {
+                self.panel_palette = None;
+                self.go_to_pane(kind);
             }
             Message::ToggleConsoleFilter(level) => {
                 if !self.console_filters.remove(&level) {
@@ -8352,6 +8429,20 @@ impl App {
                 self.viewport_hovered = false;
                 self.fly_keys.clear();
             }
+        }
+    }
+
+    /// The titles that split a menu into groups: `(index of the first item, title)`.
+    fn menu_headings(menu: MenuId) -> &'static [(usize, &'static str)] {
+        match menu {
+            MenuId::View => &[
+                (0, "Panels"),
+                (10, "Generators"),
+                (15, "Terrain tools"),
+                (19, "Viewport"),
+                (28, "Layout"),
+            ],
+            _ => &[],
         }
     }
 
@@ -8466,16 +8557,10 @@ impl App {
                 341.0,
                 vec![
                     menu::Item {
-                        id: id::SHOW_TERRAIN_GENERATOR,
-                        label: "Terrain Generator",
-                        shortcut: None,
-                        message: Message::ShowTerrainGenerator,
-                    },
-                    menu::Item {
-                        id: id::SHOW_PHOTON,
-                        label: "Photon (Global Illumination)",
-                        shortcut: None,
-                        message: Message::ShowPhoton,
+                        id: id::SHOW_PANEL_PALETTE,
+                        label: "Go to Panel…",
+                        shortcut: Some("Ctrl+P"),
+                        message: Message::TogglePanelPalette,
                     },
                     menu::Item {
                         id: id::SHOW_GAMEPLAY,
@@ -8490,28 +8575,28 @@ impl App {
                         message: Message::ShowCameraPreview,
                     },
                     menu::Item {
-                        id: id::SHOW_TERRAIN_BRUSH,
-                        label: "Terrain Brush (Sculpt)",
-                        shortcut: None,
-                        message: Message::ShowTerrainBrush,
-                    },
-                    menu::Item {
-                        id: id::SHOW_TERRAIN_VEGETATION,
-                        label: "Terrain Vegetation (Plants)",
-                        shortcut: None,
-                        message: Message::ShowTerrainVegetation,
-                    },
-                    menu::Item {
-                        id: id::SHOW_TERRAIN_PAINT,
-                        label: "Terrain Paint (Materials)",
-                        shortcut: None,
-                        message: Message::ShowTerrainPaint,
-                    },
-                    menu::Item {
                         id: id::SHOW_PERFORMANCE,
                         label: "Performance (Render Options)",
                         shortcut: None,
                         message: Message::ShowPerformance,
+                    },
+                    menu::Item {
+                        id: id::SHOW_PROFILER,
+                        label: "Profiler (Timed Scopes, GPU)",
+                        shortcut: None,
+                        message: Message::ShowProfiler,
+                    },
+                    menu::Item {
+                        id: id::SHOW_PHOTON,
+                        label: "Photon (Global Illumination)",
+                        shortcut: None,
+                        message: Message::ShowPhoton,
+                    },
+                    menu::Item {
+                        id: id::SHOW_ENVIRONMENT,
+                        label: "Environment (Clouds, Fog, Rain)",
+                        shortcut: None,
+                        message: Message::ShowEnvironment,
                     },
                     menu::Item {
                         id: id::SHOW_AUDIO,
@@ -8532,22 +8617,10 @@ impl App {
                         message: Message::ShowRig2d,
                     },
                     menu::Item {
-                        id: id::SHOW_ENVIRONMENT,
-                        label: "Environment (Clouds, Fog, Rain)",
+                        id: id::SHOW_TERRAIN_GENERATOR,
+                        label: "Terrain Generator",
                         shortcut: None,
-                        message: Message::ShowEnvironment,
-                    },
-                    menu::Item {
-                        id: id::SHOW_PROFILER,
-                        label: "Profiler (Timed Scopes, GPU)",
-                        shortcut: None,
-                        message: Message::ShowProfiler,
-                    },
-                    menu::Item {
-                        id: id::SHOW_WATER_GENERATOR,
-                        label: "Water Generator",
-                        shortcut: None,
-                        message: Message::ShowWaterGenerator,
+                        message: Message::ShowTerrainGenerator,
                     },
                     menu::Item {
                         id: id::SHOW_WORLD,
@@ -8562,10 +8635,40 @@ impl App {
                         message: Message::ShowNatureGenerator,
                     },
                     menu::Item {
+                        id: id::SHOW_WATER_GENERATOR,
+                        label: "Water Generator",
+                        shortcut: None,
+                        message: Message::ShowWaterGenerator,
+                    },
+                    menu::Item {
                         id: id::SHOW_TEXTURE_GENERATOR,
                         label: "Texture Generator",
                         shortcut: None,
                         message: Message::ShowTextureGenerator,
+                    },
+                    menu::Item {
+                        id: id::SHOW_TERRAIN_BRUSH,
+                        label: "Terrain Brush (Sculpt)",
+                        shortcut: None,
+                        message: Message::ShowTerrainBrush,
+                    },
+                    menu::Item {
+                        id: id::SHOW_TERRAIN_PAINT,
+                        label: "Terrain Paint (Materials)",
+                        shortcut: None,
+                        message: Message::ShowTerrainPaint,
+                    },
+                    menu::Item {
+                        id: id::SHOW_TERRAIN_VEGETATION,
+                        label: "Terrain Vegetation (Plants)",
+                        shortcut: None,
+                        message: Message::ShowTerrainVegetation,
+                    },
+                    menu::Item {
+                        id: id::SHOW_TERRAIN_PATH,
+                        label: "Terrain Path (Roads and Rivers)",
+                        shortcut: None,
+                        message: Message::ShowTerrainPath,
                     },
                     menu::Item {
                         id: id::FOCUS_SELECTION,
@@ -8946,7 +9049,8 @@ impl App {
         } else if let Some(menu) = self.open_menu {
             let (x, items) = self.menu_items(menu);
             let overlay =
-                iced::widget::mouse_area(menu::overlay(x, items)).on_press(Message::CloseMenu);
+                iced::widget::mouse_area(menu::overlay(x, items, Self::menu_headings(menu)))
+                    .on_press(Message::CloseMenu);
             iced::widget::stack([base, overlay.into()]).into()
         } else if let Some(_node) = self.generator_texture_target {
             let search = self.generator_texture_search.to_lowercase();
@@ -9056,6 +9160,23 @@ impl App {
             .on_press(Message::NatureGen(
                 nature_generator_panel::Edit::PickerClose,
             ));
+            iced::widget::stack([base, overlay.into()]).into()
+        } else if let Some(search) = self.panel_palette.as_deref() {
+            let palette = panel_palette::view(
+                self.panel_palette_sections(search),
+                search,
+                panel_palette::Callbacks {
+                    on_search: Box::new(Message::PanelPaletteSearch),
+                    on_close: Message::TogglePanelPalette,
+                },
+            );
+            let overlay = iced::widget::mouse_area(
+                container(iced::widget::mouse_area(palette).on_press(Message::Noop))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center(Length::Fill),
+            )
+            .on_press(Message::TogglePanelPalette);
             iced::widget::stack([base, overlay.into()]).into()
         } else if self.behaviour_picker {
             let catalog = behaviour::catalog(&self.component_types, &self.components, &self.assets);
@@ -9366,8 +9487,16 @@ impl App {
             .detach
             .supported
             .then(|| (id::pane_detach(&format!("{pane:?}")), Message::Detach(pane)));
+        // The list of every panel is the way to a tab the strip scrolls out of sight.
+        let more = (group.pages.len() > 3).then(|| {
+            (
+                id::pane_more(&format!("{pane:?}")),
+                Message::TogglePanelPalette,
+            )
+        });
         let controls = |split| {
             tabs::controls(
+                more.clone(),
                 detach.clone(),
                 split,
                 (
@@ -9592,6 +9721,8 @@ impl App {
                     show_markers: self.show_markers && self.engine.is_some(),
                     selected_entity: self.entities.get(self.selected).map(|entity| entity.id),
                     brush_cursor: self.terrain_cursor.cursor.as_ref(),
+                    path: (self.terrain_path.active || !self.terrain_path.points.is_empty())
+                        .then(|| (&self.terrain_path.overlay, self.path_ghost())),
                     target: self
                         .entities
                         .get(self.selected)
@@ -9869,6 +10000,41 @@ impl App {
                 None,
                 self.camera_preview_view(),
             ),
+            PaneKind::TerrainPath => (
+                id::PANE_TERRAIN_PATH,
+                "Terrain Path",
+                Some(panels::terrain_path::summary(
+                    self.terrain_path.active,
+                    self.terrain_path.kind,
+                    self.terrain_path.points.len(),
+                )),
+                {
+                    panels::terrain_path::view(
+                        panels::terrain_path::View {
+                            active: self.terrain_path.active,
+                            terrain: self.terrain_path.terrain_name.as_deref(),
+                            kind: self.terrain_path.kind,
+                            preset: self.terrain_path.preset,
+                            width_m: self.terrain_path.width_m,
+                            shoulder_m: self.terrain_path.shoulder_m,
+                            depth_m: self.terrain_path.depth_m,
+                            smooth_m: self.terrain_path.smooth_m,
+                            grade_percent: self.terrain_path.grade_percent,
+                            layer: self.terrain_path.layer,
+                            layer_names: &self.terrain_path.layer_names,
+                            layer_strength: self.terrain_path.layer_strength,
+                            write_mask: self.terrain_path.write_mask,
+                            mask_name: &self.terrain_path.mask_name,
+                            points: &self.terrain_path.rows,
+                            selected: self.terrain_path.selected,
+                            stats: self.terrain_path.stats.as_ref(),
+                            profile: &self.terrain_path.profile,
+                            status: self.terrain_path.status.as_deref(),
+                        },
+                        Message::TerrainPath,
+                    )
+                },
+            ),
             PaneKind::TerrainVegetation => (
                 id::PANE_TERRAIN_VEGETATION,
                 "Terrain Vegetation",
@@ -9924,6 +10090,11 @@ impl App {
                         rules: &self.terrain_paint.rules,
                         fallback: self.terrain_paint.fallback,
                         status: self.terrain_paint.status.as_deref(),
+                        masks: &self.terrain_paint.masks,
+                        mask_selected: self.terrain_paint.mask_selected.as_deref(),
+                        mask_target: self.terrain_paint.mask_target,
+                        mask_value: self.terrain_paint.mask_value,
+                        new_mask_name: &self.terrain_paint.new_mask_name,
                     },
                     Message::TerrainPaint,
                 ),
@@ -10806,6 +10977,7 @@ mod detach;
 mod environment;
 mod filebrowser;
 mod naturegen;
+mod panelpalette;
 mod performance;
 mod phaseshift;
 mod photon;
@@ -10819,6 +10991,7 @@ mod terraineditor;
 mod terrainformat;
 mod terraingen;
 mod terrainpaint;
+mod terrainpath;
 mod terrainvegetation;
 mod texturegen;
 mod watergen;

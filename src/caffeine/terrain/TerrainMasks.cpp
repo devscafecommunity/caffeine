@@ -60,6 +60,16 @@ bool TerrainMasks::remove(const std::string& name) {
 
 void TerrainMasks::clear() { m_stored.clear(); }
 
+TerrainMasks::Stored* TerrainMasks::findStored(const std::string& name) {
+    const auto it = std::find_if(m_stored.begin(), m_stored.end(), [&](const Stored& s) { return s.name == name; });
+    return it != m_stored.end() ? &*it : nullptr;
+}
+
+const TerrainMasks::Stored* TerrainMasks::findStored(const std::string& name) const {
+    const auto it = std::find_if(m_stored.begin(), m_stored.end(), [&](const Stored& s) { return s.name == name; });
+    return it != m_stored.end() ? &*it : nullptr;
+}
+
 std::string TerrainMasks::nameAt(u32 index) const {
     if (index < kBuiltinCount) return kBuiltins[index];
     index -= kBuiltinCount;

@@ -150,6 +150,7 @@ impl App {
             if self.terrain_paint.active {
                 self.terrain_paint.active = false;
             }
+            self.terrain_path.active = false;
             self.texture_set_paint_mode = false;
             self.refresh_vegetation_state();
         } else {
@@ -841,6 +842,7 @@ impl App {
                     points: 0,
                     paint: false,
                     vegetation: true,
+                    mask: None,
                 });
                 true
             }

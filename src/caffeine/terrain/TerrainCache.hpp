@@ -75,6 +75,11 @@ public:
     LayerState takeLayers(ECS::Entity entity);
     void adoptLayers(ECS::Entity entity, LayerState&& state);
     void commitLayerEdit(ECS::Entity entity, ECS::TerrainComponent& terrain, const LayerBounds& region = {});
+    /// A stored mask changed (painted, created, deleted...): the vegetation standing where it changed is resolved and
+    /// drawn again, because species read masks for their rules and adaptations. `region` is in texels of the mask's own
+    /// grid (`resolutionX` x `resolutionZ`); an invalid region means the whole terrain.
+    void commitMaskEdit(ECS::Entity entity, ECS::TerrainComponent& terrain, const LayerBounds& region = {}, u32 resolutionX = 0,
+                        u32 resolutionZ = 0);
     /// Writes the palette and the layer map next to the terrain data (default names from `terrainDataPath` when the
     /// component has none) and records the paths. False if there are no layers or a file cannot be written.
     bool saveLayers(ECS::Entity entity, ECS::TerrainComponent& terrain, const std::filesystem::path& projectRoot,

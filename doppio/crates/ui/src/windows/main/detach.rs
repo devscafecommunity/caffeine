@@ -79,6 +79,7 @@ impl PaneKind {
             PaneKind::TerrainBrush => "terrain_brush",
             PaneKind::TerrainPaint => "terrain_paint",
             PaneKind::TerrainVegetation => "terrain_vegetation",
+            PaneKind::TerrainPath => "terrain_path",
             PaneKind::PhaseShift => "phaseshift",
             PaneKind::Rig2d => "rig2d",
             PaneKind::Profiler => "profiler",
@@ -101,7 +102,7 @@ impl PaneKind {
     }
 
     /// Every kind of tab.
-    pub(super) const ALL: [PaneKind; 27] = [
+    pub(super) const ALL: [PaneKind; 28] = [
         PaneKind::Hierarchy,
         PaneKind::Assets,
         PaneKind::Viewport,
@@ -119,6 +120,7 @@ impl PaneKind {
         PaneKind::TerrainBrush,
         PaneKind::TerrainPaint,
         PaneKind::TerrainVegetation,
+        PaneKind::TerrainPath,
         PaneKind::PhaseShift,
         PaneKind::Rig2d,
         PaneKind::Profiler,

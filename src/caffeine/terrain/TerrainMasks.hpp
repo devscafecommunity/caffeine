@@ -78,6 +78,9 @@ public:
         std::vector<u8> data;
     };
     const std::vector<Stored>& stored() const { return m_stored; }
+    /// A stored mask by name, or null (built-ins are not stored). For editing in place: painting.
+    Stored* findStored(const std::string& name);
+    const Stored* findStored(const std::string& name) const;
 
 private:
     f32 sampleStored(const Stored& mask, f32 u, f32 v) const;

@@ -1558,6 +1558,167 @@ struct RawVegInstance {
     yaw: f32,
 }
 
+/// What a spline is (C ABI 34).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplineKind {
+    /// Levels the ground to a smoothed, graded profile.
+    Road = 0,
+    /// Cuts a channel whose bed never rises downstream.
+    River = 1,
+}
+
+/// A point of a road or river, in world space (metres; the height is ignored).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SplinePoint {
+    pub world: [f64; 3],
+    /// The corridor's full width here; 0 or less takes the description's.
+    pub width_m: f32,
+}
+
+/// A road or a river: how it shapes the ground, what it paints and the mask it writes (C ABI 34).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplineDesc {
+    pub kind: SplineKind,
+    pub width_m: f32,
+    pub shoulder_m: f32,
+    /// River: how deep the channel is.
+    pub depth_m: f32,
+    /// Road: the window the profile is averaged over.
+    pub smooth_m: f32,
+    /// Road: the steepest rise over run.
+    pub max_grade: f32,
+    /// Palette layer painted on the corridor; negative for none.
+    pub layer: i32,
+    pub layer_strength: f32,
+    /// Stored mask written along it (made when missing); empty for none.
+    pub mask: String,
+}
+
+impl Default for SplineDesc {
+    fn default() -> Self {
+        SplineDesc {
+            kind: SplineKind::Road,
+            width_m: 6.0,
+            shoulder_m: 4.0,
+            depth_m: 1.5,
+            smooth_m: 30.0,
+            max_grade: 0.12,
+            layer: -1,
+            layer_strength: 1.0,
+            mask: String::new(),
+        }
+    }
+}
+
+/// A point of the path a spline follows, with the height it levels or cuts to.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SplineSample {
+    pub world: [f32; 3],
+    pub width_m: f32,
+    pub along_m: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawSplinePoint {
+    x: f64,
+    y: f64,
+    z: f64,
+    width_m: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawSplineDesc {
+    kind: i32,
+    width_m: f32,
+    shoulder_m: f32,
+    depth_m: f32,
+    smooth_m: f32,
+    max_grade: f32,
+    layer: i32,
+    layer_strength: f32,
+    mask: [c_char; 32],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct RawSplineSample {
+    x: f32,
+    y: f32,
+    z: f32,
+    width_m: f32,
+    along_m: f32,
+}
+
+impl SplineDesc {
+    fn to_raw(&self) -> Result<RawSplineDesc, String> {
+        if self.mask.len() > 31 || self.mask.contains('\0') {
+            return Err("the mask name is at most 31 characters".to_owned());
+        }
+        let mut raw = RawSplineDesc {
+            kind: self.kind as i32,
+            width_m: self.width_m,
+            shoulder_m: self.shoulder_m,
+            depth_m: self.depth_m,
+            smooth_m: self.smooth_m,
+            max_grade: self.max_grade,
+            layer: self.layer,
+            layer_strength: self.layer_strength,
+            mask: [0; 32],
+        };
+        for (slot, byte) in raw.mask.iter_mut().zip(self.mask.bytes()) {
+            *slot = byte as c_char;
+        }
+        Ok(raw)
+    }
+}
+
+fn raw_points(points: &[SplinePoint]) -> Vec<RawSplinePoint> {
+    points
+        .iter()
+        .map(|p| RawSplinePoint {
+            x: p.world[0],
+            y: p.world[1],
+            z: p.world[2],
+            width_m: p.width_m,
+        })
+        .collect()
+}
+
+/// What a stamp does to a painted mask (C ABI 33).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaskPaintMode {
+    /// Moves the mask toward `value`.
+    Paint = 0,
+    /// Moves the mask toward 0.
+    Erase = 1,
+    /// Moves the mask toward the average of its neighbours.
+    Smooth = 2,
+}
+
+/// A whole-mask edit (C ABI 33).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaskOp {
+    /// Every texel to the value.
+    Fill = 0,
+    /// 1 minus the mask.
+    Invert = 1,
+    /// Removes the mask.
+    Delete = 2,
+}
+
+/// A brush for painting a stored mask: the shape of a sculpting brush plus what a stamp does.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaskBrush {
+    pub shape: BrushPreset,
+    pub mode: MaskPaintMode,
+    /// The stored mask to paint.
+    pub mask: String,
+    /// Paint: the level the mask moves toward, 0..1.
+    pub value: f32,
+}
+
 /// What a paint stroke does with its brush's shape (C ABI 29).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaintMode {
@@ -1674,6 +1835,15 @@ struct RawPaintBrush {
     mode: i32,
     layer: u32,
     from_layer: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawMaskBrush {
+    shape: RawBrushPreset,
+    mode: i32,
+    mask: [c_char; 32],
+    value: f32,
 }
 
 /// A terrain brush in real units (metres), see `caffeine_session_terrain_stroke_begin`.
@@ -1955,6 +2125,42 @@ type AutolayerFn = unsafe extern "C" fn(
     *mut c_char,
     usize,
 ) -> i32;
+type MaskPaintBeginFn = unsafe extern "C" fn(*mut c_void, u32, *const RawMaskBrush) -> i32;
+type MaskCreateFn = unsafe extern "C" fn(
+    *mut c_void,
+    u32,
+    *const c_char,
+    u32,
+    u32,
+    f32,
+    *const c_char,
+    *mut u32,
+    *mut c_char,
+    usize,
+) -> i32;
+type MaskEditFn = unsafe extern "C" fn(*mut c_void, u32, *const c_char, i32, f32, *mut u32) -> i32;
+type SplineApplyFn = unsafe extern "C" fn(
+    *mut c_void,
+    u32,
+    *const RawSplineDesc,
+    *const RawSplinePoint,
+    u32,
+    *mut u32,
+    *mut f32,
+    *mut c_char,
+    usize,
+) -> i32;
+type SplineSampleFn = unsafe extern "C" fn(
+    *const c_void,
+    u32,
+    *const RawSplineDesc,
+    *const RawSplinePoint,
+    u32,
+    f32,
+    *mut RawSplineSample,
+    u32,
+    *mut u32,
+) -> i32;
 type LayerAtFn =
     unsafe extern "C" fn(*const c_void, u32, f64, f64, f64, *mut RawLayerSample) -> i32;
 type BrushCountFn = unsafe extern "C" fn() -> u32;
@@ -2235,6 +2441,11 @@ struct Functions {
     palette_move: Option<PaletteMoveFn>,
     paint_begin: Option<PaintBeginFn>,
     autolayer: Option<AutolayerFn>,
+    mask_paint_begin: Option<MaskPaintBeginFn>,
+    mask_create: Option<MaskCreateFn>,
+    mask_edit: Option<MaskEditFn>,
+    spline_apply: Option<SplineApplyFn>,
+    spline_sample: Option<SplineSampleFn>,
     layer_at: Option<LayerAtFn>,
     brush_count: Option<BrushCountFn>,
     brush_at: Option<BrushAtFn>,
@@ -2526,6 +2737,17 @@ impl Engine {
             },
             paint_begin: unsafe { load_symbol(library, b"caffeine_session_terrain_paint_begin\0") },
             autolayer: unsafe { load_symbol(library, b"caffeine_session_terrain_autolayer\0") },
+            mask_paint_begin: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_mask_paint_begin\0")
+            },
+            mask_create: unsafe { load_symbol(library, b"caffeine_session_terrain_mask_create\0") },
+            mask_edit: unsafe { load_symbol(library, b"caffeine_session_terrain_mask_edit\0") },
+            spline_apply: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_spline_apply\0")
+            },
+            spline_sample: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_spline_sample\0")
+            },
             layer_at: unsafe { load_symbol(library, b"caffeine_session_terrain_layer_at\0") },
             brush_count: unsafe { load_symbol(library, b"caffeine_terrain_brush_count\0") },
             brush_at: unsafe { load_symbol(library, b"caffeine_terrain_brush_at\0") },
@@ -3766,6 +3988,198 @@ impl Engine {
         } else {
             reason
         })
+    }
+
+    /// Whether the engine library has painted masks (C ABI 33).
+    pub fn has_painted_masks(&self) -> bool {
+        self.functions.mask_paint_begin.is_some()
+            && self.functions.mask_create.is_some()
+            && self.functions.mask_edit.is_some()
+    }
+
+    /// Makes a stored mask `name` of `resolution` texels (`[0, 0]` for the terrain's own), all `value` or a copy of
+    /// the mask `from` (a built-in one such as `slope` too). One undoable edit: the record id comes back.
+    pub fn terrain_mask_create(
+        &mut self,
+        entity: u32,
+        name: &str,
+        resolution: [u32; 2],
+        value: f32,
+        from: Option<&str>,
+    ) -> Result<u32, String> {
+        let create = self
+            .functions
+            .mask_create
+            .ok_or("this engine library has no painted masks (C ABI 33)")?;
+        let name = CString::new(name).map_err(|_| "the name holds a zero byte".to_owned())?;
+        let from = from
+            .map(CString::new)
+            .transpose()
+            .map_err(|_| "the name holds a zero byte".to_owned())?;
+        let mut record = 0u32;
+        let mut error = [0 as c_char; 200];
+        let status = unsafe {
+            create(
+                self.session,
+                entity,
+                name.as_ptr(),
+                resolution[0],
+                resolution[1],
+                value,
+                from.as_ref().map_or(std::ptr::null(), |f| f.as_ptr()),
+                &mut record,
+                error.as_mut_ptr(),
+                error.len(),
+            )
+        };
+        if status == 0 {
+            return Ok(record);
+        }
+        let reason = c_char_array(&error);
+        Err(if reason.is_empty() {
+            "the mask could not be made".to_owned()
+        } else {
+            reason
+        })
+    }
+
+    /// Fills, inverts or deletes a stored mask. One undoable edit: the record id, 0 when nothing changed.
+    pub fn terrain_mask_edit(
+        &mut self,
+        entity: u32,
+        name: &str,
+        op: MaskOp,
+        value: f32,
+    ) -> EngineResult<u32> {
+        let edit = self.functions.mask_edit.ok_or(EngineError::Error)?;
+        let name = CString::new(name).map_err(|_| EngineError::InvalidArgument)?;
+        let mut record = 0u32;
+        result(unsafe {
+            edit(
+                self.session,
+                entity,
+                name.as_ptr(),
+                op as i32,
+                value,
+                &mut record,
+            )
+        })?;
+        Ok(record)
+    }
+
+    /// Starts a mask stroke (points go through `terrain_stroke_point`, it ends with `terrain_stroke_end`).
+    pub fn terrain_mask_paint_begin(&mut self, entity: u32, brush: &MaskBrush) -> EngineResult<()> {
+        let begin = self.functions.mask_paint_begin.ok_or(EngineError::Error)?;
+        let name = CString::new(brush.mask.as_str()).map_err(|_| EngineError::InvalidArgument)?;
+        let bytes = name.as_bytes();
+        if bytes.len() > 31 {
+            return Err(EngineError::InvalidArgument);
+        }
+        let mut raw = RawMaskBrush {
+            shape: RawBrushPreset::from_preset(&brush.shape),
+            mode: brush.mode as i32,
+            mask: [0; 32],
+            value: brush.value,
+        };
+        for (slot, byte) in raw.mask.iter_mut().zip(bytes) {
+            *slot = *byte as c_char;
+        }
+        result(unsafe { begin(self.session, entity, &raw) })
+    }
+
+    /// Whether the engine library has roads and rivers by spline (C ABI 34).
+    pub fn has_terrain_splines(&self) -> bool {
+        self.functions.spline_apply.is_some() && self.functions.spline_sample.is_some()
+    }
+
+    /// Applies a road or a river to a terrain as one undoable edit: the record id (0 when nothing changed) and the
+    /// length of the path in metres. A refusal says why and changes nothing.
+    pub fn terrain_spline_apply(
+        &mut self,
+        entity: u32,
+        desc: &SplineDesc,
+        points: &[SplinePoint],
+    ) -> Result<(u32, f32), String> {
+        let apply = self
+            .functions
+            .spline_apply
+            .ok_or("this engine library has no roads and rivers (C ABI 34)")?;
+        let raw = desc.to_raw()?;
+        let raw_points = raw_points(points);
+        let mut record = 0u32;
+        let mut length = 0.0f32;
+        let mut error = [0 as c_char; 200];
+        let status = unsafe {
+            apply(
+                self.session,
+                entity,
+                &raw,
+                raw_points.as_ptr(),
+                raw_points.len() as u32,
+                &mut record,
+                &mut length,
+                error.as_mut_ptr(),
+                error.len(),
+            )
+        };
+        if status == 0 {
+            return Ok((record, length));
+        }
+        let reason = c_char_array(&error);
+        Err(if reason.is_empty() {
+            "the spline could not be applied".to_owned()
+        } else {
+            reason
+        })
+    }
+
+    /// The path a spline would follow, `step_m` apart, with the height it would level or cut to. Changes nothing.
+    pub fn terrain_spline_sample(
+        &self,
+        entity: u32,
+        desc: &SplineDesc,
+        points: &[SplinePoint],
+        step_m: f32,
+    ) -> EngineResult<Vec<SplineSample>> {
+        let sample = self.functions.spline_sample.ok_or(EngineError::Error)?;
+        let raw = desc.to_raw().map_err(|_| EngineError::InvalidArgument)?;
+        let raw_points = raw_points(points);
+        let mut count = 0u32;
+        result(unsafe {
+            sample(
+                self.session,
+                entity,
+                &raw,
+                raw_points.as_ptr(),
+                raw_points.len() as u32,
+                step_m,
+                std::ptr::null_mut(),
+                0,
+                &mut count,
+            )
+        })?;
+        let mut out = vec![RawSplineSample::default(); count as usize];
+        result(unsafe {
+            sample(
+                self.session,
+                entity,
+                &raw,
+                raw_points.as_ptr(),
+                raw_points.len() as u32,
+                step_m,
+                out.as_mut_ptr(),
+                count,
+                &mut count,
+            )
+        })?;
+        Ok(out
+            .into_iter()
+            .map(|s| SplineSample {
+                world: [s.x, s.y, s.z],
+                width_m: s.width_m,
+                along_m: s.along_m,
+            })
+            .collect())
     }
 
     /// The layers under a world-space point (metres): what an eyedropper reads.
@@ -5558,6 +5972,154 @@ mod tests {
             }
         }
         std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn a_painted_mask_is_made_painted_read_and_undone() {
+        let _guard = test_lock();
+        let Some(mut engine) = Engine::load_default() else {
+            return;
+        };
+        if !engine.has_painted_masks() || !engine.has_brush_library() {
+            return; // a libcaffeine-capi from before C ABI 33
+        }
+        let entity = engine.create_entity("Ground").expect("entity");
+        let terrain = Terrain {
+            resolution: [129, 129],
+            size: [256.0, 256.0],
+            max_height: 80.0,
+            ..Terrain::default()
+        };
+        engine
+            .set_terrain(entity, &terrain, &vec![0.3; 129 * 129], None)
+            .expect("terrain");
+        let made = engine
+            .terrain_mask_create(entity, "wet", [0, 0], 0.0, None)
+            .expect("a mask");
+        assert!(made != 0);
+        let reason = engine
+            .terrain_mask_create(entity, "slope", [0, 0], 0.0, None)
+            .unwrap_err();
+        assert!(reason.contains("built-in"), "{reason}");
+        assert!(engine
+            .terrain_masks(entity)
+            .unwrap()
+            .iter()
+            .any(|m| m.name == "wet" && m.resolution == [129, 129]));
+
+        let round = engine
+            .builtin_brushes()
+            .into_iter()
+            .find(|b| b.name == "Round hard")
+            .expect("a round brush");
+        let brush = MaskBrush {
+            shape: BrushPreset {
+                radius_m: 20.0,
+                strength: 1.0,
+                ..round
+            },
+            mode: MaskPaintMode::Paint,
+            mask: "wet".to_owned(),
+            value: 1.0,
+        };
+        engine
+            .terrain_mask_paint_begin(entity, &brush)
+            .expect("begin");
+        engine
+            .terrain_stroke_point([0.0, 0.0, 0.0], 1.0)
+            .expect("point");
+        let stroke = engine.terrain_stroke_end().expect("end");
+        assert!(stroke.record != 0 && stroke.stamps >= 1 && stroke.region.is_some());
+        let centre = engine.terrain_mask(entity, "wet", 128.0, 128.0).unwrap();
+        assert!((centre - 1.0).abs() < 1e-3, "{centre}");
+        assert_eq!(engine.terrain_mask(entity, "wet", 10.0, 10.0).unwrap(), 0.0);
+
+        engine.terrain_stroke_revert(stroke.record).expect("undo");
+        assert_eq!(
+            engine.terrain_mask(entity, "wet", 128.0, 128.0).unwrap(),
+            0.0
+        );
+        engine.terrain_stroke_reapply(stroke.record).expect("redo");
+        assert!(engine.terrain_mask(entity, "wet", 128.0, 128.0).unwrap() > 0.99);
+
+        let invert = engine
+            .terrain_mask_edit(entity, "wet", MaskOp::Invert, 0.0)
+            .expect("invert");
+        assert!(invert != 0);
+        assert_eq!(
+            engine.terrain_mask(entity, "wet", 128.0, 128.0).unwrap(),
+            0.0
+        );
+        engine.terrain_stroke_revert(invert).expect("undo invert");
+        let gone = engine
+            .terrain_mask_edit(entity, "wet", MaskOp::Delete, 0.0)
+            .expect("delete");
+        assert!(engine.terrain_mask(entity, "wet", 128.0, 128.0).is_err());
+        engine.terrain_stroke_revert(gone).expect("undo delete");
+        assert!(engine.terrain_mask(entity, "wet", 128.0, 128.0).unwrap() > 0.99);
+        assert!(engine
+            .terrain_mask_edit(entity, "slope", MaskOp::Fill, 1.0)
+            .is_err());
+    }
+
+    #[test]
+    fn a_road_is_applied_previewed_and_undone() {
+        let _guard = test_lock();
+        let Some(mut engine) = Engine::load_default() else {
+            return;
+        };
+        if !engine.has_terrain_splines() {
+            return; // a libcaffeine-capi from before C ABI 34
+        }
+        let entity = engine.create_entity("Ground").expect("entity");
+        let heights: Vec<f32> = (0..129 * 129)
+            .map(|i| (30.0 + 10.0 * ((i % 129) as f32 * 0.16).sin()) / 80.0)
+            .collect();
+        let terrain = Terrain {
+            resolution: [129, 129],
+            size: [256.0, 256.0],
+            max_height: 80.0,
+            ..Terrain::default()
+        };
+        engine
+            .set_terrain(entity, &terrain, &heights, None)
+            .expect("terrain");
+        let points = [-100.0, 0.0, 100.0].map(|x| SplinePoint {
+            world: [x, 0.0, 0.0],
+            width_m: 0.0,
+        });
+        let desc = SplineDesc {
+            smooth_m: 80.0,
+            max_grade: 0.03,
+            mask: "road".to_owned(),
+            ..SplineDesc::default()
+        };
+        let preview = engine
+            .terrain_spline_sample(entity, &desc, &points, 5.0)
+            .expect("a preview");
+        assert!(preview.len() > 30);
+        assert!((preview.last().unwrap().along_m - 200.0).abs() < 3.0);
+        let before = engine.terrain_height(entity, 148.0, 128.0).unwrap();
+
+        let reason = engine
+            .terrain_spline_apply(entity, &desc, &points[..1])
+            .unwrap_err();
+        assert!(reason.contains("two points"), "{reason}");
+        let (record, length) = engine
+            .terrain_spline_apply(entity, &desc, &points)
+            .expect("a road");
+        assert!(record != 0 && (length - 200.0).abs() < 3.0);
+        let after = engine.terrain_height(entity, 148.0, 128.0).unwrap();
+        assert!((after - before).abs() > 0.1, "{before} -> {after}");
+        assert!(engine.terrain_mask(entity, "road", 128.0, 128.0).unwrap() > 0.99);
+
+        engine.terrain_stroke_revert(record).expect("undo");
+        let back = engine.terrain_height(entity, 148.0, 128.0).unwrap();
+        assert!((back - before).abs() < 1e-3);
+        assert!(engine.terrain_mask(entity, "road", 128.0, 128.0).is_err());
+        engine.terrain_stroke_reapply(record).expect("redo");
+        let again = engine.terrain_height(entity, 148.0, 128.0).unwrap();
+        assert!((again - after).abs() < 1e-3);
     }
 
     #[test]

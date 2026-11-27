@@ -22,6 +22,8 @@ pub mod menu;
 pub mod node_canvas;
 pub mod palette_row;
 pub mod panel;
+pub mod panel_palette;
+pub mod path_overlay;
 pub mod prefab_palette;
 pub mod progress;
 pub mod rendering_canvas;

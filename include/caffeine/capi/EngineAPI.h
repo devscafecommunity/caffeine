@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define CAFFEINE_CAPI_VERSION 32
+#define CAFFEINE_CAPI_VERSION 34
 #define CAFFEINE_ENTITY_NONE UINT32_MAX
 
 typedef struct CaffeineSession CaffeineSession;
@@ -1264,6 +1264,108 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_autolayer(CaffeineSess
 /** The layers under a world-space point (metres): what an eyedropper reads. CAFFEINE_NOT_FOUND off the terrain or with layers off. */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_layer_at(const CaffeineSession* session, CaffeineEntity entity,
                                                                    double x, double y, double z, CaffeineLayerSample* out);
+
+/**
+ * Painted masks (v33): a stored terrain mask (see above) edited with the brush that sculpts and paints layers. A painted
+ * mask is an ordinary mask, so rules, auto-layering, protection terms and the size and colour adaptations of vegetation
+ * species read it, and the vegetation it reaches is resolved again as it is painted. Painting is a stroke like the others
+ * (`..._stroke_point`, `_stroke_end`, `_revert` and `_reapply` work for it unchanged); creating, filling, inverting and
+ * deleting a mask are one undoable edit each. A mask has a grid of its own, so one is made at the resolution it needs.
+ * Built-in masks (height, slope, curvature) are derived from the ground and cannot be painted or edited.
+ */
+typedef enum CaffeineMaskPaintMode {
+    CAFFEINE_MASK_PAINT = 0,   /* toward `value` */
+    CAFFEINE_MASK_ERASE = 1,   /* toward 0 */
+    CAFFEINE_MASK_SMOOTH = 2   /* toward the average of the neighbours */
+} CaffeineMaskPaintMode;
+
+typedef struct CaffeineMaskBrush {
+    CaffeineBrushPreset shape;  /* radius, strength, spacing, falloff, stamp, jitter, symmetry, protection (its `mode` is not used) */
+    int32_t mode;               /* CaffeineMaskPaintMode */
+    char mask[32];              /* the stored mask to paint */
+    float value;                /* Paint: the level it moves toward, 0..1 */
+} CaffeineMaskBrush;
+
+typedef enum CaffeineMaskOp {
+    CAFFEINE_MASK_OP_FILL = 0,    /* every texel to `value` */
+    CAFFEINE_MASK_OP_INVERT = 1,  /* 1 - mask */
+    CAFFEINE_MASK_OP_DELETE = 2
+} CaffeineMaskOp;
+
+/** Starts a mask stroke (an open stroke is ended first). NOT_FOUND for a mask that is not stored, INVALID_ARGUMENT for a built-in one. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_mask_paint_begin(CaffeineSession* session, CaffeineEntity entity,
+                                                                           const CaffeineMaskBrush* brush);
+/**
+ * Makes a stored mask: `resolution_x` x `resolution_z` texels (0 for the terrain's own), all `value` or, when `from` is a
+ * mask name (a built-in one such as "slope" too), a copy of it. One undoable edit (`out_record`). INVALID_ARGUMENT, with
+ * the reason in `error`, for a bad or taken name, a bad grid, a 17th mask or an unknown `from`.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_mask_create(CaffeineSession* session, CaffeineEntity entity,
+                                                                      const char* name, uint32_t resolution_x,
+                                                                      uint32_t resolution_z, float value, const char* from,
+                                                                      uint32_t* out_record, char* error, size_t error_size);
+/** Fills, inverts or deletes a stored mask: one undoable edit; `out_record` stays 0 when nothing changed. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_mask_edit(CaffeineSession* session, CaffeineEntity entity,
+                                                                    const char* name, int32_t op, float value,
+                                                                    uint32_t* out_record);
+
+/**
+ * Roads and rivers by spline (v34): a path through points (world space, metres; the height is ignored) that shapes the
+ * ground along it, paints a palette layer on it and writes a stored mask of where it runs, as ONE undoable edit (its
+ * record id works with `_stroke_revert` and `_stroke_reapply`). The path is a Catmull-Rom curve.
+ *
+ * A road levels the ground to a profile taken from the terrain along the path, averaged over `smooth_m` and limited to
+ * `max_grade` (rise over run), so it cuts and fills hills; the corridor is `width_m` wide (a point's own `width_m`, when
+ * above 0, overrides it there) and blends into the ground over `shoulder_m`. A river cuts a channel `depth_m` deep with
+ * a rounded bed that never rises from the first point (the source) to the last, with the same banks. `layer` (-1 for
+ * none) is painted on the corridor, which needs layered painting on; `mask` (empty for none) is made when missing and
+ * set to 1 on the corridor, falling to 0 over the shoulder: a species rule on it keeps plants off the road. The result
+ * is a pure function of the terrain and the description.
+ */
+#define CAFFEINE_SPLINE_POINTS_MAX 256
+typedef enum CaffeineSplineKind { CAFFEINE_SPLINE_ROAD = 0, CAFFEINE_SPLINE_RIVER = 1 } CaffeineSplineKind;
+
+typedef struct CaffeineSplinePoint {
+    double x, y, z;   /* world space, metres */
+    float width_m;    /* 0 or less: the description's width */
+} CaffeineSplinePoint;
+
+typedef struct CaffeineSplineDesc {
+    int32_t kind;           /* CaffeineSplineKind */
+    float width_m;          /* the full width of the corridor */
+    float shoulder_m;       /* the blend into the ground on each side */
+    float depth_m;          /* River */
+    float smooth_m;         /* Road: the window the profile is averaged over */
+    float max_grade;        /* Road: the steepest rise over run */
+    int32_t layer;          /* palette layer to paint on the corridor; negative for none */
+    float layer_strength;   /* 0..1 */
+    char mask[32];          /* stored mask to write; empty for none */
+} CaffeineSplineDesc;
+
+/** A point of the path with the profile height: world space, the corridor's full width and the metres along the path. */
+typedef struct CaffeineSplineSample {
+    float x, y, z;
+    float width_m;
+    float along_m;
+} CaffeineSplineSample;
+
+/**
+ * Applies a spline to a terrain. `out_record` is the undo record (0 when nothing changed), `out_length_m` the length of the
+ * path. INVALID_ARGUMENT, with the reason in `error`, for under two points, none on the terrain, a bad number, a mask name
+ * that is built in, a layer that does not exist or layered painting off. A failed call changes nothing.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_spline_apply(CaffeineSession* session, CaffeineEntity entity,
+                                                                       const CaffeineSplineDesc* desc, const CaffeineSplinePoint* points,
+                                                                       uint32_t point_count, uint32_t* out_record, float* out_length_m,
+                                                                       char* error, size_t error_size);
+/**
+ * The path a spline would follow, `step_m` apart, with the profile height it would level or cut to: what a viewport draws
+ * as a preview. Changes nothing. `out` may be NULL to ask for `*out_count`; at most `capacity` samples are written.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_spline_sample(const CaffeineSession* session, CaffeineEntity entity,
+                                                                        const CaffeineSplineDesc* desc, const CaffeineSplinePoint* points,
+                                                                        uint32_t point_count, float step_m, CaffeineSplineSample* out,
+                                                                        uint32_t capacity, uint32_t* out_count);
 
 /**
  * Terrain vegetation (v30): plants and rocks as terrain data, not entities. A terrain has a palette of species (variant

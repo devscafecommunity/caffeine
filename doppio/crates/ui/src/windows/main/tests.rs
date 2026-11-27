@@ -1068,8 +1068,8 @@ fn layout_presets_keep_every_page() {
         assert_eq!(state.len(), 4);
         let pages: usize = state.iter().map(|(_, group)| group.pages.len()).sum();
         assert_eq!(
-            pages, 25,
-            "the Gameplay, Camera, World, Terrain Brush, Terrain Paint and Terrain Vegetation tabs joined the workspace"
+            pages, 26,
+            "the Gameplay, Camera, World, Terrain Brush, Terrain Paint, Terrain Vegetation and Terrain Path tabs joined the workspace"
         );
     }
     let mut harness = Harness::with_entities();
@@ -1095,6 +1095,7 @@ fn layouts_keep_the_right_column_for_inspector_profiler_photon_and_environment()
                 PaneKind::TerrainBrush,
                 PaneKind::TerrainPaint,
                 PaneKind::TerrainVegetation,
+                PaneKind::TerrainPath,
                 PaneKind::Photon,
                 PaneKind::Environment,
                 PaneKind::Audio
@@ -16879,7 +16880,7 @@ mod terrain_paint {
     use doppio_engine::PaintMode;
 
     /// A flat terrain in front of the camera with a ramp on its right half, layers still off.
-    fn scene() -> Option<(Harness, u32)> {
+    pub(super) fn scene() -> Option<(Harness, u32)> {
         let mut harness = engine_harness()?;
         if !harness.app.engine.as_ref()?.has_terrain_layers() {
             return None; // a libcaffeine-capi from before C ABI 29
@@ -16934,7 +16935,7 @@ mod terrain_paint {
             .layer[0]
     }
 
-    fn centre(harness: &Harness) -> iced::Point {
+    pub(super) fn centre(harness: &Harness) -> iced::Point {
         iced::Point::new(
             harness.app().viewport_logical.0 * 0.5,
             harness.app().viewport_logical.1 * 0.5,
@@ -17385,6 +17386,678 @@ mod terrain_paint {
         assert!(engine
             .terrain_autolayer(id, "class 99 base 1\n", 0, None)
             .is_err());
+    }
+
+    // ------------------------------------------------------------------------------------------------ painted masks
+
+    /// The stored mask at the terrain's middle (metres from its corner), if the engine has it.
+    fn mask_middle(harness: &Harness, id: u32, name: &str) -> Option<f32> {
+        harness
+            .app()
+            .engine
+            .as_ref()?
+            .terrain_mask(id, name, 128.0, 128.0)
+            .ok()
+    }
+
+    fn masks_scene() -> Option<(Harness, u32)> {
+        let (harness, id) = scene()?;
+        if !harness.app().engine.as_ref()?.has_painted_masks() {
+            return None; // a libcaffeine-capi from before C ABI 33
+        }
+        Some((harness, id))
+    }
+
+    #[test]
+    fn a_mask_is_made_without_layers_selected_and_one_undo_step() {
+        let Some((mut harness, id)) = masks_scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        assert!(harness.app().terrain_paint.masks.is_empty());
+        let steps = harness.app().history.len();
+        harness.dispatch(Message::TerrainPaint(Edit::MaskName("wet".to_owned())));
+        harness.dispatch(Message::TerrainPaint(Edit::NewMask(None)));
+        let state = &harness.app().terrain_paint;
+        assert_eq!(state.masks.len(), 1);
+        assert_eq!(state.masks[0].name, "wet");
+        assert_eq!(state.masks[0].resolution, [129, 129]);
+        assert_eq!(state.mask_selected.as_deref(), Some("wet"));
+        assert!(state.new_mask_name.is_empty(), "the typed name was used up");
+        assert!(!state.layers.unwrap().enabled, "no layers needed");
+        assert_eq!(harness.app().history.len(), steps + 1);
+
+        // The next one takes the next free name; a copy of the ground's slope sees the ramp.
+        harness.dispatch(Message::TerrainPaint(Edit::NewMask(Some(
+            "slope".to_owned(),
+        ))));
+        assert_eq!(harness.app().terrain_paint.masks[1].name, "mask1");
+        let engine = harness.app().engine.as_ref().unwrap();
+        let steep = engine.terrain_mask(id, "mask1", 150.0, 128.0).unwrap();
+        assert!(steep > 0.2, "{steep}");
+        assert!(engine.terrain_mask(id, "mask1", 30.0, 128.0).unwrap() < 0.05);
+
+        harness.dispatch(Message::Undo);
+        harness.dispatch(Message::Undo);
+        assert!(harness.app().terrain_paint.masks.is_empty());
+        harness.dispatch(Message::Redo);
+        assert_eq!(harness.app().terrain_paint.masks.len(), 1);
+    }
+
+    #[test]
+    fn bad_mask_requests_say_why_and_leave_no_step() {
+        let Some((mut harness, _)) = masks_scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        let steps = harness.app().history.len();
+        harness.dispatch(Message::TerrainPaint(Edit::MakeMask {
+            name: "slope".to_owned(),
+            from: None,
+        }));
+        assert!(harness
+            .app()
+            .terrain_paint
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("built-in")));
+        harness.dispatch(Message::TerrainPaint(Edit::MaskTarget(true)));
+        assert!(!harness.app().terrain_paint.mask_target, "no mask to paint");
+        harness.dispatch(Message::TerrainPaint(Edit::MaskFill));
+        assert_eq!(harness.app().history.len(), steps);
+    }
+
+    #[test]
+    fn dragging_on_the_terrain_paints_the_mask_in_one_stroke_that_undoes() {
+        let Some((mut harness, id)) = masks_scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        harness.dispatch(Message::TerrainPaint(Edit::MakeMask {
+            name: "wet".to_owned(),
+            from: None,
+        }));
+        harness.dispatch(Message::TerrainPaint(Edit::MaskTarget(true)));
+        harness.dispatch(Message::TerrainPaint(Edit::Brush(
+            BrushAmount::Radius,
+            12.0,
+        )));
+        harness.dispatch(Message::TerrainPaint(Edit::Brush(
+            BrushAmount::Strength,
+            1.0,
+        )));
+        harness.dispatch(Message::TerrainPaint(Edit::MaskValue(0.8)));
+        harness.dispatch(Message::TerrainPaint(Edit::Active(true)));
+        let steps = harness.app().history.len();
+        let camera = harness.app().camera;
+
+        let at = centre(&harness);
+        harness.dispatch(Message::ViewportMoved(at));
+        let (_, hit) = harness.app().terrain_cursor.hit.expect("over the terrain");
+        let (hx, hz) = (hit[0] as f32 + 128.0, hit[2] as f32 + 128.0);
+        harness.dispatch(Message::ViewportPressed(iced::mouse::Button::Left));
+        assert!(harness
+            .app()
+            .terrain_editor
+            .stroke
+            .as_ref()
+            .is_some_and(|s| s.mask.as_deref() == Some("wet")));
+        for dx in [4.0, 8.0, 12.0] {
+            harness.dispatch(Message::ViewportMoved(iced::Point::new(at.x + dx, at.y)));
+        }
+        harness.dispatch(Message::ViewportReleased(iced::mouse::Button::Left));
+
+        assert_eq!(harness.app().camera, camera, "a stroke does not orbit");
+        assert_eq!(harness.app().history.len(), steps + 1);
+        assert_eq!(harness.app().history.undo_name(), Some("Paint mask wet"));
+        let read = |harness: &Harness| {
+            harness
+                .app()
+                .engine
+                .as_ref()
+                .unwrap()
+                .terrain_mask(id, "wet", hx, hz)
+                .unwrap()
+        };
+        let painted = read(&harness);
+        assert!((painted - 0.8).abs() < 0.02, "{painted}");
+        assert!(
+            !harness.app().terrain_paint.layers.unwrap().enabled,
+            "the layers are untouched"
+        );
+
+        harness.dispatch(Message::Undo);
+        assert_eq!(read(&harness), 0.0);
+        harness.dispatch(Message::Redo);
+        assert_eq!(read(&harness), painted);
+    }
+
+    #[test]
+    fn an_agent_stroke_fill_invert_and_delete_are_the_same_as_the_panel() {
+        let Some((mut harness, id)) = masks_scene() else {
+            return;
+        };
+        harness.dispatch(Message::ShowTerrainPaint);
+        harness.dispatch(Message::TerrainPaint(Edit::MakeMask {
+            name: "wet".to_owned(),
+            from: None,
+        }));
+        harness.dispatch(Message::TerrainPaint(Edit::MaskTarget(true)));
+        harness.dispatch(Message::TerrainPaint(Edit::Brush(
+            BrushAmount::Radius,
+            12.0,
+        )));
+        harness.dispatch(Message::TerrainPaint(Edit::Brush(
+            BrushAmount::Strength,
+            1.0,
+        )));
+        harness.dispatch(Message::TerrainPaintStroke {
+            terrain: Some(id),
+            points: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+        });
+        assert!(mask_middle(&harness, id, "wet").unwrap() > 0.99);
+
+        // Erase mode takes it back.
+        harness.dispatch(Message::TerrainPaint(Edit::Mode(PaintMode::Erase)));
+        harness.dispatch(Message::TerrainPaintStroke {
+            terrain: Some(id),
+            points: vec![[0.0, 0.0, 0.0]],
+        });
+        assert_eq!(mask_middle(&harness, id, "wet"), Some(0.0));
+
+        let steps = harness.app().history.len();
+        harness.dispatch(Message::TerrainPaint(Edit::MaskValue(0.5)));
+        harness.dispatch(Message::TerrainPaint(Edit::MaskFill));
+        assert!((mask_middle(&harness, id, "wet").unwrap() - 0.5).abs() < 0.01);
+        harness.dispatch(Message::TerrainPaint(Edit::MaskFill));
+        assert_eq!(
+            harness.app().history.len(),
+            steps + 1,
+            "a fill that changes nothing is no step"
+        );
+        harness.dispatch(Message::TerrainPaint(Edit::MaskInvert));
+        harness.dispatch(Message::TerrainPaint(Edit::MaskDelete));
+        assert!(harness.app().terrain_paint.masks.is_empty());
+        assert!(
+            !harness.app().terrain_paint.mask_target,
+            "nothing left to paint"
+        );
+        assert_eq!(harness.app().history.len(), steps + 3);
+
+        harness.dispatch(Message::Undo);
+        assert_eq!(harness.app().terrain_paint.masks.len(), 1);
+        harness.dispatch(Message::Undo);
+        harness.dispatch(Message::Undo);
+        assert_eq!(mask_middle(&harness, id, "wet"), Some(0.0));
+    }
+}
+
+mod terrain_path {
+    use super::terrain_paint::{centre, scene};
+    use super::*;
+    use crate::uikit::panels::terrain_paint::Edit as PaintEdit;
+    use crate::uikit::panels::terrain_path::{Edit, Number};
+
+    /// The terrain scene of the paint tests, when the engine library has roads and rivers (C ABI 34).
+    fn ready() -> Option<(Harness, u32)> {
+        let (harness, id) = scene()?;
+        if !harness.app().engine.as_ref()?.has_terrain_splines() {
+            return None;
+        }
+        Some((harness, id))
+    }
+
+    /// A left click on the viewport at `at`: move, press, release.
+    fn click(harness: &mut Harness, at: iced::Point) {
+        harness.dispatch(Message::ViewportMoved(at));
+        harness.dispatch(Message::ViewportPressed(iced::mouse::Button::Left));
+        harness.dispatch(Message::ViewportReleased(iced::mouse::Button::Left));
+    }
+
+    fn right_click(harness: &mut Harness, at: iced::Point) {
+        harness.dispatch(Message::ViewportMoved(at));
+        harness.dispatch(Message::ViewportPressed(iced::mouse::Button::Right));
+        harness.dispatch(Message::ViewportReleased(iced::mouse::Button::Right));
+    }
+
+    fn two_clicks(harness: &mut Harness) -> (iced::Point, iced::Point) {
+        let first = centre(harness);
+        let second = iced::Point::new(first.x - 110.0, first.y);
+        click(harness, first);
+        click(harness, second);
+        (first, second)
+    }
+
+    /// The ground at the corner-relative position of a world x and z.
+    fn ground(harness: &Harness, id: u32, x: f32, z: f32) -> f32 {
+        harness
+            .app()
+            .engine
+            .as_ref()
+            .unwrap()
+            .terrain_height(id, x + 128.0, z + 128.0)
+            .unwrap()
+    }
+
+    #[test]
+    fn the_tab_is_there_and_the_tool_takes_the_left_button_from_the_others() {
+        let Some((mut harness, id)) = ready() else {
+            return;
+        };
+        assert!(PaneKind::ALL.contains(&PaneKind::TerrainPath));
+        assert_eq!(
+            PaneKind::from_name("terrain_path"),
+            Some(PaneKind::TerrainPath)
+        );
+        harness.dispatch(Message::ShowTerrainPath);
+        assert!(harness
+            .app()
+            .panes
+            .iter()
+            .any(|(_, group)| group.active_kind() == PaneKind::TerrainPath));
+        assert_eq!(
+            harness.app().terrain_path.terrain_name.as_deref(),
+            Some("Ground")
+        );
+        harness.dispatch(Message::TerrainPaint(PaintEdit::Active(true)));
+        assert!(harness.app().terrain_paint.active);
+        harness.dispatch(Message::TerrainPath(Edit::Active(true)));
+        assert!(harness.app().terrain_path.active);
+        assert!(!harness.app().terrain_paint.active, "one tool at a time");
+        assert!(
+            harness.app().terrain_cursor.active,
+            "the ring shows the corridor"
+        );
+        harness.dispatch(Message::TerrainPaint(PaintEdit::Active(true)));
+        assert!(!harness.app().terrain_path.active);
+        let _ = id;
+    }
+
+    #[test]
+    fn clicks_drop_points_and_the_engine_previews_the_path() {
+        let Some((mut harness, _)) = ready() else {
+            return;
+        };
+        harness.dispatch(Message::TerrainPath(Edit::Active(true)));
+        let steps = harness.app().history.len();
+        let first = centre(&harness);
+        click(&mut harness, first);
+        assert_eq!(harness.app().terrain_path.points.len(), 1);
+        assert!(
+            harness.app().terrain_path.stats.is_none(),
+            "one point is not a path"
+        );
+        click(&mut harness, iced::Point::new(first.x + 110.0, first.y));
+        let path = &harness.app().terrain_path;
+        assert_eq!(path.points.len(), 2);
+        assert_eq!(path.selected, Some(1));
+        assert!(path.drag.is_none(), "the button was released");
+        assert!(
+            path.overlay.samples.len() > 4,
+            "{}",
+            path.overlay.samples.len()
+        );
+        assert_eq!(path.overlay.points.len(), 2);
+        let stats = path.stats.as_ref().expect("a preview");
+        assert!(stats.length_m > 10.0, "{}", stats.length_m);
+        assert_eq!(path.profile.ground.len(), path.profile.path.len());
+        assert!(path.profile.path.len() >= 32);
+        assert_eq!(
+            harness.app().history.len(),
+            steps,
+            "drawing is not an edit yet"
+        );
+    }
+
+    #[test]
+    fn dragging_a_handle_moves_it_and_a_right_click_on_one_removes_it() {
+        let Some((mut harness, _)) = ready() else {
+            return;
+        };
+        harness.dispatch(Message::TerrainPath(Edit::Active(true)));
+        let (first, second) = two_clicks(&mut harness);
+        let camera = harness.app().camera;
+        let before = harness.app().terrain_path.points[1].world;
+
+        harness.dispatch(Message::ViewportMoved(second));
+        harness.dispatch(Message::ViewportPressed(iced::mouse::Button::Left));
+        assert_eq!(
+            harness.app().terrain_path.drag,
+            Some(1),
+            "the handle was grabbed"
+        );
+        harness.dispatch(Message::ViewportMoved(iced::Point::new(
+            second.x + 25.0,
+            second.y,
+        )));
+        harness.dispatch(Message::ViewportMoved(iced::Point::new(
+            second.x + 50.0,
+            second.y,
+        )));
+        harness.dispatch(Message::ViewportReleased(iced::mouse::Button::Left));
+        let path = &harness.app().terrain_path;
+        assert_eq!(path.points.len(), 2, "no new point");
+        assert!(
+            (path.points[1].world[0] - before[0]).abs() > 1.0,
+            "{:?} -> {:?}",
+            before,
+            path.points[1].world
+        );
+        assert_eq!(
+            harness.app().camera,
+            camera,
+            "a drag on a handle does not orbit"
+        );
+
+        right_click(&mut harness, first);
+        assert_eq!(harness.app().terrain_path.points.len(), 1);
+        assert_eq!(
+            harness.app().camera,
+            camera,
+            "removing a point does not frame the selection"
+        );
+    }
+
+    #[test]
+    fn backspace_escape_and_reverse_edit_the_points() {
+        let Some((mut harness, _)) = ready() else {
+            return;
+        };
+        harness.dispatch(Message::TerrainPath(Edit::Active(true)));
+        two_clicks(&mut harness);
+        let first = harness.app().terrain_path.points[0].world;
+        harness.dispatch(Message::TerrainPath(Edit::Reverse));
+        assert_ne!(harness.app().terrain_path.points[0].world, first);
+        assert_eq!(
+            harness.app().terrain_path.selected,
+            Some(0),
+            "the selection follows its point"
+        );
+        harness.dispatch(Message::TerrainPath(Edit::RemoveLast));
+        assert_eq!(harness.app().terrain_path.points.len(), 1);
+        harness.dispatch(Message::CloseMenu);
+        assert!(
+            harness.app().terrain_path.points.is_empty(),
+            "Escape starts over"
+        );
+        assert!(harness.app().terrain_path.overlay.points.is_empty());
+    }
+
+    #[test]
+    fn apply_shapes_the_ground_as_one_undo_step_and_enter_does_the_same() {
+        let Some((mut harness, id)) = ready() else {
+            return;
+        };
+        harness.dispatch(Message::TerrainPath(Edit::Active(true)));
+        harness.dispatch(Message::TerrainPath(Edit::Preset(2))); // a highway cuts the ramp
+        two_clicks(&mut harness);
+        let samples: Vec<[f32; 3]> = harness
+            .app()
+            .terrain_path
+            .overlay
+            .samples
+            .iter()
+            .map(|s| s.position)
+            .collect();
+        let before: Vec<f32> = samples
+            .iter()
+            .map(|s| ground(&harness, id, s[0], s[2]))
+            .collect();
+        let steps = harness.app().history.len();
+
+        harness.dispatch(Message::TogglePlay); // Enter, with a path drawn
+        assert!(
+            !harness.app().views.session,
+            "Enter applied the path instead of starting the game"
+        );
+        assert_eq!(harness.app().history.len(), steps + 1);
+        assert_eq!(harness.app().history.undo_name(), Some("Apply road"));
+        assert!(harness.app().terrain_path.points.is_empty());
+        assert!(harness
+            .app()
+            .terrain_path
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("applied")));
+        let after: Vec<f32> = samples
+            .iter()
+            .map(|s| ground(&harness, id, s[0], s[2]))
+            .collect();
+        assert!(
+            before.iter().zip(&after).any(|(b, a)| (b - a).abs() > 0.05),
+            "the ground moved"
+        );
+        assert!(
+            harness
+                .app()
+                .terrain_paint
+                .masks
+                .iter()
+                .any(|m| m.name == "road"),
+            "the road's mask is listed in Terrain Paint"
+        );
+
+        harness.dispatch(Message::Undo);
+        let undone: Vec<f32> = samples
+            .iter()
+            .map(|s| ground(&harness, id, s[0], s[2]))
+            .collect();
+        for (b, u) in before.iter().zip(&undone) {
+            assert!((b - u).abs() < 1e-3, "{b} vs {u}");
+        }
+        harness.dispatch(Message::Redo);
+        let redone: Vec<f32> = samples
+            .iter()
+            .map(|s| ground(&harness, id, s[0], s[2]))
+            .collect();
+        assert_eq!(redone, after);
+    }
+
+    #[test]
+    fn a_river_preset_a_layer_and_a_mask_come_through_one_apply() {
+        let Some((mut harness, id)) = ready() else {
+            return;
+        };
+        harness.dispatch(Message::TerrainPaint(PaintEdit::EnableLayers(true)));
+        harness.dispatch(Message::TerrainPath(Edit::Active(true)));
+        harness.dispatch(Message::TerrainPath(Edit::Preset(4)));
+        assert_eq!(
+            harness.app().terrain_path.kind,
+            doppio_engine::SplineKind::River
+        );
+        assert_eq!(harness.app().terrain_path.mask_name, "river");
+        assert!(
+            harness.app().terrain_path.layer_names.len() >= 4,
+            "the palette is listed"
+        );
+        harness.dispatch(Message::TerrainPath(Edit::Layer(Some(2))));
+        assert_eq!(harness.app().terrain_path.layer, Some(2));
+        two_clicks(&mut harness);
+        let stats = harness.app().terrain_path.stats.clone().expect("a preview");
+        assert!(stats.cut_m > 0.0 || stats.fill_m > 0.0);
+        let middle = harness.app().terrain_path.overlay.samples
+            [harness.app().terrain_path.overlay.samples.len() / 2]
+            .position;
+
+        harness.dispatch(Message::TerrainPath(Edit::Apply));
+        assert_eq!(harness.app().history.undo_name(), Some("Apply river"));
+        let engine = harness.app().engine.as_ref().unwrap();
+        assert_eq!(
+            engine
+                .terrain_layer_at(id, [f64::from(middle[0]), 0.0, f64::from(middle[2])])
+                .unwrap()
+                .layer[0],
+            2
+        );
+        assert!(
+            engine
+                .terrain_mask(id, "river", middle[0] + 128.0, middle[2] + 128.0)
+                .unwrap()
+                > 0.99
+        );
+        // Presets chip back to custom when a number is dragged.
+        harness.dispatch(Message::TerrainPath(Edit::Number(Number::Width, 20.0)));
+        assert_eq!(harness.app().terrain_path.preset, None);
+        assert_eq!(harness.app().terrain_path.width_m, 20.0);
+        harness.dispatch(Message::TerrainPath(Edit::Number(Number::Width, 999.0)));
+        assert_eq!(harness.app().terrain_path.width_m, 60.0, "kept in range");
+    }
+
+    #[test]
+    fn too_few_points_and_bad_names_say_why_and_leave_no_step() {
+        let Some((mut harness, _)) = ready() else {
+            return;
+        };
+        harness.dispatch(Message::TerrainPath(Edit::Active(true)));
+        let steps = harness.app().history.len();
+        harness.dispatch(Message::TerrainPath(Edit::Apply));
+        assert!(harness
+            .app()
+            .terrain_path
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("two points")));
+        two_clicks(&mut harness);
+        harness.dispatch(Message::TerrainPath(Edit::MaskName("slope".to_owned())));
+        harness.dispatch(Message::TerrainPath(Edit::Apply));
+        assert!(harness
+            .app()
+            .terrain_path
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("built-in")));
+        assert_eq!(
+            harness.app().terrain_path.points.len(),
+            2,
+            "the path is kept to fix and apply again"
+        );
+        harness.dispatch(Message::TerrainPath(Edit::WriteMask(false)));
+        harness.dispatch(Message::TerrainPath(Edit::Apply));
+        assert_eq!(harness.app().history.len(), steps + 1);
+    }
+
+    #[test]
+    fn an_agent_draws_the_same_path_with_world_positions() {
+        let Some((mut harness, id)) = ready() else {
+            return;
+        };
+        harness.dispatch(Message::TerrainPath(Edit::AddPoint {
+            world: [-40.0, 0.0, 0.0],
+        }));
+        harness.dispatch(Message::TerrainPath(Edit::AddPoint {
+            world: [40.0, 0.0, 10.0],
+        }));
+        harness.dispatch(Message::TerrainPath(Edit::AddPoint {
+            world: [900.0, 0.0, 0.0],
+        }));
+        assert_eq!(harness.app().terrain_path.points.len(), 2);
+        assert!(harness
+            .app()
+            .terrain_path
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("not on the terrain")));
+        assert_eq!(harness.app().terrain_path.points[0].world[0], -40.0);
+        harness.dispatch(Message::TerrainPath(Edit::MovePoint {
+            index: 1,
+            world: [60.0, 0.0, 0.0],
+        }));
+        assert_eq!(harness.app().terrain_path.points[1].world[0], 60.0);
+        harness.dispatch(Message::TerrainPath(Edit::SelectPoint(0)));
+        harness.dispatch(Message::TerrainPath(Edit::Number(Number::PointWidth, 9.0)));
+        assert_eq!(harness.app().terrain_path.points[0].width_m, 9.0);
+        assert_eq!(harness.app().terrain_path.rows[0].width_m, 9.0);
+        let wide = harness.app().terrain_path.overlay.samples[0].width;
+        assert!(
+            (wide - 9.0).abs() < 0.5,
+            "the corridor starts {wide} m wide"
+        );
+        harness.dispatch(Message::TerrainPath(Edit::Kind(
+            doppio_engine::SplineKind::River,
+        )));
+        assert_eq!(
+            harness.app().terrain_path.points.len(),
+            2,
+            "the points stay"
+        );
+        harness.dispatch(Message::TerrainPath(Edit::Apply));
+        assert_eq!(harness.app().history.undo_name(), Some("Apply river"));
+        let _ = id;
+    }
+}
+
+mod panel_palette {
+    use super::*;
+
+    #[test]
+    fn every_panel_is_listed_once_under_a_group() {
+        let harness = Harness::with_entities();
+        let sections = harness.app().panel_palette_sections("");
+        let labels: Vec<String> = sections
+            .iter()
+            .flat_map(|s| s.rows.iter().map(|r| r.label.clone()))
+            .collect();
+        assert_eq!(labels.len(), PaneKind::ALL.len());
+        let mut sorted = labels.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), labels.len(), "no panel twice");
+    }
+
+    #[test]
+    fn the_search_matches_names_groups_and_purposes() {
+        let harness = Harness::with_entities();
+        let names = |search: &str| -> Vec<String> {
+            harness
+                .app()
+                .panel_palette_sections(search)
+                .iter()
+                .flat_map(|s| s.rows.iter().map(|r| r.label.clone()))
+                .collect()
+        };
+        assert_eq!(names("roads"), vec!["Terrain Path".to_owned()]);
+        assert!(names("terrain tools").len() >= 4);
+        assert!(names("  PROFILER ").contains(&"Profiler".to_owned()));
+        assert!(names("no such panel").is_empty());
+    }
+
+    #[test]
+    fn ctrl_p_opens_it_a_pick_brings_the_tab_forward_and_escape_closes_it() {
+        let mut harness = Harness::with_entities();
+        harness.dispatch(Message::TogglePanelPalette);
+        assert!(harness.has(Id::from(id::PANEL_PALETTE)));
+        harness.dispatch(Message::PanelPaletteSearch("roads".to_owned()));
+        assert!(harness.has(Id::from(id::panel_palette_item(0))));
+        assert!(!harness.has(Id::from(id::panel_palette_item(1))));
+        harness.dispatch(Message::GoToPane(PaneKind::TerrainPath));
+        assert!(harness.app().panel_palette.is_none(), "picking closes it");
+        assert!(harness
+            .app()
+            .panes
+            .iter()
+            .any(|(_, group)| group.active_kind() == PaneKind::TerrainPath));
+        harness.dispatch(Message::TogglePanelPalette);
+        harness.dispatch(Message::CloseMenu);
+        assert!(harness.app().panel_palette.is_none());
+        assert!(!harness.has(Id::from(id::PANEL_PALETTE)));
+    }
+
+    #[test]
+    fn a_crowded_pane_has_the_more_button_and_a_small_one_does_not() {
+        let harness = Harness::with_entities();
+        let panes: Vec<(String, usize)> = harness
+            .app()
+            .panes
+            .iter()
+            .map(|(pane, group)| (format!("{pane:?}"), group.pages.len()))
+            .collect();
+        for (name, pages) in panes {
+            assert_eq!(
+                harness.has(Id::from(id::pane_more(&name))),
+                pages > 3,
+                "{name} has {pages} tabs"
+            );
+        }
     }
 }
 

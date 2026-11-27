@@ -1,0 +1,26 @@
+{
+  "name": "Terrain Path: roads and rivers have their own tab, kinds, presets and a tool that says what it needs",
+  "description": "Places a generated terrain, opens the Terrain Path tab, turns the drawing tool on, switches between road and river (the presets follow the kind), picks a preset and asks to apply with no points drawn, which says why.",
+  "fixture": "scene3d",
+  "size": [1440, 800],
+  "steps": [
+    { "action": "click", "target": "id:editor.menu.view", "label": "open the View menu" },
+    { "action": "click", "target": "id:editor.menu.view.terrain_generator", "label": "open the Terrain Generator tab" },
+    { "action": "click", "target": "id:terraingen.place", "label": "place the generated terrain in the scene" },
+    { "action": "click", "target": "id:editor.pane.tab.viewport", "label": "bring the Viewport back to the front" },
+    { "action": "click", "target": "id:editor.menu.view" },
+    { "action": "click", "target": "id:editor.menu.view.terrain_path", "label": "open the Terrain Path tab" },
+    { "action": "expect", "exists": ["id:editor.pane.terrain_path", "id:editor.pane.tab.terrain_path", "id:terrain_path.tool.active", "id:terrain_path.apply", "id:terrain_path.clear", "id:terrain_path.kind.road", "id:terrain_path.kind.river", "id:terrain_path.preset.0", "id:terrain_path.preset.1", "id:terrain_path.preset.2", "id:terrain_path.shape.width", "id:terrain_path.shape.grade", "id:terrain_path.surface.mask"], "label": "the tab has the tool, the actions, the kinds, the road presets and the road's numbers" },
+    { "action": "expect", "missing": ["id:terrain_path.preset.3", "id:terrain_path.preset.4", "id:terrain_path.shape.depth", "id:terrain_path.profile", "id:terrain_path.points.row.0"], "label": "no river presets or depth on a road, and nothing drawn yet" },
+    { "action": "screenshot", "name": "terrain-path-road", "target": "id:editor.pane.terrain_path" },
+    { "action": "click", "target": "id:terrain_path.tool.active", "label": "turn the drawing tool on" },
+    { "action": "expect", "shows": "Stop drawing", "label": "the button now stops the tool" },
+    { "action": "click", "target": "id:terrain_path.kind.river", "label": "switch to a river" },
+    { "action": "expect", "exists": ["id:terrain_path.preset.3", "id:terrain_path.preset.4", "id:terrain_path.shape.depth"], "label": "the river presets and a depth slider" },
+    { "action": "expect", "missing": ["id:terrain_path.preset.0", "id:terrain_path.preset.2", "id:terrain_path.shape.grade"], "label": "the road presets and the grade are gone" },
+    { "action": "click", "target": "id:terrain_path.preset.4", "label": "pick the River preset" },
+    { "action": "click", "target": "id:terrain_path.apply", "label": "apply with nothing drawn" },
+    { "action": "expect", "shows": "Drop at least two points to make a river: click on the terrain", "label": "it says what it needs" },
+    { "action": "screenshot", "name": "terrain-path-river", "target": "id:editor.pane.terrain_path" }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "Go to panel: a crowded tab strip has a ⋯ button and Ctrl+P, and the list finds any panel",
+  "description": "Opens the Go to panel list from the more button of the Viewport pane, searches for roads, picks Terrain Path and checks its tab is in front; the View menu is grouped.",
+  "fixture": "scene3d",
+  "size": [1600, 900],
+  "steps": [
+    { "action": "expect", "exists": ["id:editor.pane.more.Pane(1)"], "label": "a pane with many tabs has the more button" },
+    { "action": "click", "target": "id:editor.pane.more.Pane(1)", "label": "open Go to panel" },
+    { "action": "expect", "exists": ["id:editor.panel_palette", "id:editor.panel_palette.search", "id:editor.panel_palette.item.0"], "label": "the list and its search" },
+    { "action": "screenshot", "name": "panel-palette" },
+    { "action": "click", "target": "id:editor.panel_palette.search" },
+    { "action": "type", "text": "roads", "label": "search for roads" },
+    { "action": "expect", "exists": ["id:editor.panel_palette.item.0"], "missing": ["id:editor.panel_palette.item.1"], "label": "one match" },
+    { "action": "click", "target": "id:editor.panel_palette.item.0", "label": "pick Terrain Path" },
+    { "action": "expect", "missing": ["id:editor.panel_palette"], "exists": ["id:editor.pane.terrain_path"], "label": "the list closes and the tab is in front" },
+    { "action": "click", "target": "id:editor.menu.view" },
+    { "action": "screenshot", "name": "view-menu-grouped" }
+  ]
+}

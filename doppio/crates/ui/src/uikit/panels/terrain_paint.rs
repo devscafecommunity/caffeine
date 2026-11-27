@@ -9,7 +9,7 @@ use crate::uikit::components::{
 };
 use crate::uikit::id::{self, UiId};
 use crate::uikit::theme::{self, ChipTone};
-use doppio_engine::{Falloff, PaintMode, PaletteLayer, TerrainLayers};
+use doppio_engine::{Falloff, PaintMode, PaletteLayer, TerrainLayers, TerrainMaskInfo};
 use iced::widget::{column, container, row, text};
 use iced::{Element, Length};
 use std::rc::Rc;
@@ -247,6 +247,23 @@ pub enum Edit {
     RuleCorner(usize, RuleCorner, f32),
     Fallback(usize),
     ApplyRules,
+    /// Strokes paint the selected mask instead of the layers.
+    MaskTarget(bool),
+    SelectMask(String),
+    /// The name the next new mask gets (empty: the next free `maskN`).
+    MaskName(String),
+    /// Makes a mask from the typed name: empty, or a copy of a built-in or stored mask.
+    NewMask(Option<String>),
+    /// Makes a mask with this name (the agent action; the panel uses the typed name), empty or a copy of `from`.
+    MakeMask {
+        name: String,
+        from: Option<String>,
+    },
+    /// The level a Paint stroke moves the selected mask toward, 0 to 1.
+    MaskValue(f32),
+    MaskFill,
+    MaskInvert,
+    MaskDelete,
 }
 
 pub struct View<'a> {
@@ -266,6 +283,13 @@ pub struct View<'a> {
     pub rules: &'a [AutoRule],
     pub fallback: usize,
     pub status: Option<&'a str>,
+    /// The stored masks of the terrain (painted ones and those a generator sent), not the built-in ones.
+    pub masks: &'a [TerrainMaskInfo],
+    pub mask_selected: Option<&'a str>,
+    /// Strokes paint the selected mask instead of the layers.
+    pub mask_target: bool,
+    pub mask_value: f32,
+    pub new_mask_name: &'a str,
 }
 
 /// The one-line summary under the panel title.
@@ -290,6 +314,177 @@ fn card<'a, Message: 'a>(title: &'a str, body: Element<'a, Message>) -> Element<
 
 fn megabytes(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+}
+
+/// The masks a terrain holds as stored data: painted by hand here, or sent by a generator. Species rules and
+/// adaptations, auto-layering rules and brush protection all read them by name.
+fn masks_card<'a, Message: Clone + 'a>(
+    view: &View<'a>,
+    emit: &Rc<dyn Fn(Edit) -> Message + 'a>,
+) -> Element<'a, Message> {
+    let mut list = column![].spacing(2);
+    for (index, mask) in view.masks.iter().enumerate() {
+        let select_emit = emit.clone();
+        let name = mask.name.clone();
+        list = list.push(palette_row::view(
+            id::terrain_paint_mask(index),
+            index,
+            &mask.name,
+            [0.7, 0.7, 0.7],
+            &format!("{} x {}", mask.resolution[0], mask.resolution[1]),
+            view.mask_selected == Some(mask.name.as_str()),
+            select_emit(Edit::SelectMask(name)),
+        ));
+    }
+    if view.masks.is_empty() {
+        list = list.push(
+            text("No stored masks yet. Make one, then paint it: a species can grow only where it is high, and a layer can go where it is.")
+                .size(9)
+                .color(theme::TEXT_MUTED),
+        );
+    }
+    let name_emit = emit.clone();
+    let new_emit = emit.clone();
+    let from_emit = emit.clone();
+    let target_emit = emit.clone();
+    let value_emit = emit.clone();
+    let fill_emit = emit.clone();
+    let invert_emit = emit.clone();
+    let delete_emit = emit.clone();
+    let mut copy_sources: Vec<String> = RULE_MASKS.iter().map(|m| (*m).to_owned()).collect();
+    copy_sources.extend(view.masks.iter().map(|m| m.name.clone()));
+    let mut body = column![
+        list,
+        text_field::property(id::TP_MASK_NAME, "New mask", view.new_mask_name, move |t| {
+            name_emit(Edit::MaskName(t))
+        }),
+        row![
+            button::primary(id::TP_MASK_NEW, "Make empty", new_emit(Edit::NewMask(None))),
+            dropdown::property(
+                id::TP_MASK_COPY,
+                "Copy of",
+                copy_sources,
+                None,
+                move |picked: String| from_emit(Edit::NewMask(Some(picked))),
+            ),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center),
+    ]
+    .spacing(5);
+    if let Some(selected) = view.mask_selected {
+        body = body.push(checkbox::property(
+            id::TP_MASK_TARGET,
+            format!("The brush paints {selected} (not the layers)"),
+            view.mask_target,
+            move |on| target_emit(Edit::MaskTarget(on)),
+        ));
+        body = body.push(slider::property_step(
+            id::TP_MASK_VALUE,
+            "Paint level",
+            0.0..=1.0,
+            view.mask_value,
+            0.01,
+            move |v| value_emit(Edit::MaskValue(v)),
+        ));
+        body = body.push(
+            row![
+                button::compact(id::TP_MASK_FILL, "Fill", fill_emit(Edit::MaskFill)),
+                button::compact(id::TP_MASK_INVERT, "Invert", invert_emit(Edit::MaskInvert)),
+                button::danger(id::TP_MASK_DELETE, "Delete", delete_emit(Edit::MaskDelete)),
+            ]
+            .spacing(6),
+        );
+    }
+    card("Masks", body.into())
+}
+
+fn brush_card<'a, Message: Clone + 'a>(
+    view: &View<'a>,
+    emit: &Rc<dyn Fn(Edit) -> Message + 'a>,
+) -> Element<'a, Message> {
+    let names: Vec<String> = view
+        .palette
+        .iter()
+        .enumerate()
+        .map(|(i, l)| format!("{i}  {}", l.name))
+        .collect();
+    let mode_options: Vec<String> = PaintMode::ALL
+        .iter()
+        .map(|m| m.label().to_owned())
+        .collect();
+    let mode_lookup = mode_options.clone();
+    let mode_emit = emit.clone();
+    let falloff_options: Vec<String> = Falloff::ALL.iter().map(|f| f.label().to_owned()).collect();
+    let falloff_lookup = falloff_options.clone();
+    let falloff_emit = emit.clone();
+    let shared_emit = emit.clone();
+    let mut brush = column![dropdown::property(
+        id::TP_MODE,
+        "Mode",
+        mode_options,
+        Some(view.mode.label().to_owned()),
+        move |picked: String| {
+            mode_emit(Edit::Mode(
+                mode_lookup
+                    .iter()
+                    .position(|o| *o == picked)
+                    .map_or(PaintMode::Paint, |i| PaintMode::ALL[i]),
+            ))
+        },
+    )]
+    .spacing(4);
+    if view.mode == PaintMode::Replace && !view.mask_target {
+        let from_emit = emit.clone();
+        let from_lookup = names.clone();
+        brush = brush.push(dropdown::property(
+            id::TP_FROM,
+            "Replace",
+            names.clone(),
+            names.get(view.from_layer).cloned(),
+            move |picked: String| {
+                from_emit(Edit::FromLayer(
+                    from_lookup.iter().position(|n| *n == picked).unwrap_or(0),
+                ))
+            },
+        ));
+    }
+    for (amount, value, slider_id) in [
+        (BrushAmount::Radius, view.radius, id::TP_RADIUS),
+        (BrushAmount::Strength, view.strength, id::TP_STRENGTH),
+        (BrushAmount::Spacing, view.spacing, id::TP_SPACING),
+    ] {
+        let amount_emit = emit.clone();
+        brush = brush.push(slider::property_step(
+            slider_id,
+            amount.label(),
+            amount.range(),
+            value,
+            amount.step(),
+            move |v| amount_emit(Edit::Brush(amount, v)),
+        ));
+    }
+    brush = brush.push(dropdown::property(
+        id::TP_FALLOFF,
+        "Falloff",
+        falloff_options,
+        Some(view.falloff.label().to_owned()),
+        move |picked: String| {
+            falloff_emit(Edit::Falloff(
+                falloff_lookup
+                    .iter()
+                    .position(|o| *o == picked)
+                    .map_or(Falloff::Smooth, |i| Falloff::ALL[i]),
+            ))
+        },
+    ));
+    brush = brush.push(checkbox::property(
+        id::TP_SHARED,
+        "Shape from the Terrain Brush (stamp, jitter, symmetry, protection)",
+        view.shared_shape,
+        move |on| shared_emit(Edit::SharedShape(on)),
+    ));
+    card("Paint brush", brush.into())
 }
 
 pub fn view<'a, Message: Clone + 'a>(
@@ -348,6 +543,8 @@ pub fn view<'a, Message: Clone + 'a>(
             .spacing(6)
             .into(),
         ));
+        content = content.push(masks_card(&view, &emit));
+        content = content.push(brush_card(&view, &emit));
         if let Some(note) = view.status {
             content = content.push(status::note(note));
         }
@@ -485,91 +682,16 @@ pub fn view<'a, Message: Clone + 'a>(
         content = content.push(card("Selected layer", body.into()));
     }
 
-    // The brush.
+    content = content.push(masks_card(&view, &emit));
+    content = content.push(brush_card(&view, &emit));
+
+    // Auto-layering.
     let names: Vec<String> = view
         .palette
         .iter()
         .enumerate()
         .map(|(i, l)| format!("{i}  {}", l.name))
         .collect();
-    let mode_options: Vec<String> = PaintMode::ALL
-        .iter()
-        .map(|m| m.label().to_owned())
-        .collect();
-    let mode_lookup = mode_options.clone();
-    let mode_emit = emit.clone();
-    let falloff_options: Vec<String> = Falloff::ALL.iter().map(|f| f.label().to_owned()).collect();
-    let falloff_lookup = falloff_options.clone();
-    let falloff_emit = emit.clone();
-    let shared_emit = emit.clone();
-    let mut brush = column![dropdown::property(
-        id::TP_MODE,
-        "Mode",
-        mode_options,
-        Some(view.mode.label().to_owned()),
-        move |picked: String| {
-            mode_emit(Edit::Mode(
-                mode_lookup
-                    .iter()
-                    .position(|o| *o == picked)
-                    .map_or(PaintMode::Paint, |i| PaintMode::ALL[i]),
-            ))
-        },
-    )]
-    .spacing(4);
-    if view.mode == PaintMode::Replace {
-        let from_emit = emit.clone();
-        let from_lookup = names.clone();
-        brush = brush.push(dropdown::property(
-            id::TP_FROM,
-            "Replace",
-            names.clone(),
-            names.get(view.from_layer).cloned(),
-            move |picked: String| {
-                from_emit(Edit::FromLayer(
-                    from_lookup.iter().position(|n| *n == picked).unwrap_or(0),
-                ))
-            },
-        ));
-    }
-    for (amount, value, slider_id) in [
-        (BrushAmount::Radius, view.radius, id::TP_RADIUS),
-        (BrushAmount::Strength, view.strength, id::TP_STRENGTH),
-        (BrushAmount::Spacing, view.spacing, id::TP_SPACING),
-    ] {
-        let amount_emit = emit.clone();
-        brush = brush.push(slider::property_step(
-            slider_id,
-            amount.label(),
-            amount.range(),
-            value,
-            amount.step(),
-            move |v| amount_emit(Edit::Brush(amount, v)),
-        ));
-    }
-    brush = brush.push(dropdown::property(
-        id::TP_FALLOFF,
-        "Falloff",
-        falloff_options,
-        Some(view.falloff.label().to_owned()),
-        move |picked: String| {
-            falloff_emit(Edit::Falloff(
-                falloff_lookup
-                    .iter()
-                    .position(|o| *o == picked)
-                    .map_or(Falloff::Smooth, |i| Falloff::ALL[i]),
-            ))
-        },
-    ));
-    brush = brush.push(checkbox::property(
-        id::TP_SHARED,
-        "Shape from the Terrain Brush (stamp, jitter, symmetry, protection)",
-        view.shared_shape,
-        move |on| shared_emit(Edit::SharedShape(on)),
-    ));
-    content = content.push(card("Paint brush", brush.into()));
-
-    // Auto-layering.
     let rule_add_emit = emit.clone();
     let fallback_emit = emit.clone();
     let fallback_lookup = names.clone();
@@ -703,6 +825,15 @@ mod tests {
         for key in [
             "terrain_paint.palette.layer.7",
             "terrain_paint.auto.rule.2.rise0",
+            "terrain_paint.mask.row.3",
+            "terrain_paint.mask.name",
+            "terrain_paint.mask.new",
+            "terrain_paint.mask.copy",
+            "terrain_paint.mask.target",
+            "terrain_paint.mask.value",
+            "terrain_paint.mask.fill",
+            "terrain_paint.mask.invert",
+            "terrain_paint.mask.delete",
         ] {
             assert!(id::description(key).is_some(), "{key}");
         }

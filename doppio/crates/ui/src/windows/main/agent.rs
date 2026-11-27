@@ -26,6 +26,7 @@ use crate::uikit::panels::project_manager;
 use crate::uikit::panels::terrain_brush as terrain_brush_panel;
 use crate::uikit::panels::terrain_generator;
 use crate::uikit::panels::terrain_paint as terrain_paint_panel;
+use crate::uikit::panels::terrain_path as terrain_path_panel;
 use crate::uikit::panels::terrain_vegetation as terrain_vegetation_panel;
 use crate::uikit::panels::texture_generator;
 use crate::uikit::panels::texture_set as texture_set_panel;
@@ -731,8 +732,56 @@ pub fn run() -> iced::Result {
             },
         )
         .action(
+            "terrain_mask_make",
+            "Makes a stored mask on the terrain (a name the species rules, auto-layering and brush protection can use), on the terrain's own grid: empty, or a copy of `from` (slope, height, curvature or another stored mask). One undo step; the new mask becomes the selected one. args: { \"name\"?: string (letters, digits, _ and -; default the next free maskN), \"from\"?: string }",
+            |args| {
+                let name = args.get("name").and_then(Value::as_str).unwrap_or("").to_owned();
+                let from = args.get("from").and_then(Value::as_str).map(str::to_owned);
+                Ok(Message::TerrainPaint(terrain_paint_panel::Edit::MakeMask { name, from }))
+            },
+        )
+        .action(
+            "terrain_mask_select",
+            "Selects the stored mask the mask tools act on. args: { \"name\": string }",
+            |args| {
+                Ok(Message::TerrainPaint(terrain_paint_panel::Edit::SelectMask(
+                    required_str(args, "name")?.to_owned(),
+                )))
+            },
+        )
+        .action(
+            "terrain_mask_target",
+            "Makes strokes (the mouse and `terrain_paint_stroke`) paint the selected mask instead of the layers, or back. The brush numbers are the paint brush's; its mode Paint moves the mask toward the level, Erase toward 0, Smooth toward the neighbours. args: { \"on\"?: boolean (default true) }",
+            |args| {
+                Ok(Message::TerrainPaint(terrain_paint_panel::Edit::MaskTarget(
+                    args.get("on").and_then(Value::as_bool).unwrap_or(true),
+                )))
+            },
+        )
+        .action(
+            "terrain_mask_value",
+            "Sets the level (0 to 1) a Paint stroke moves the mask toward, and what Fill sets it to. args: { \"value\": number }",
+            |args| {
+                let value = args.get("value").and_then(Value::as_f64).ok_or("missing \"value\"")?;
+                Ok(Message::TerrainPaint(terrain_paint_panel::Edit::MaskValue(value as f32)))
+            },
+        )
+        .action(
+            "terrain_mask_edit",
+            "Edits the whole selected mask as one undo step: `fill` (to the level), `invert` or `delete`. args: { \"op\": \"fill\" | \"invert\" | \"delete\" }",
+            |args| {
+                use terrain_paint_panel::Edit;
+                Ok(Message::TerrainPaint(match normalized(required_str(args, "op")?).as_str() {
+                    "fill" => Edit::MaskFill,
+                    "invert" => Edit::MaskInvert,
+                    "delete" => Edit::MaskDelete,
+                    other => return Err(format!("no mask edit called \"{other}\"")),
+                }))
+            },
+        )
+        .action(
             "terrain_paint_stroke",
-            "Paints one stroke with the selected layer and the paint brush along world-space points (metres), exactly as dragging the mouse would: one undo step. args: { \"points\": [[x, z] or [x, y, z], ...], \"terrain_id\"?: number (default: the selected terrain) }",
+            "Paints one stroke with the selected layer (or the selected mask, after `terrain_mask_target`) and the paint brush along world-space points (metres), exactly as dragging the mouse would: one undo step. args: { \"points\": [[x, z] or [x, y, z], ...], \"terrain_id\"?: number (default: the selected terrain) }",
             |args| {
                 let points = args
                     .get("points")
@@ -756,6 +805,109 @@ pub fn run() -> iced::Result {
                     points,
                 })
             },
+        )
+        .query(
+            "terrain_path",
+            "The Terrain Path tool: whether it is on, the terrain, the kind (road or river), the preset, every number (width, shoulder, depth, smooth, grade in percent), the surface (layer index or null, layer_strength, write_mask, mask), the control points (world x, y, z and the width at each, 0 for the path's), the selected point, the engine's preview of the path (length, cut, fill, steepest grade, a river's drop, and the elevation profile's ground and path heights) and the status line.",
+            |app, _| Ok(terrain_path_json(app)),
+        )
+        .action(
+            "show_terrain_path",
+            "Brings the Terrain Path tab to the front. args: {}",
+            |_| Ok(Message::ShowTerrainPath),
+        )
+        .action(
+            "terrain_path_active",
+            "Turns the road and river tool on or off (the ring on the ground shows the corridor's half width). args: { \"active\"?: boolean (default true) }",
+            |args| {
+                Ok(Message::TerrainPath(terrain_path_panel::Edit::Active(
+                    args.get("active").and_then(Value::as_bool).unwrap_or(true),
+                )))
+            },
+        )
+        .action(
+            "terrain_path_kind",
+            "Draws a road or a river from now on; the points stay and the numbers take the kind's first preset. args: { \"kind\": \"road\" | \"river\" }",
+            |args| {
+                use doppio_engine::SplineKind;
+                let kind = match normalized(required_str(args, "kind")?).as_str() {
+                    "road" => SplineKind::Road,
+                    "river" => SplineKind::River,
+                    other => return Err(format!("no path kind called \"{other}\": road or river")),
+                };
+                Ok(Message::TerrainPath(terrain_path_panel::Edit::Kind(kind)))
+            },
+        )
+        .action(
+            "terrain_path_preset",
+            "Applies a ready-made road or river: footpath, dirt road, highway, creek or river (kind, width, shoulder, depth, smoothing, grade and mask name). args: { \"name\": string }",
+            |args| {
+                let wanted = normalized(required_str(args, "name")?);
+                terrain_path_panel::PRESETS
+                    .iter()
+                    .position(|p| normalized(p.name) == wanted)
+                    .map(|i| Message::TerrainPath(terrain_path_panel::Edit::Preset(i)))
+                    .ok_or_else(|| format!("no preset called \"{wanted}\": footpath, dirt road, highway, creek or river"))
+            },
+        )
+        .action(
+            "terrain_path_set",
+            "Sets one number or surface setting of the path: `width`, `shoulder`, `depth`, `smooth`, `grade` (percent), `layer_strength`, `point_width` (the selected point) take a number; `layer` a palette index or null for none; `write_mask` a bool; `mask` a name. args: { \"field\": string, \"value\": number | string | bool | null }",
+            |args| {
+                let field = required_str(args, "field")?;
+                let value = args.get("value").ok_or("missing \"value\"")?;
+                terrain_path_edit(field, value).map(Message::TerrainPath)
+            },
+        )
+        .action(
+            "terrain_path_add_point",
+            "Drops a control point of the path on the terrain at a world position, as a click would (the height is found on the ground). The path is previewed with two or more. args: { \"point\": [x, z] or [x, y, z] }",
+            |args| {
+                let world = path_point(args, "point")?;
+                Ok(Message::TerrainPath(terrain_path_panel::Edit::AddPoint { world }))
+            },
+        )
+        .action(
+            "terrain_path_move_point",
+            "Moves a control point (0 is the first) to a world position on the terrain. args: { \"index\": number, \"point\": [x, z] or [x, y, z] }",
+            |args| {
+                let index = args.get("index").and_then(Value::as_u64).ok_or("missing \"index\"")? as usize;
+                let world = path_point(args, "point")?;
+                Ok(Message::TerrainPath(terrain_path_panel::Edit::MovePoint { index, world }))
+            },
+        )
+        .action(
+            "terrain_path_select_point",
+            "Selects a control point (0 is the first); `terrain_path_set` with `point_width` then changes the width there. args: { \"index\": number }",
+            |args| {
+                let index = args.get("index").and_then(Value::as_u64).ok_or("missing \"index\"")? as usize;
+                Ok(Message::TerrainPath(terrain_path_panel::Edit::SelectPoint(index)))
+            },
+        )
+        .action(
+            "terrain_path_remove_point",
+            "Removes a control point (the last when `index` is left out). args: { \"index\"?: number }",
+            |args| {
+                Ok(Message::TerrainPath(match args.get("index").and_then(Value::as_u64) {
+                    Some(index) => terrain_path_panel::Edit::RemovePoint(index as usize),
+                    None => terrain_path_panel::Edit::RemoveLast,
+                }))
+            },
+        )
+        .action(
+            "terrain_path_reverse",
+            "Turns the path around: the first point becomes the last (a river's source is its first point). args: {}",
+            |_| Ok(Message::TerrainPath(terrain_path_panel::Edit::Reverse)),
+        )
+        .action(
+            "terrain_path_clear",
+            "Throws the control points away. args: {}",
+            |_| Ok(Message::TerrainPath(terrain_path_panel::Edit::Clear)),
+        )
+        .action(
+            "terrain_path_apply",
+            "Shapes the ground along the path, paints the layer and writes the mask: one undo step, exactly as Enter in the viewport. Needs two or more points. args: {}",
+            |_| Ok(Message::TerrainPath(terrain_path_panel::Edit::Apply)),
         )
         .query(
             "terrain_brush",
@@ -3828,6 +3980,93 @@ fn terrain_vegetation_json(app: &App) -> Value {
     })
 }
 
+/// A world position from `[x, z]` or `[x, y, z]` (the height is found on the terrain).
+fn path_point(args: &Value, key: &str) -> Result<[f64; 3], String> {
+    let numbers: Vec<f64> = args
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_f64).collect())
+        .unwrap_or_default();
+    match numbers.as_slice() {
+        [x, z] => Ok([*x, 0.0, *z]),
+        [x, y, z] => Ok([*x, *y, *z]),
+        _ => Err(format!("\"{key}\" is [x, z] or [x, y, z] in metres")),
+    }
+}
+
+fn terrain_path_edit(field: &str, value: &Value) -> Result<terrain_path_panel::Edit, String> {
+    use terrain_path_panel::{Edit, Number};
+    match normalized(field).as_str() {
+        "layer" => {
+            if value.is_null() {
+                return Ok(Edit::Layer(None));
+            }
+            let index = value
+                .as_i64()
+                .ok_or_else(|| "\"layer\" takes a palette index or null".to_owned())?;
+            Ok(Edit::Layer(usize::try_from(index).ok()))
+        }
+        "writemask" => value
+            .as_bool()
+            .map(Edit::WriteMask)
+            .ok_or_else(|| "\"write_mask\" takes a bool".to_owned()),
+        "mask" => value
+            .as_str()
+            .map(|name| Edit::MaskName(name.to_owned()))
+            .ok_or_else(|| "\"mask\" takes a name".to_owned()),
+        _ => {
+            let number = Number::from_key(field)
+                .or_else(|| {
+                    Number::ALL
+                        .into_iter()
+                        .find(|n| normalized(n.key()) == normalized(field))
+                })
+                .ok_or_else(|| format!("no path setting called \"{field}\""))?;
+            value
+                .as_f64()
+                .map(|v| Edit::Number(number, v as f32))
+                .ok_or_else(|| format!("\"{field}\" takes a number"))
+        }
+    }
+}
+
+fn terrain_path_json(app: &App) -> Value {
+    let path = &app.terrain_path;
+    json!({
+        "active": path.active,
+        "terrain": path.entity,
+        "terrain_name": path.terrain_name,
+        "kind_name": if path.kind == doppio_engine::SplineKind::River { "river" } else { "road" },
+        "preset": path.preset.and_then(|i| terrain_path_panel::PRESETS.get(i)).map(|p| p.name),
+        "width": path.width_m,
+        "shoulder": path.shoulder_m,
+        "depth": path.depth_m,
+        "smooth": path.smooth_m,
+        "grade": path.grade_percent,
+        "surface": {
+            "layer": path.layer,
+            "layer_names": path.layer_names,
+            "layer_strength": path.layer_strength,
+            "write_mask": path.write_mask,
+            "mask": path.mask_name,
+        },
+        "points": path.points.iter().map(|p| json!({
+            "x": p.world[0], "y": p.world[1], "z": p.world[2], "width": p.width_m,
+        })).collect::<Vec<_>>(),
+        "selected": path.selected,
+        "preview": path.stats.as_ref().map(|s| json!({
+            "length_m": s.length_m,
+            "cut_m": s.cut_m,
+            "fill_m": s.fill_m,
+            "grade_percent": s.grade_percent,
+            "drop_m": s.drop_m,
+            "ground": path.profile.ground,
+            "path": path.profile.path,
+        })),
+        "status": path.status,
+    })
+}
+
 fn terrain_paint_json(app: &App) -> Value {
     let paint = &app.terrain_paint;
     let layers = paint.layers.unwrap_or_default();
@@ -3871,6 +4110,15 @@ fn terrain_paint_json(app: &App) -> Value {
             "from": r.corners[0], "full_from": r.corners[1], "full_to": r.corners[2], "to": r.corners[3],
         })).collect::<Vec<_>>(),
         "fallback": paint.fallback,
+        "masks": {
+            "target": paint.mask_target,
+            "selected": paint.mask_selected,
+            "value": paint.mask_value,
+            "stored": paint.masks.iter().map(|m| json!({
+                "name": m.name,
+                "resolution": m.resolution,
+            })).collect::<Vec<_>>(),
+        },
         "status": paint.status,
     })
 }

@@ -362,12 +362,43 @@ pub const TP_STRENGTH: UiId = UiId::fixed("terrain_paint.brush.strength");
 pub const TP_SPACING: UiId = UiId::fixed("terrain_paint.brush.spacing");
 pub const TP_FALLOFF: UiId = UiId::fixed("terrain_paint.brush.falloff");
 pub const TP_SHARED: UiId = UiId::fixed("terrain_paint.brush.shared");
+pub const TP_MASK_NAME: UiId = UiId::fixed("terrain_paint.mask.name");
+pub const TP_MASK_NEW: UiId = UiId::fixed("terrain_paint.mask.new");
+pub const TP_MASK_COPY: UiId = UiId::fixed("terrain_paint.mask.copy");
+pub const TP_MASK_TARGET: UiId = UiId::fixed("terrain_paint.mask.target");
+pub const TP_MASK_VALUE: UiId = UiId::fixed("terrain_paint.mask.value");
+pub const TP_MASK_FILL: UiId = UiId::fixed("terrain_paint.mask.fill");
+pub const TP_MASK_INVERT: UiId = UiId::fixed("terrain_paint.mask.invert");
+pub const TP_MASK_DELETE: UiId = UiId::fixed("terrain_paint.mask.delete");
 pub const TP_RULE_ADD: UiId = UiId::fixed("terrain_paint.auto.add");
 pub const TP_FALLBACK: UiId = UiId::fixed("terrain_paint.auto.fallback");
 pub const TP_APPLY: UiId = UiId::fixed("terrain_paint.auto.apply");
 pub const PANE_TERRAIN_VEGETATION: UiId = UiId::fixed("editor.pane.terrain_vegetation");
 pub const PANE_TAB_TERRAIN_VEGETATION: UiId = UiId::fixed("editor.pane.tab.terrain_vegetation");
 pub const SHOW_TERRAIN_VEGETATION: UiId = UiId::fixed("editor.menu.view.terrain_vegetation");
+pub const PANE_TERRAIN_PATH: UiId = UiId::fixed("editor.pane.terrain_path");
+pub const PANE_TAB_TERRAIN_PATH: UiId = UiId::fixed("editor.pane.tab.terrain_path");
+pub const SHOW_TERRAIN_PATH: UiId = UiId::fixed("editor.menu.view.terrain_path");
+pub const VIEWPORT_PATH_OVERLAY: UiId = UiId::fixed("viewport.canvas.path_overlay");
+pub const TPATH_ACTIVE: UiId = UiId::fixed("terrain_path.tool.active");
+pub const TPATH_APPLY: UiId = UiId::fixed("terrain_path.apply");
+pub const TPATH_CLEAR: UiId = UiId::fixed("terrain_path.clear");
+pub const TPATH_KIND_ROAD: UiId = UiId::fixed("terrain_path.kind.road");
+pub const TPATH_KIND_RIVER: UiId = UiId::fixed("terrain_path.kind.river");
+pub const TPATH_UNDO_POINT: UiId = UiId::fixed("terrain_path.points.undo");
+pub const TPATH_REVERSE: UiId = UiId::fixed("terrain_path.points.reverse");
+pub const TPATH_REMOVE_POINT: UiId = UiId::fixed("terrain_path.points.remove");
+pub const TPATH_PROFILE: UiId = UiId::fixed("terrain_path.profile");
+pub const TPATH_WIDTH: UiId = UiId::fixed("terrain_path.shape.width");
+pub const TPATH_SHOULDER: UiId = UiId::fixed("terrain_path.shape.shoulder");
+pub const TPATH_DEPTH: UiId = UiId::fixed("terrain_path.shape.depth");
+pub const TPATH_SMOOTH: UiId = UiId::fixed("terrain_path.shape.smooth");
+pub const TPATH_GRADE: UiId = UiId::fixed("terrain_path.shape.grade");
+pub const TPATH_POINT_WIDTH: UiId = UiId::fixed("terrain_path.shape.point_width");
+pub const TPATH_LAYER: UiId = UiId::fixed("terrain_path.surface.layer");
+pub const TPATH_LAYER_STRENGTH: UiId = UiId::fixed("terrain_path.surface.layer_strength");
+pub const TPATH_WRITE_MASK: UiId = UiId::fixed("terrain_path.surface.mask");
+pub const TPATH_MASK_NAME: UiId = UiId::fixed("terrain_path.surface.mask_name");
 pub const TV_ACTIVE: UiId = UiId::fixed("terrain_vegetation.tool.active");
 pub const TV_ENABLE: UiId = UiId::fixed("terrain_vegetation.setup.enable");
 pub const TV_DISABLE: UiId = UiId::fixed("terrain_vegetation.setup.disable");
@@ -641,6 +672,21 @@ pub const INSPECTOR_ADD_BEHAVIOUR: UiId = UiId::fixed("inspector.behaviour.add")
 pub const BEHAVIOUR_PICKER: UiId = UiId::fixed("inspector.behaviour.picker");
 pub const BEHAVIOUR_PICKER_CLOSE: UiId = UiId::fixed("inspector.behaviour.picker.close");
 pub const BEHAVIOUR_PICKER_SEARCH: UiId = UiId::fixed("inspector.behaviour.picker.search");
+pub const SHOW_PANEL_PALETTE: UiId = UiId::fixed("editor.view.go_to_panel");
+pub const PANEL_PALETTE: UiId = UiId::fixed("editor.panel_palette");
+pub const PANEL_PALETTE_CLOSE: UiId = UiId::fixed("editor.panel_palette.close");
+pub const PANEL_PALETTE_SEARCH: UiId = UiId::fixed("editor.panel_palette.search");
+
+/// One panel in the Go to panel list.
+pub fn panel_palette_item(index: usize) -> UiId {
+    UiId::dynamic(format!("editor.panel_palette.item.{index}"))
+}
+
+/// The button of a pane that opens the Go to panel list.
+pub fn pane_more(pane: &str) -> UiId {
+    UiId::dynamic(format!("editor.pane.more.{pane}"))
+}
+
 pub const BEHAVIOUR_NEW: UiId = UiId::fixed("inspector.behaviour.new");
 
 /// One script in the behaviour picker.
@@ -1107,9 +1153,24 @@ pub fn terrain_paint_layer(index: usize) -> UiId {
     UiId::dynamic(format!("terrain_paint.palette.layer.{index}"))
 }
 
+/// One stored mask row of the Terrain Paint masks card.
+pub fn terrain_paint_mask(index: usize) -> UiId {
+    UiId::dynamic(format!("terrain_paint.mask.row.{index}"))
+}
+
 /// A widget of the `index`-th auto-layering rule (`layer`, `rise0`, `rise1`, `fall1`, `fall0`, `remove`).
 pub fn terrain_paint_rule(index: usize, field: &str) -> UiId {
     UiId::dynamic(format!("terrain_paint.auto.rule.{index}.{field}"))
+}
+
+/// A preset chip of the Terrain Path panel.
+pub fn tpath_preset(index: usize) -> UiId {
+    UiId::dynamic(format!("terrain_path.preset.{index}"))
+}
+
+/// One control-point row of the Terrain Path panel.
+pub fn tpath_point(index: usize) -> UiId {
+    UiId::dynamic(format!("terrain_path.points.row.{index}"))
 }
 
 /// One species row of the Terrain Vegetation palette.
@@ -2011,6 +2072,51 @@ pub const CATALOG: &[UiMeta] = &[
         kind: "button",
     },
     UiMeta {
+        id: TP_MASK_NAME,
+        description: "Terrain Paint: The name the next new mask gets (letters, digits, _ and -; empty picks the next free maskN).",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: TP_MASK_NEW,
+        description: "Terrain Paint: Makes an empty stored mask on the terrain's own grid (one undo step).",
+        kind: "button",
+    },
+    UiMeta {
+        id: TP_MASK_COPY,
+        description: "Terrain Paint: Makes a mask that is a copy of slope, height, curvature or a stored mask, to paint over (one undo step).",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TP_MASK_TARGET,
+        description: "Terrain Paint: The brush paints the selected mask instead of the layers; the species, rules and protection that name the mask follow it.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TP_MASK_VALUE,
+        description: "Terrain Paint: The level a Paint stroke moves the mask toward, 0 to 1; Erase goes toward 0.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TP_MASK_FILL,
+        description: "Terrain Paint: Sets the whole selected mask to the paint level (one undo step).",
+        kind: "button",
+    },
+    UiMeta {
+        id: TP_MASK_INVERT,
+        description: "Terrain Paint: Turns the selected mask into 1 minus itself (one undo step).",
+        kind: "button",
+    },
+    UiMeta {
+        id: TP_MASK_DELETE,
+        description: "Terrain Paint: Deletes the selected mask (one undo step; undo brings it back at the end of the list).",
+        kind: "button",
+    },
+    UiMeta {
+        id: UiId::fixed("terrain_paint.mask.row"),
+        description: "Terrain Paint: A stored mask of the terrain; rows use the .N suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
         id: UiId::fixed("terrain_paint.palette.layer"),
         description: "Terrain Paint: A layer of the palette; rows use the .N suffix.",
         kind: "list_row",
@@ -2018,6 +2124,131 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: UiId::fixed("terrain_paint.auto.rule"),
         description: "Terrain Paint: An auto-layering rule (layer, mask, four sliders, remove); widgets use the .N.field suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: PANE_TERRAIN_PATH,
+        description: "Terrain Path: roads and rivers drawn on a terrain, with an elevation profile, the shape and the surface they get.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_TERRAIN_PATH,
+        description: "Tab of the Terrain Path panel.",
+        kind: "tab",
+    },
+    UiMeta {
+        id: SHOW_TERRAIN_PATH,
+        description: "Brings the Terrain Path tab to the front.",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: VIEWPORT_PATH_OVERLAY,
+        description: "The road or river being drawn: the corridor as a ribbon with its edges, a dashed centre line, numbered handles for the points and a leg to the mouse. It only draws; the viewport picks the handles.",
+        kind: "canvas",
+    },
+    UiMeta {
+        id: TPATH_ACTIVE,
+        description: "Terrain Path: Turns the drawing tool on or off: a left click on the terrain drops a point, a drag on a handle moves it, a right click on a handle removes it.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TPATH_APPLY,
+        description: "Terrain Path: Shapes the ground along the path, paints the layer and writes the mask, as one undo step (Enter).",
+        kind: "button",
+    },
+    UiMeta {
+        id: TPATH_CLEAR,
+        description: "Terrain Path: Throws the points away and starts over (Esc).",
+        kind: "button",
+    },
+    UiMeta {
+        id: TPATH_KIND_ROAD,
+        description: "Terrain Path: Draws a road: the ground is levelled to a smoothed, graded profile.",
+        kind: "toggle_chip",
+    },
+    UiMeta {
+        id: TPATH_KIND_RIVER,
+        description: "Terrain Path: Draws a river: a channel whose bed never rises downstream.",
+        kind: "toggle_chip",
+    },
+    UiMeta {
+        id: TPATH_UNDO_POINT,
+        description: "Terrain Path: Drops the last point (Backspace).",
+        kind: "button",
+    },
+    UiMeta {
+        id: TPATH_REVERSE,
+        description: "Terrain Path: Turns the path around: the first point becomes the last (a river's source is its first point).",
+        kind: "button",
+    },
+    UiMeta {
+        id: TPATH_REMOVE_POINT,
+        description: "Terrain Path: Removes the selected point.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TPATH_PROFILE,
+        description: "Terrain Path: The elevation profile along the path: the ground now and what the path levels or cuts it to.",
+        kind: "canvas",
+    },
+    UiMeta {
+        id: TPATH_WIDTH,
+        description: "Terrain Path: The full width of the corridor, metres.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TPATH_SHOULDER,
+        description: "Terrain Path: The blend into the ground on each side of the corridor, metres.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TPATH_DEPTH,
+        description: "Terrain Path: River: how deep the channel is, metres.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TPATH_SMOOTH,
+        description: "Terrain Path: The window the ground's height along the path is averaged over, metres: more makes a smoother road or river.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TPATH_GRADE,
+        description: "Terrain Path: Road: the steepest rise over run of the profile, as a percentage.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TPATH_POINT_WIDTH,
+        description: "Terrain Path: The width at the selected point only; 0 follows the path's width.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TPATH_LAYER,
+        description: "Terrain Path: The palette layer painted along the path (needs layered painting).",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TPATH_LAYER_STRENGTH,
+        description: "Terrain Path: How strongly the layer is painted on the corridor, 0 to 1.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: TPATH_WRITE_MASK,
+        description: "Terrain Path: Writes a stored mask that is 1 on the corridor and falls to 0 over the shoulder, for species rules and brush protection.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TPATH_MASK_NAME,
+        description: "Terrain Path: The name of the mask the path writes (letters, digits, _ and -).",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: UiId::fixed("terrain_path.preset"),
+        description: "Terrain Path: A ready-made road or river (footpath, dirt road, highway, creek, river); chips use the .N suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("terrain_path.points.row"),
+        description: "Terrain Path: A control point of the path; rows use the .N suffix.",
         kind: "list_row",
     },
     UiMeta {
@@ -3678,6 +3909,26 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: BEHAVIOUR_PICKER_SEARCH,
         description: "Filters the behaviour picker by name, detail or group.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: SHOW_PANEL_PALETTE,
+        description: "View menu: opens the Go to panel list (Ctrl+P).",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: PANEL_PALETTE,
+        description: "Go to panel: a searchable list of every panel, opened with Ctrl+P or the ⋯ button of a pane; picking one brings its tab to the front.",
+        kind: "panel",
+    },
+    UiMeta {
+        id: PANEL_PALETTE_CLOSE,
+        description: "Closes the Go to panel list.",
+        kind: "button",
+    },
+    UiMeta {
+        id: PANEL_PALETTE_SEARCH,
+        description: "Filters the Go to panel list by name or purpose.",
         kind: "text_input",
     },
     UiMeta {

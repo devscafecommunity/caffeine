@@ -676,6 +676,36 @@ void TerrainCache::commitLayerEdit(ECS::Entity entity, ECS::TerrainComponent& te
     }
 }
 
+void TerrainCache::commitMaskEdit(ECS::Entity entity, ECS::TerrainComponent& terrain, const LayerBounds& region, u32 resolutionX,
+                                  u32 resolutionZ) {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end() || !it->second.hasVegetation) return;
+    TerrainEntry& entry = it->second;
+    ++terrain.vegetationRevision;
+    if (!region.valid || resolutionX < 2 || resolutionZ < 2) {
+        entry.vegetationDirtyAll = true;
+        return;
+    }
+    if (entry.vegetationDirtyAll) return;
+    const f32 stepX = terrain.worldSizeX / static_cast<f32>(resolutionX - 1);
+    const f32 stepZ = terrain.worldSizeZ / static_cast<f32>(resolutionZ - 1);
+    // Masks are sampled bilinearly: a texel reaches one texel past itself.
+    const f32 x0 = (static_cast<f32>(region.minX) - 1.0f) * stepX - terrain.worldSizeX * 0.5f;
+    const f32 x1 = (static_cast<f32>(region.maxX) + 1.0f) * stepX - terrain.worldSizeX * 0.5f;
+    const f32 z0 = (static_cast<f32>(region.minZ) - 1.0f) * stepZ - terrain.worldSizeZ * 0.5f;
+    const f32 z1 = (static_cast<f32>(region.maxZ) + 1.0f) * stepZ - terrain.worldSizeZ * 0.5f;
+    const i32 cx0 = TerrainVegetation::chunkOf(x0), cx1 = TerrainVegetation::chunkOf(x1);
+    const i32 cz0 = TerrainVegetation::chunkOf(z0), cz1 = TerrainVegetation::chunkOf(z1);
+    if (static_cast<i64>(cx1 - cx0 + 1) * (cz1 - cz0 + 1) > 4096) {
+        entry.vegetationDirtyAll = true;
+        return;
+    }
+    // Conflicts can reach into the next chunk, as for any vegetation edit: one chunk around.
+    for (i32 cz = cz0 - 1; cz <= cz1 + 1; ++cz) {
+        for (i32 cx = cx0 - 1; cx <= cx1 + 1; ++cx) entry.vegetationDirty.insert(TerrainVegetation::chunkKey(cx, cz));
+    }
+}
+
 namespace {
 
 void copyRelative(char* destination, usize capacity, const std::string& text) {

@@ -53,11 +53,23 @@ pub fn view<'a, Message: Clone + 'a>(
 /// Right-aligned pane controls: detach the active page into its own window, split it out,
 /// maximise/restore.
 pub fn controls<'a, Message: Clone + 'a>(
+    more: Option<(UiId, Message)>,
     detach: Option<(UiId, Message)>,
     split: Option<(UiId, Message)>,
     maximize: (UiId, bool, Message),
 ) -> Element<'a, Message> {
     let mut bar = row![].spacing(2).align_y(iced::Alignment::Center);
+    if let Some((id, message)) = more {
+        bar = bar.push(
+            container(
+                button(text("⋯").size(13))
+                    .style(theme::button_text)
+                    .padding([0, 6])
+                    .on_press(message),
+            )
+            .id(id),
+        );
+    }
     if let Some((id, message)) = detach {
         bar = bar.push(
             container(

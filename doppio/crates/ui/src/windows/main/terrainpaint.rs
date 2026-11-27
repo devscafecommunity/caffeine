@@ -10,7 +10,10 @@
 
 use super::{App, LogLevel, PaneKind};
 use crate::uikit::panels::terrain_paint::{AutoRule, BrushAmount, Edit, MAX_RULES, RULE_MASKS};
-use doppio_engine::{BrushPreset, Falloff, PaintBrush, PaintMode, PaletteLayer, TerrainLayers};
+use doppio_engine::{
+    BrushPreset, Falloff, MaskBrush, MaskOp, MaskPaintMode, PaintBrush, PaintMode, PaletteLayer,
+    TerrainLayers, TerrainMaskInfo,
+};
 
 pub(super) struct State {
     pub active: bool,
@@ -27,6 +30,14 @@ pub(super) struct State {
     pub spacing: f32,
     pub falloff: Falloff,
     pub shared_shape: bool,
+    /// The stored masks of the terrain (not the built-in ones), and the one the mask tools act on.
+    pub masks: Vec<TerrainMaskInfo>,
+    pub mask_selected: Option<String>,
+    /// Strokes paint the selected mask instead of the layers.
+    pub mask_target: bool,
+    /// The level a Paint stroke moves the mask toward.
+    pub mask_value: f32,
+    pub new_mask_name: String,
     pub rules: Vec<AutoRule>,
     pub fallback: usize,
     pub status: Option<String>,
@@ -50,6 +61,11 @@ impl Default for State {
             spacing: 0.0,
             falloff: Falloff::Smooth,
             shared_shape: false,
+            masks: Vec::new(),
+            mask_selected: None,
+            mask_target: false,
+            mask_value: 1.0,
+            new_mask_name: String::new(),
             rules: Vec::new(),
             fallback: 0,
             status: None,
@@ -166,6 +182,20 @@ impl App {
             (Some(id), Some(layers)) if layers.enabled => engine.palette_layers(id),
             _ => Vec::new(),
         };
+        state.masks = entity
+            .and_then(|id| engine.terrain_masks(id).ok())
+            .map(|all| all.into_iter().filter(|m| !m.builtin).collect())
+            .unwrap_or_default();
+        if !state
+            .mask_selected
+            .as_ref()
+            .is_some_and(|name| state.masks.iter().any(|m| &m.name == name))
+        {
+            state.mask_selected = state.masks.first().map(|m| m.name.clone());
+        }
+        if state.mask_selected.is_none() {
+            state.mask_target = false;
+        }
         let last = state.palette.len().saturating_sub(1);
         state.selected = state.selected.min(last);
         state.from_layer = state.from_layer.min(last);
@@ -208,6 +238,7 @@ impl App {
             if self.terrain_editor.active {
                 self.set_terrain_tool(false);
             }
+            self.terrain_path.active = false;
             if self.terrain_vegetation.active {
                 self.terrain_vegetation.active = false;
             }
@@ -524,6 +555,26 @@ impl App {
                 let last = self.terrain_paint.palette.len().saturating_sub(1);
                 self.terrain_paint.fallback = layer.min(last);
             }
+            Edit::MaskTarget(on) => {
+                if on && self.terrain_paint.mask_selected.is_none() {
+                    self.terrain_paint.status = Some("Make or select a mask first".to_owned());
+                    return;
+                }
+                self.terrain_paint.mask_target = on;
+                self.terrain_paint.status = None;
+            }
+            Edit::SelectMask(name) => {
+                if self.terrain_paint.masks.iter().any(|m| m.name == name) {
+                    self.terrain_paint.mask_selected = Some(name);
+                }
+            }
+            Edit::MaskName(name) => self.terrain_paint.new_mask_name = name,
+            Edit::NewMask(from) => self.new_terrain_mask(None, from.as_deref()),
+            Edit::MakeMask { name, from } => self.new_terrain_mask(Some(name), from.as_deref()),
+            Edit::MaskValue(value) => self.terrain_paint.mask_value = value.clamp(0.0, 1.0),
+            Edit::MaskFill => self.edit_selected_mask(MaskOp::Fill, "Fill terrain mask"),
+            Edit::MaskInvert => self.edit_selected_mask(MaskOp::Invert, "Invert terrain mask"),
+            Edit::MaskDelete => self.edit_selected_mask(MaskOp::Delete, "Delete terrain mask"),
             Edit::ApplyRules => self.apply_auto_layer(),
         }
     }
@@ -554,6 +605,116 @@ impl App {
             }
         }
         self.refresh_paint_state();
+    }
+
+    /// Makes a stored mask from the typed name (or the next free `maskN`), empty or copied from `from`; selects it.
+    fn new_terrain_mask(&mut self, name: Option<String>, from: Option<&str>) {
+        let Some(entity) = self.terrain_paint.entity else {
+            return;
+        };
+        let typed = name.unwrap_or_else(|| self.terrain_paint.new_mask_name.clone());
+        let typed = typed.trim().to_owned();
+        let name = if typed.is_empty() {
+            let taken: Vec<&str> = self
+                .terrain_paint
+                .masks
+                .iter()
+                .map(|m| m.name.as_str())
+                .collect();
+            (1..)
+                .map(|n| format!("mask{n}"))
+                .find(|candidate| !taken.contains(&candidate.as_str()))
+                .unwrap_or_default()
+        } else {
+            typed
+        };
+        let Some(engine) = self.engine.as_mut() else {
+            return;
+        };
+        match engine.terrain_mask_create(entity, &name, [0, 0], 0.0, from) {
+            Ok(record) => {
+                self.commit_terrain_stroke(record, format!("Make terrain mask {name}"));
+                self.log(LogLevel::Action, format!("Made terrain mask {name}"));
+                self.terrain_paint.new_mask_name.clear();
+                self.terrain_paint.mask_selected = Some(name);
+                self.terrain_paint.status = None;
+            }
+            Err(error) => {
+                self.log(LogLevel::Error, format!("Mask: {error}"));
+                self.terrain_paint.status = Some(format!("Mask: {error}"));
+            }
+        }
+        self.refresh_paint_state();
+    }
+
+    /// Fills, inverts or deletes the selected mask as one undo step.
+    fn edit_selected_mask(&mut self, op: MaskOp, label: &str) {
+        let (Some(entity), Some(name)) = (
+            self.terrain_paint.entity,
+            self.terrain_paint.mask_selected.clone(),
+        ) else {
+            self.terrain_paint.status = Some("Select a mask first".to_owned());
+            return;
+        };
+        let value = self.terrain_paint.mask_value;
+        let Some(engine) = self.engine.as_mut() else {
+            return;
+        };
+        match engine.terrain_mask_edit(entity, &name, op, value) {
+            Ok(0) => self.terrain_paint.status = Some(format!("{label}: nothing changed")),
+            Ok(record) => {
+                self.commit_terrain_stroke(record, format!("{label} {name}"));
+                self.log(LogLevel::Action, format!("{label} {name}"));
+                self.terrain_paint.status = None;
+            }
+            Err(error) => {
+                self.terrain_paint.status = Some(format!("{label}: {error:?}"));
+            }
+        }
+        self.refresh_paint_state();
+    }
+
+    /// The brush a mask stroke starts with: the paint brush's numbers and shape; Ctrl turns paint into erase and back,
+    /// Shift smooths. Replace has no meaning for a mask and paints.
+    pub(super) fn mask_brush(&self, smooth: bool) -> Option<MaskBrush> {
+        let state = &self.terrain_paint;
+        let paint = self.paint_brush(smooth);
+        let mode = match paint.mode {
+            PaintMode::Erase => MaskPaintMode::Erase,
+            PaintMode::Smooth => MaskPaintMode::Smooth,
+            PaintMode::Paint | PaintMode::Replace => MaskPaintMode::Paint,
+        };
+        Some(MaskBrush {
+            shape: paint.shape,
+            mode,
+            mask: state.mask_selected.clone()?,
+            value: state.mask_value,
+        })
+    }
+
+    /// Opens an engine mask stroke; records the failure in the status line.
+    fn open_mask_stroke(&mut self, entity: u32, brush: &MaskBrush) -> bool {
+        let Some(engine) = self.engine.as_mut() else {
+            return false;
+        };
+        match engine.terrain_mask_paint_begin(entity, brush) {
+            Ok(()) => {
+                self.terrain_editor.stroke = Some(super::terraineditor::OpenStroke {
+                    entity,
+                    points: 0,
+                    paint: true,
+                    vegetation: false,
+                    mask: Some(brush.mask.clone()),
+                });
+                true
+            }
+            Err(error) => {
+                let message = format!("Could not start painting the mask: {error:?}");
+                self.log(LogLevel::Error, message.clone());
+                self.terrain_paint.status = Some(message);
+                false
+            }
+        }
     }
 
     /// The paint brush a stroke starts with: the panel's numbers, on the Terrain Brush's shape when asked for, with the
@@ -600,6 +761,16 @@ impl App {
             self.terrain_paint.entity = Some(entity);
             self.refresh_paint_state();
         }
+        if self.terrain_paint.mask_target {
+            let Some(brush) = self.mask_brush(self.fly_boost) else {
+                return false;
+            };
+            if !self.open_mask_stroke(entity, &brush) {
+                return false;
+            }
+            self.add_terrain_stroke_point(hit);
+            return true;
+        }
         if !self.terrain_paint.layers.is_some_and(|l| l.enabled) {
             self.terrain_paint.status =
                 Some("Turn on layered painting for this terrain first".to_owned());
@@ -625,6 +796,7 @@ impl App {
                     points: 0,
                     paint: true,
                     vegetation: false,
+                    mask: None,
                 });
                 true
             }
@@ -655,6 +827,24 @@ impl App {
         let entity = terrain
             .or(self.terrain_paint.entity)
             .ok_or("there is no terrain to paint")?;
+        if self.terrain_paint.mask_target {
+            let brush = self
+                .mask_brush(false)
+                .ok_or("select a mask to paint first")?;
+            if !self.open_mask_stroke(entity, &brush) {
+                return Err(self
+                    .terrain_paint
+                    .status
+                    .clone()
+                    .unwrap_or_else(|| "could not start painting the mask".to_owned()));
+            }
+            for point in points {
+                self.add_terrain_stroke_point(*point);
+            }
+            return self
+                .finish_terrain_stroke()
+                .ok_or_else(|| "the stroke could not be finished".to_owned());
+        }
         if !self.terrain_paint.layers.is_some_and(|l| l.enabled) {
             return Err("turn on layered painting first".to_owned());
         }

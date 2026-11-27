@@ -2626,3 +2626,315 @@ TEST_CASE("C API builds a World Composer composition without a session", "[capi]
     CHECK(caffeine_world_check("class oak\n", error, sizeof(error)) == CAFFEINE_INVALID_ARGUMENT);
     CHECK(std::string(error).find("no `terrain`") != std::string::npos);
 }
+
+TEST_CASE("C API painted masks: create, paint, edit, undo, vegetation that follows the mask, and a scene round trip", "[capi][terrain][mask]") {
+    CHECK(caffeine_capi_version() >= 33);
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Ground");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 129;
+    terrain.resolution_z = 129;
+    terrain.size_x = 256.0f;
+    terrain.size_z = 256.0f;
+    terrain.max_height = 80.0f;
+    std::vector<float> heights(129 * 129, 0.3f);
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+
+    // Make a mask (the terrain's own grid), with the reason when it is refused.
+    char error[200] = {};
+    uint32_t created = 0;
+    CHECK(caffeine_session_terrain_mask_create(session, entity, "slope", 0, 0, 0.0f, nullptr, &created, error, sizeof(error)) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(std::string(error).find("built-in") != std::string::npos);
+    CHECK(caffeine_session_terrain_mask_create(session, 9999u, "wet", 0, 0, 0.0f, nullptr, &created, error, sizeof(error)) == CAFFEINE_NOT_FOUND);
+    REQUIRE(caffeine_session_terrain_mask_create(session, entity, "wet", 0, 0, 0.0f, nullptr, &created, error, sizeof(error)) == CAFFEINE_OK);
+    CHECK(created != 0);
+    CaffeineTerrainMaskInfo maskInfo{};
+    uint32_t maskCount = 0;
+    REQUIRE(caffeine_session_terrain_mask_count(session, entity, &maskCount) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_mask_at(session, entity, maskCount - 1, &maskInfo) == CAFFEINE_OK);
+    CHECK(std::string(maskInfo.name) == "wet");
+    CHECK(maskInfo.resolution_x == 129);
+    CHECK(caffeine_session_terrain_mask_create(session, entity, "wet", 0, 0, 0.0f, nullptr, &created, error, sizeof(error)) == CAFFEINE_INVALID_ARGUMENT);
+
+    // A pine that grows only where the mask is 1: none until the mask is painted.
+    REQUIRE(caffeine_session_terrain_vegetation_enable(session, entity, 1) == CAFFEINE_OK);
+    CaffeineVegSpecies pine{};
+    std::snprintf(pine.name, sizeof(pine.name), "%s", "Pine");
+    pine.mesh_count = 1;
+    std::snprintf(pine.meshes[0], sizeof(pine.meshes[0]), "%s", "Meshes/pine.obj");
+    pine.density_per_ha = 400.0f;
+    pine.radius_m = 2.0f;
+    pine.priority = 1;
+    pine.min_scale = 0.9f;
+    pine.max_scale = 1.1f;
+    pine.tint[0] = pine.tint[1] = pine.tint[2] = 1.0f;
+    pine.max_distance_m = 300.0f;
+    pine.procedural = 1;
+    pine.visible = 1;
+    pine.rule_count = 1;
+    std::snprintf(pine.rules[0].mask, sizeof(pine.rules[0].mask), "%s", "wet");
+    pine.rules[0].rise0 = 0.4f;
+    pine.rules[0].rise1 = 0.6f;
+    pine.rules[0].fall1 = 1.0f;
+    pine.rules[0].fall0 = 1.0f;
+    uint32_t speciesRecord = 0;
+    REQUIRE(caffeine_session_terrain_veg_species_apply(session, entity, &pine, 1, 0, &speciesRecord, error, sizeof(error)) == CAFFEINE_OK);
+    std::vector<CaffeineVegInstance> found(20000);
+    uint32_t dry = 0;
+    REQUIRE(caffeine_session_terrain_veg_instances(session, entity, 0.0, 0.0, 400.0f, found.data(), static_cast<uint32_t>(found.size()), &dry) == CAFFEINE_OK);
+    CHECK(dry == 0);
+
+    // Paint it by hand with the round brush.
+    CaffeineMaskBrush brush{};
+    for (uint32_t i = 0; i < caffeine_terrain_brush_count(); ++i) {
+        REQUIRE(caffeine_terrain_brush_at(i, &brush.shape) == CAFFEINE_OK);
+        if (std::string(brush.shape.name) == "Round hard") break;
+    }
+    brush.shape.radius_m = 30.0f;
+    brush.shape.strength = 1.0f;
+    brush.mode = CAFFEINE_MASK_PAINT;
+    brush.value = 1.0f;
+    std::snprintf(brush.mask, sizeof(brush.mask), "%s", "slope");
+    CHECK(caffeine_session_terrain_mask_paint_begin(session, entity, &brush) == CAFFEINE_INVALID_ARGUMENT);  // built-in: not paintable
+    std::snprintf(brush.mask, sizeof(brush.mask), "%s", "nothing");
+    CHECK(caffeine_session_terrain_mask_paint_begin(session, entity, &brush) == CAFFEINE_NOT_FOUND);
+    std::snprintf(brush.mask, sizeof(brush.mask), "%s", "wet");
+    brush.mode = 7;
+    CHECK(caffeine_session_terrain_mask_paint_begin(session, entity, &brush) == CAFFEINE_INVALID_ARGUMENT);
+    brush.mode = CAFFEINE_MASK_PAINT;
+    REQUIRE(caffeine_session_terrain_mask_paint_begin(session, entity, &brush) == CAFFEINE_OK);
+    uint32_t stamps = 0;
+    REQUIRE(caffeine_session_terrain_stroke_point(session, 0.0, 0.0, 0.0, 1.0f, &stamps) == CAFFEINE_OK);
+    CHECK(stamps == 1);
+    REQUIRE(caffeine_session_terrain_stroke_point(session, 10.0, 0.0, 0.0, 1.0f, nullptr) == CAFFEINE_OK);
+    CaffeineTerrainStrokeResult result{};
+    REQUIRE(caffeine_session_terrain_stroke_end(session, &result) == CAFFEINE_OK);
+    CHECK(result.record != 0);
+    CHECK(result.has_region == 1);
+
+    // The mask reads 1 under the stroke (metres from the corner: the centre is at 128) and 0 away from it.
+    float value = -1.0f;
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "wet", 128.0f, 128.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(1.0f));
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "wet", 20.0f, 20.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(0.0f));
+
+    // The pines grow on the painted ground only.
+    uint32_t wet = 0;
+    REQUIRE(caffeine_session_terrain_veg_instances(session, entity, 0.0, 0.0, 400.0f, found.data(), static_cast<uint32_t>(found.size()), &wet) == CAFFEINE_OK);
+    CHECK(wet > 10);
+    for (uint32_t i = 0; i < std::min<uint32_t>(wet, 20000); ++i) {
+        CHECK(std::fabs(found[i].x) < 50.0f);
+        CHECK(std::fabs(found[i].z) < 50.0f);
+    }
+
+    // Undo and redo the stroke by its record, the same calls as for a height stroke.
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, result.record) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "wet", 128.0f, 128.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(0.0f));
+    uint32_t afterUndo = 0;
+    REQUIRE(caffeine_session_terrain_veg_instances(session, entity, 0.0, 0.0, 400.0f, found.data(), static_cast<uint32_t>(found.size()), &afterUndo) == CAFFEINE_OK);
+    CHECK(afterUndo == 0);
+    REQUIRE(caffeine_session_terrain_stroke_reapply(session, result.record) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "wet", 128.0f, 128.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(1.0f));
+
+    // Erase a part of it; a stroke that changes nothing leaves no record.
+    brush.mode = CAFFEINE_MASK_ERASE;
+    REQUIRE(caffeine_session_terrain_mask_paint_begin(session, entity, &brush) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_stroke_point(session, 0.0, 0.0, 0.0, 1.0f, nullptr) == CAFFEINE_OK);
+    CaffeineTerrainStrokeResult erased{};
+    REQUIRE(caffeine_session_terrain_stroke_end(session, &erased) == CAFFEINE_OK);
+    CHECK(erased.record != 0);
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "wet", 128.0f, 128.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(0.0f));
+    REQUIRE(caffeine_session_terrain_mask_paint_begin(session, entity, &brush) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_stroke_point(session, 100.0, 0.0, 0.0, 1.0f, nullptr) == CAFFEINE_OK);
+    CaffeineTerrainStrokeResult nothing{};
+    REQUIRE(caffeine_session_terrain_stroke_end(session, &nothing) == CAFFEINE_OK);
+    CHECK(nothing.record == 0);
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, erased.record) == CAFFEINE_OK);
+
+    // Fill, invert and delete are one step each.
+    uint32_t fill = 0, invert = 0, noop = 0;
+    CHECK(caffeine_session_terrain_mask_edit(session, entity, "slope", CAFFEINE_MASK_OP_FILL, 1.0f, &fill) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_terrain_mask_edit(session, entity, "nothing", CAFFEINE_MASK_OP_FILL, 1.0f, &fill) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_mask_edit(session, entity, "wet", 9, 1.0f, &fill) == CAFFEINE_INVALID_ARGUMENT);
+    REQUIRE(caffeine_session_terrain_mask_edit(session, entity, "wet", CAFFEINE_MASK_OP_INVERT, 0.0f, &invert) == CAFFEINE_OK);
+    CHECK(invert != 0);
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "wet", 128.0f, 128.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(0.0f));
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "wet", 20.0f, 20.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(1.0f));
+    REQUIRE(caffeine_session_terrain_mask_edit(session, entity, "wet", CAFFEINE_MASK_OP_INVERT, 0.0f, &noop) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_mask_edit(session, entity, "wet", CAFFEINE_MASK_OP_FILL, 1.0f, &fill) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_mask_edit(session, entity, "wet", CAFFEINE_MASK_OP_FILL, 1.0f, &noop) == CAFFEINE_OK);
+    CHECK(noop == 0);
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, fill) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, invert) == CAFFEINE_OK);
+
+    // The scene saves the painted mask with the terrain, and a new session reads it back.
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "caffeine_painted_mask_project";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "Scenes");
+    const std::string scene = (root / "Scenes" / "main.caf").string();
+    REQUIRE(caffeine_session_save_scene(session, scene.c_str()) == CAFFEINE_OK);
+    caffeine_session_destroy(session);
+
+    CaffeineSession* second = caffeine_session_create();
+    REQUIRE(caffeine_session_load_scene(second, scene.c_str()) == CAFFEINE_OK);
+    CaffeineEntity loaded = 0;
+    bool haveGround = false;
+    for (uint32_t i = 0; i < caffeine_session_entity_count(second); ++i) {
+        CaffeineEntityInfo info{};
+        if (caffeine_session_entity_at(second, i, &info) == CAFFEINE_OK && std::string(info.name) == "Ground") {
+            loaded = info.id;
+            haveGround = true;
+        }
+    }
+    REQUIRE(haveGround);
+    REQUIRE(caffeine_session_terrain_mask(second, loaded, "wet", 128.0f, 128.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(1.0f));
+    REQUIRE(caffeine_session_terrain_mask(second, loaded, "wet", 20.0f, 20.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(0.0f));
+    caffeine_session_destroy(second);
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("C API roads and rivers by spline: one undoable edit that shapes the ground, paints a layer and writes a mask", "[capi][terrain][spline]") {
+    CHECK(caffeine_capi_version() >= 34);
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Ground");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 129;
+    terrain.resolution_z = 129;
+    terrain.size_x = 256.0f;
+    terrain.size_z = 256.0f;
+    terrain.max_height = 80.0f;
+    std::vector<float> heights(129 * 129);
+    for (int z = 0; z < 129; ++z) {
+        for (int x = 0; x < 129; ++x) heights[z * 129 + x] = (30.0f + 10.0f * std::sin(static_cast<float>(x) * 2.0f * 0.08f)) / 80.0f;
+    }
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_layers_enable(session, entity, 1) == CAFFEINE_OK);
+
+    // World space is centred on the terrain: x and z run from -128 to 128.
+    CaffeineSplinePoint points[3] = {{-100.0, 0.0, 0.0, 0.0f}, {0.0, 0.0, 0.0, 0.0f}, {100.0, 0.0, 0.0, 0.0f}};
+    CaffeineSplineDesc desc{};
+    desc.kind = CAFFEINE_SPLINE_ROAD;
+    desc.width_m = 6.0f;
+    desc.shoulder_m = 5.0f;
+    desc.smooth_m = 80.0f;
+    desc.max_grade = 0.03f;
+    desc.layer = 2;
+    desc.layer_strength = 1.0f;
+    std::snprintf(desc.mask, sizeof(desc.mask), "%s", "road");
+
+    // The preview changes nothing.
+    uint32_t sampleCount = 0;
+    REQUIRE(caffeine_session_terrain_spline_sample(session, entity, &desc, points, 3, 5.0f, nullptr, 0, &sampleCount) == CAFFEINE_OK);
+    CHECK(sampleCount > 30);
+    std::vector<CaffeineSplineSample> preview(sampleCount);
+    REQUIRE(caffeine_session_terrain_spline_sample(session, entity, &desc, points, 3, 5.0f, preview.data(), sampleCount, &sampleCount) == CAFFEINE_OK);
+    CHECK(preview.front().x == Approx(-100.0f).margin(0.5f));
+    CHECK(preview.back().x == Approx(100.0f).margin(0.5f));
+    CHECK(preview.back().along_m == Approx(200.0f).margin(2.0f));
+    float before = 0.0f;
+    REQUIRE(caffeine_session_terrain_height(session, entity, 128.0f + 20.0f, 128.0f, &before) == CAFFEINE_OK);
+    uint32_t maskCount = 0;
+    REQUIRE(caffeine_session_terrain_mask_count(session, entity, &maskCount) == CAFFEINE_OK);
+    CHECK(maskCount == 3);  // only the built-ins
+
+    // Refusals say why and change nothing.
+    char error[200] = {};
+    uint32_t record = 0;
+    CaffeineSplineDesc bad = desc;
+    bad.mask[0] = 0;
+    bad.layer = 40;
+    CHECK(caffeine_session_terrain_spline_apply(session, entity, &bad, points, 3, &record, nullptr, error, sizeof(error)) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(std::string(error).find("layer") != std::string::npos);
+    bad = desc;
+    std::snprintf(bad.mask, sizeof(bad.mask), "%s", "slope");
+    CHECK(caffeine_session_terrain_spline_apply(session, entity, &bad, points, 3, &record, nullptr, error, sizeof(error)) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_terrain_spline_apply(session, entity, &desc, points, 1, &record, nullptr, error, sizeof(error)) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(std::string(error).find("two points") != std::string::npos);
+    CHECK(caffeine_session_terrain_spline_apply(session, 9999u, &desc, points, 3, &record, nullptr, error, sizeof(error)) == CAFFEINE_NOT_FOUND);
+    CHECK(record == 0);
+
+    float length = 0.0f;
+    REQUIRE(caffeine_session_terrain_spline_apply(session, entity, &desc, points, 3, &record, &length, error, sizeof(error)) == CAFFEINE_OK);
+    CHECK(record != 0);
+    CHECK(length == Approx(200.0f).margin(2.0f));
+    float after = 0.0f, side = 0.0f;
+    REQUIRE(caffeine_session_terrain_height(session, entity, 128.0f + 20.0f, 128.0f, &after) == CAFFEINE_OK);
+    CHECK(after != Approx(before).margin(0.1f));
+    REQUIRE(caffeine_session_terrain_height(session, entity, 128.0f + 20.0f, 128.0f + 2.0f, &side) == CAFFEINE_OK);
+    CHECK(side == Approx(after).margin(0.2f));
+
+    // The mask and the layer.
+    float onRoad = 0.0f, offRoad = 1.0f;
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "road", 128.0f, 128.0f, &onRoad) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "road", 128.0f, 40.0f, &offRoad) == CAFFEINE_OK);
+    CHECK(onRoad == Approx(1.0f));
+    CHECK(offRoad == Approx(0.0f));
+    CaffeineLayerSample sample{};
+    REQUIRE(caffeine_session_terrain_layer_at(session, entity, 0.0, 0.0, 0.0, &sample) == CAFFEINE_OK);
+    CHECK(sample.layer[0] == 2);
+
+    // Undo and redo by the record: heights, layer and mask together.
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, record) == CAFFEINE_OK);
+    float reverted = 0.0f;
+    REQUIRE(caffeine_session_terrain_height(session, entity, 128.0f + 20.0f, 128.0f, &reverted) == CAFFEINE_OK);
+    CHECK(reverted == Approx(before).margin(1e-4f));
+    CHECK(caffeine_session_terrain_mask(session, entity, "road", 128.0f, 128.0f, &onRoad) == CAFFEINE_NOT_FOUND);
+    REQUIRE(caffeine_session_terrain_layer_at(session, entity, 0.0, 0.0, 0.0, &sample) == CAFFEINE_OK);
+    CHECK(sample.layer[0] != 2);
+    REQUIRE(caffeine_session_terrain_stroke_reapply(session, record) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_height(session, entity, 128.0f + 20.0f, 128.0f, &reverted) == CAFFEINE_OK);
+    CHECK(reverted == Approx(after).margin(1e-4f));
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "road", 128.0f, 128.0f, &onRoad) == CAFFEINE_OK);
+    CHECK(onRoad == Approx(1.0f));
+
+    // A river: the same call with another kind; its bed is below the ground it cuts.
+    CaffeineSplineDesc river{};
+    river.kind = CAFFEINE_SPLINE_RIVER;
+    river.width_m = 8.0f;
+    river.shoulder_m = 6.0f;
+    river.depth_m = 2.0f;
+    river.layer = -1;
+    CaffeineSplinePoint bank[2] = {{-100.0, 0.0, 60.0, 0.0f}, {100.0, 0.0, 60.0, 0.0f}};
+    float ground = 0.0f, bed = 0.0f;
+    REQUIRE(caffeine_session_terrain_height(session, entity, 128.0f, 128.0f + 60.0f, &ground) == CAFFEINE_OK);
+    uint32_t riverRecord = 0;
+    REQUIRE(caffeine_session_terrain_spline_apply(session, entity, &river, bank, 2, &riverRecord, nullptr, error, sizeof(error)) == CAFFEINE_OK);
+    CHECK(riverRecord != 0);
+    REQUIRE(caffeine_session_terrain_height(session, entity, 128.0f, 128.0f + 60.0f, &bed) == CAFFEINE_OK);
+    CHECK(bed < ground);
+
+    // The scene saves the road's mask; a new session reads it back.
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "caffeine_spline_project";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "Scenes");
+    const std::string scene = (root / "Scenes" / "main.caf").string();
+    REQUIRE(caffeine_session_save_scene(session, scene.c_str()) == CAFFEINE_OK);
+    caffeine_session_destroy(session);
+    CaffeineSession* second = caffeine_session_create();
+    REQUIRE(caffeine_session_load_scene(second, scene.c_str()) == CAFFEINE_OK);
+    CaffeineEntity loaded = 0;
+    bool haveGround = false;
+    for (uint32_t i = 0; i < caffeine_session_entity_count(second); ++i) {
+        CaffeineEntityInfo info{};
+        if (caffeine_session_entity_at(second, i, &info) == CAFFEINE_OK && std::string(info.name) == "Ground") {
+            loaded = info.id;
+            haveGround = true;
+        }
+    }
+    REQUIRE(haveGround);
+    float again = 0.0f;
+    REQUIRE(caffeine_session_terrain_mask(second, loaded, "road", 128.0f, 128.0f, &again) == CAFFEINE_OK);
+    CHECK(again == Approx(1.0f));
+    caffeine_session_destroy(second);
+    std::filesystem::remove_all(root);
+}

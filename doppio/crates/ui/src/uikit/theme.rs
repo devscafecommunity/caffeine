@@ -205,6 +205,14 @@ pub fn menu(_theme: &Theme) -> container::Style {
     }
 }
 
+/// The hairline between two groups of a menu.
+pub fn menu_separator(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(BORDER.into()),
+        ..container::Style::default()
+    }
+}
+
 pub fn menu_trigger(open: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |_theme, _status| button::Style {
         background: if open { Some(PANEL_ALT.into()) } else { None },

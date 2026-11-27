@@ -29,8 +29,28 @@ pub fn trigger<'a, Message: Clone + 'a>(
 
 /// A floating-looking list of menu items.
 pub fn context<'a, Message: Clone + 'a>(items: Vec<Item<'a, Message>>) -> Element<'a, Message> {
+    grouped(items, &[])
+}
+
+/// A menu whose items fall into named groups: `headings` lists `(index of the group's first item, title)`. Each group
+/// after the first is set off by a hairline, and every group carries a small caption.
+pub fn grouped<'a, Message: Clone + 'a>(
+    items: Vec<Item<'a, Message>>,
+    headings: &[(usize, &'static str)],
+) -> Element<'a, Message> {
     let mut list = column![].spacing(1);
-    for item in items {
+    for (index, item) in items.into_iter().enumerate() {
+        if let Some((_, title)) = headings.iter().find(|(first, _)| *first == index) {
+            if index > 0 {
+                list = list.push(
+                    container(space().height(Length::Fixed(1.0)))
+                        .width(Length::Fill)
+                        .style(theme::menu_separator),
+                );
+            }
+            list =
+                list.push(container(text(*title).size(9).color(theme::TEXT_MUTED)).padding([3, 8]));
+        }
         let label = row![
             text(item.label).size(12).width(Length::Fill),
             text(item.shortcut.unwrap_or(""))
@@ -43,7 +63,7 @@ pub fn context<'a, Message: Clone + 'a>(items: Vec<Item<'a, Message>>) -> Elemen
                 button(label)
                     .style(theme::menu_item)
                     .width(Length::Fill)
-                    .padding([5, 8])
+                    .padding([if headings.is_empty() { 5 } else { 4 }, 8])
                     .on_press(item.message),
             )
             .id(item.id),
@@ -63,11 +83,12 @@ const BAR_HEIGHT: f32 = 36.0;
 pub fn overlay<'a, Message: Clone + 'a>(
     x: f32,
     items: Vec<Item<'a, Message>>,
+    headings: &[(usize, &'static str)],
 ) -> Element<'a, Message> {
     container(
         column![
             space().height(Length::Fixed(BAR_HEIGHT)),
-            row![space().width(Length::Fixed(x)), context(items)],
+            row![space().width(Length::Fixed(x)), grouped(items, headings)],
         ]
         .width(Length::Fill),
     )

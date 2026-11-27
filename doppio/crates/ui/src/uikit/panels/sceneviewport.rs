@@ -1,5 +1,5 @@
 use crate::uikit::components::{
-    brush_cursor, gizmo, scene_markers, viewport_shader, viewport_surface,
+    brush_cursor, gizmo, path_overlay, scene_markers, viewport_shader, viewport_surface,
 };
 use crate::uikit::id;
 use iced::mouse;
@@ -21,6 +21,8 @@ pub struct ViewportState<'a> {
     pub selected_entity: Option<u32>,
     /// The terrain brush under the mouse, when a brush tool is on and the mouse is over a terrain.
     pub brush_cursor: Option<&'a brush_cursor::BrushCursor>,
+    /// The road or river being drawn (Terrain Path) and the ground under the mouse.
+    pub path: Option<(&'a path_overlay::PathOverlay, Option<[f32; 3]>)>,
 }
 
 pub struct ViewportCallbacks<'a, Message> {
@@ -57,6 +59,14 @@ pub fn view<'a, Message: Clone + 'a>(
             camera: state.camera,
             viewport: state.size,
             cursor,
+        }));
+    }
+    if let Some((overlay, ghost)) = state.path {
+        layers.push(path_overlay::view(path_overlay::View {
+            camera: state.camera,
+            viewport: state.size,
+            overlay,
+            ghost,
         }));
     }
     if state.show_markers && !state.markers.is_empty() {
